@@ -26,3 +26,11 @@ extra_args = ""
 
 # Example with metadata:
 # extra_args = "-metadata comment='processed by packa'"
+
+[worker]
+# Number of jobs to claim from master in a single request.
+# Increase to keep the slave busy when master latency is high.
+batch_size = 1
+
+# Seconds between poll attempts when the job queue is empty.
+poll_interval = 5

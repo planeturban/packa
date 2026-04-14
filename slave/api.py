@@ -12,6 +12,7 @@ from shared.models import FileStatus
 from shared.schemas import FileRecordCreate, FileRecordOut, StatusUpdate
 
 from .database import engine, get_db
+from .poller import poller_loop
 from .state import FfmpegProgress, Job, worker_state
 from .worker import recover, worker_loop
 
@@ -27,16 +28,25 @@ def set_config(config: Config) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = None
+    tasks: list[asyncio.Task] = []
     if _config.ffmpeg.output_dir:
         recover(_config.ffmpeg.output_dir)
-        task = asyncio.create_task(worker_loop(
+        tasks.append(asyncio.create_task(worker_loop(
             ffmpeg_bin=_config.ffmpeg.bin,
             output_dir=_config.ffmpeg.output_dir,
             extra_args=_config.ffmpeg.extra_args,
-        ))
+        )))
+        if worker_state.master_url and worker_state.slave_config_id:
+            tasks.append(asyncio.create_task(poller_loop(
+                master_url=worker_state.master_url,
+                slave_config_id=worker_state.slave_config_id,
+                path_prefix=_config.path_prefix,
+                batch_size=_config.worker.batch_size,
+                poll_interval=_config.worker.poll_interval,
+                output_dir=_config.ffmpeg.output_dir,
+            )))
     yield
-    if task:
+    for task in tasks:
         task.cancel()
         try:
             await task

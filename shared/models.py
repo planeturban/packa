@@ -9,6 +9,7 @@ from .base import Base
 
 class FileStatus(str, enum.Enum):
     PENDING = "pending"
+    ASSIGNED = "assigned"     # Claimed by a slave, not yet processing
     PROCESSING = "processing"
     COMPLETE = "complete"
     DISCARDED = "discarded"   # Output was larger than source — new file deleted

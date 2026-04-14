@@ -6,3 +6,10 @@
 # Prefix to strip from file paths before sending to slaves.
 # Example: /mnt/data/katalog1/film.mkv → katalog1/film.mkv
 prefix = "/mnt/data/"
+
+[scan]
+# Directory to scan recursively when POST /scan/start is called.
+dir = "/mnt/data/"
+
+# File extensions to include. Case-insensitive.
+extensions = [".mkv", ".mp4", ".avi", ".mov"]

@@ -27,7 +27,8 @@ class WorkerState:
         self.queue: asyncio.Queue[Job] = asyncio.Queue()
         self.progress: FfmpegProgress | None = None
         # Set after registration with master
-        self.slave_id: int | None = None
+        self.slave_id: int | None = None          # numeric ID assigned by master
+        self.slave_config_id: str | None = None   # string ID from config file
         self.master_url: str | None = None
 
     def start(self, record_id: int) -> None:

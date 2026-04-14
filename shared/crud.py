@@ -30,6 +30,10 @@ def get_file_record(db: Session, record_id: int) -> FileRecord | None:
     return db.query(FileRecord).filter(FileRecord.id == record_id).first()
 
 
+def get_record_by_path(db: Session, file_path: str) -> FileRecord | None:
+    return db.query(FileRecord).filter(FileRecord.file_path == file_path).first()
+
+
 def get_all_records(db: Session, status: FileStatus | None = None) -> list[FileRecord]:
     q = db.query(FileRecord)
     if status is not None:

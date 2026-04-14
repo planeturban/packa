@@ -70,6 +70,7 @@ async def _main(
         print(f"[slave] registering with master at {master_host}:{master_port}")
         record = _register_with_master(master_host, master_port, slave_id, effective_host, api_port)
         worker_state.slave_id = record["id"]
+        worker_state.slave_config_id = slave_id
         worker_state.master_url = f"http://{master_host}:{master_port}"
         print(f"[slave] registered as slave-{record['id']}")
 
