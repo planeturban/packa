@@ -14,7 +14,6 @@ class SlaveInfo:
     config_id: str
     host: str
     api_port: int
-    file_port: int
 
     def __str__(self) -> str:
         return f"slave-{self.id} '{self.config_id}' ({self.host}  api={self.api_port})"
@@ -26,17 +25,16 @@ class SlaveRegistry:
         self._next_id: int = 1
         self._cycle: Iterator[SlaveInfo] | None = None
 
-    def register(self, config_id: str, host: str, api_port: int, file_port: int) -> SlaveInfo:
+    def register(self, config_id: str, host: str, api_port: int) -> SlaveInfo:
         # If a slave with this config_id already exists, update it in place.
         existing = next((s for s in self._slaves.values() if s.config_id == config_id), None)
         if existing:
             existing.host = host
             existing.api_port = api_port
-            existing.file_port = file_port
             self._rebuild_cycle()
             return existing
 
-        slave = SlaveInfo(id=self._next_id, config_id=config_id, host=host, api_port=api_port, file_port=file_port)
+        slave = SlaveInfo(id=self._next_id, config_id=config_id, host=host, api_port=api_port)
         self._slaves[self._next_id] = slave
         self._next_id += 1
         self._rebuild_cycle()

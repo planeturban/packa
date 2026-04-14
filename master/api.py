@@ -112,7 +112,6 @@ class SlaveRegister(BaseModel):
     config_id: str
     host: str
     api_port: int
-    file_port: int
 
 
 class SlaveOut(BaseModel):
@@ -120,7 +119,6 @@ class SlaveOut(BaseModel):
     config_id: str
     host: str
     api_port: int
-    file_port: int
 
 
 class TransferRequest(BaseModel):
@@ -147,7 +145,7 @@ class ClaimOut(BaseModel):
 
 @app.post("/slaves", response_model=SlaveOut, status_code=201)
 def register_slave(body: SlaveRegister):
-    slave = registry.register(body.config_id, body.host, body.api_port, body.file_port)
+    slave = registry.register(body.config_id, body.host, body.api_port)
     print(f"[master] registered: {slave}")
     return slave
 

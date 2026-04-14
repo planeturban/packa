@@ -26,6 +26,7 @@ import uvicorn
 from shared.config import Config, load_slave
 
 from .api import app, set_config
+from .identity import get_or_create_slave_id, get_stored_slave_id
 from .state import worker_state
 
 
@@ -46,7 +47,7 @@ def _register_with_master(
     api_port: int,
 ) -> dict:
     url = f"http://{master_host}:{master_port}/slaves"
-    payload = {"config_id": config_id, "host": advertise_host, "api_port": api_port, "file_port": 0}
+    payload = {"config_id": config_id, "host": advertise_host, "api_port": api_port}
     with httpx.Client(timeout=10) as client:
         response = client.post(url, json=payload)
         response.raise_for_status()
@@ -108,7 +109,18 @@ def main() -> None:
 
     config = load_slave(args.config) if args.config else Config()
     set_config(config)
-    print(f"[slave] id: {config.slave_id!r}")
+    db_id = get_stored_slave_id()
+    if config.slave_id:
+        if db_id and db_id != config.slave_id:
+            print(f"[slave] id from config: {config.slave_id!r} (db has a different id: {db_id!r})")
+        elif db_id:
+            print(f"[slave] id from config: {config.slave_id!r} (matches db)")
+        slave_id = config.slave_id
+    else:
+        slave_id = get_or_create_slave_id()
+        source = "db" if db_id else "generated"
+        print(f"[slave] id {source}: {slave_id!r}")
+
     print(f"[slave] path_prefix: {config.path_prefix!r}")
 
     asyncio.run(_main(
@@ -117,7 +129,7 @@ def main() -> None:
         master_host=args.master_host,
         master_port=args.master_port,
         advertise_host=args.advertise_host,
-        slave_id=config.slave_id,
+        slave_id=slave_id,
     ))
 
 

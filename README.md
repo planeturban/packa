@@ -151,7 +151,7 @@ python -m slave.main --master-host 192.168.1.5 --config packa.toml
 POST /slaves
 ```
 ```json
-{ "config_id": "storage-01", "host": "192.168.1.10", "api_port": 8000, "file_port": 0 }
+{ "config_id": "storage-01", "host": "192.168.1.10", "api_port": 8000 }
 ```
 Called automatically by the slave on startup.
 

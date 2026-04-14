@@ -24,6 +24,10 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 [slave]
 # Unique identifier for this slave. Used by master to track which slave
 # holds which file. Must be unique across all slaves.
+#
+# If omitted, the slave looks for a previously generated ID in its local
+# database (slave.db). If none exists, a UUID is generated and stored there
+# so the same ID is reused on subsequent restarts.
 id = "storage-01"
 
 [slave.paths]
