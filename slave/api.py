@@ -139,3 +139,16 @@ def update_status(record_id: int, body: StatusUpdate, db: Session = Depends(get_
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
     return record
+
+
+@app.post("/conversion/stop", response_model=SlaveStatus)
+def stop_conversion():
+    if not worker_state.active or worker_state.proc is None:
+        raise HTTPException(status_code=409, detail="No conversion running")
+    worker_state.proc.terminate()
+    return SlaveStatus(
+        state="processing",
+        record_id=worker_state.record_id,
+        queued=worker_state.queued,
+        progress=None,
+    )

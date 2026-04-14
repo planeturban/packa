@@ -1,21 +1,16 @@
 """
 Master entry point.
 
-  Port 9000 (default) — REST API for slave registration and metadata transfer.
+  Port 9000 (default) — REST API for slave registration and job distribution.
 
 Flags:
-  --bind       Address to bind the API server (default: 0.0.0.0)
+  --bind       Address to bind the API server (default: localhost; "any" → 0.0.0.0)
   --api-port   Port for the API (default: 9000)
-  --config     Path to JSON config file
-
-Config file format (JSON):
-  {
-    "path_prefix": "/mnt/data/"
-  }
+  --config     Path to TOML config file
 
 Usage:
-  python -m master.master --config /etc/packa/master.json
-  python -m master.master --bind 0.0.0.0 --api-port 9000
+  python -m master.master --config packa.toml
+  python -m master.master --bind any --config packa.toml
 """
 
 import argparse
@@ -23,7 +18,7 @@ import asyncio
 
 import uvicorn
 
-from shared.config import Config, load as load_config
+from shared.config import Config, load_master
 
 from .api import app, set_config
 
@@ -36,8 +31,8 @@ async def _main(bind: str, api_port: int) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Packa master")
     parser.add_argument(
-        "--bind", default="0.0.0.0",
-        help="Address to bind the API server (default: 0.0.0.0)",
+        "--bind", default="localhost",
+        help='Address to bind the API server (default: localhost; use "any" for 0.0.0.0)',
     )
     parser.add_argument(
         "--api-port", type=int, default=9000,
@@ -48,12 +43,13 @@ def main() -> None:
         help="Path to JSON config file",
     )
     args = parser.parse_args()
+    bind = "0.0.0.0" if args.bind == "any" else args.bind
 
-    config = load_config(args.config) if args.config else Config()
+    config = load_master(args.config) if args.config else Config()
     set_config(config)
     print(f"[master] path_prefix: {config.path_prefix!r}")
 
-    asyncio.run(_main(bind=args.bind, api_port=args.api_port))
+    asyncio.run(_main(bind=bind, api_port=args.api_port))
 
 
 if __name__ == "__main__":

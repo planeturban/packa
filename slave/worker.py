@@ -161,6 +161,7 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        worker_state.proc = proc
 
         record = get_file_record(db, job.record_id)
         if record:

@@ -26,6 +26,7 @@ class WorkerState:
         self.record_id: int | None = None
         self.queue: asyncio.Queue[Job] = asyncio.Queue()
         self.progress: FfmpegProgress | None = None
+        self.proc: asyncio.subprocess.Process | None = None  # running ffmpeg process
         # Set after registration with master
         self.slave_id: int | None = None          # numeric ID assigned by master
         self.slave_config_id: str | None = None   # string ID from config file
@@ -35,11 +36,13 @@ class WorkerState:
         self.active = True
         self.record_id = record_id
         self.progress = None
+        self.proc = None
 
     def stop(self) -> None:
         self.active = False
         self.record_id = None
         self.progress = None
+        self.proc = None
 
     @property
     def queued(self) -> int:

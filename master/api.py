@@ -288,10 +288,10 @@ class ScanStatus(BaseModel):
 async def scan_start():
     if _scan.running:
         raise HTTPException(status_code=409, detail="Scan already running")
-    if not _config.scan.dir:
-        raise HTTPException(status_code=400, detail="scan.dir not configured")
+    if not _config.path_prefix:
+        raise HTTPException(status_code=400, detail="master.paths.prefix not configured")
     extensions = {e if e.startswith(".") else f".{e}" for e in _config.scan.extensions}
-    _scan._task = asyncio.create_task(_scan_task(_config.scan.dir, extensions))
+    _scan._task = asyncio.create_task(_scan_task(_config.path_prefix, extensions))
     return ScanStatus(running=True, found=0, skipped=0, errors=0)
 
 

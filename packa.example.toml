@@ -1,0 +1,58 @@
+# Packa — configuration
+# Copy to packa.toml and adjust values, then start with:
+#   python -m master.master --config packa.toml
+#   python -m slave.main   --config packa.toml
+
+# ---------------------------------------------------------------------------
+# Master
+# ---------------------------------------------------------------------------
+
+[master.paths]
+# Root path for the master node.
+# - Stripped from file paths before sending to slaves (e.g. /mnt/data/shows/ep1.mkv → shows/ep1.mkv)
+# - Used as the root directory for POST /scan/start
+prefix = "/mnt/data/"
+
+[master.scan]
+# File extensions to include when scanning (case-insensitive).
+extensions = [".mkv", ".mp4", ".avi", ".mov"]
+
+# ---------------------------------------------------------------------------
+# Slave
+# ---------------------------------------------------------------------------
+
+[slave]
+# Unique identifier for this slave. Used by master to track which slave
+# holds which file. Must be unique across all slaves.
+id = "storage-01"
+
+[slave.paths]
+# Prefix prepended to relative paths received from master.
+# Example: shows/ep1.mkv → /mnt/files/shows/ep1.mkv
+# If omitted, master.paths.prefix is used instead.
+prefix = "/mnt/files/"
+
+[slave.ffmpeg]
+# Path to the ffmpeg binary.
+bin = "ffmpeg"
+
+# Directory where converted files are written.
+# The output file keeps the same name as the source.
+# Leave empty to disable ffmpeg on this slave.
+output_dir = "/mnt/output"
+
+# Optional extra arguments passed to ffmpeg, as a single string.
+# All streams (video, audio, subtitles, etc.) are always copied with -map 0 -c copy.
+# Leave empty to pass no extra arguments.
+extra_args = ""
+
+# Example with metadata:
+# extra_args = "-metadata comment='processed by packa'"
+
+[slave.worker]
+# Number of jobs to claim from master in a single request.
+# Increase to keep the slave busy when master latency is high.
+batch_size = 1
+
+# Seconds between poll attempts when the job queue is empty.
+poll_interval = 5

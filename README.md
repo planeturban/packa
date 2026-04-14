@@ -1,32 +1,32 @@
 # Packa
 
-Distributed system for transferring video file metadata from a master to one or more slaves. The master receives file paths via API, collects metadata and distributes it to registered slaves using round-robin. Slaves optionally run ffmpeg on received files.
+Distributed system for converting video files. The master receives file paths via API or directory scan, stores metadata, and distributes work to one or more slaves. Slaves pull jobs from master, run ffmpeg, and report results back.
 
 No files are transferred over the network — slaves access files directly via the filesystem. Only metadata travels over HTTP.
 
 ## Architecture
 
 ```
-master/          — receives file paths, collects metadata, distributes to slaves
-slave/           — receives metadata, runs ffmpeg, reports back to master
+master/          — accepts file paths, stores metadata, distributes jobs to slaves
+slave/           — polls master for jobs, runs ffmpeg, reports back
 shared/          — common models, schemas, CRUD and config (used by both)
 ```
 
 ### Ports
 
-| Service        | Protocol | Default |
-|----------------|----------|---------|
-| Master API     | HTTP     | 9000    |
-| Slave API      | HTTP     | 8000    |
+| Service    | Protocol | Default |
+|------------|----------|---------|
+| Master API | HTTP     | 9000    |
+| Slave API  | HTTP     | 8000    |
 
 ### Databases
 
 Each node has its own SQLite database with an identical schema. The master assigns the record ID — the slave stores the record under the same ID.
 
-| Node   | File       |
-|--------|------------|
-| Master | master.db  |
-| Slave  | slave.db   |
+| Node   | File      |
+|--------|-----------|
+| Master | master.db |
+| Slave  | slave.db  |
 
 ### Path prefix translation
 
@@ -39,6 +39,12 @@ Master file:  /mnt/data/shows/ep1.mkv
               prepend slave prefix "/mnt/files/"
 Slave file:   /mnt/files/shows/ep1.mkv
 ```
+
+### Pull model
+
+Slaves poll master for work. When a slave's queue is empty, it calls `POST /jobs/claim` to fetch one or more pending jobs. The master marks those records as `assigned` and returns relative file paths. The slave creates local DB records, applies its path prefix, and enqueues the jobs for ffmpeg.
+
+If master goes down, the slave continues processing whatever is already in its queue.
 
 ---
 
@@ -54,32 +60,41 @@ Requires Python 3.11+. ffmpeg and ffprobe must be installed on slave nodes.
 
 ## Configuration
 
-Copy the example files and adjust:
+Both master and slave share one config file:
 
 ```bash
-cp master.example.toml master.toml
-cp slave.example.toml slave.toml
+cp packa.example.toml packa.toml
 ```
 
-### Master config
+### Master section
 
 ```toml
-[paths]
-prefix = "/mnt/data/"   # stripped from file_path before sending to slave
+[master.paths]
+prefix = "/mnt/data/"   # root path: stripped from file paths sent to slaves,
+                        # and used as the scan root for POST /scan/start
+
+[master.scan]
+extensions = [".mkv", ".mp4", ".avi", ".mov"]
 ```
 
-### Slave config
+### Slave section
 
 ```toml
+[slave]
 id = "storage-01"       # unique string ID, used by master to track which slave holds which file
 
-[paths]
+[slave.paths]
 prefix = "/mnt/files/"  # prepended to relative paths received from master
+                        # if omitted, master.paths.prefix is used instead
 
-[ffmpeg]
+[slave.ffmpeg]
 bin = "ffmpeg"
-output_dir = "/mnt/output"   # directory for converted files; omit to disable ffmpeg
+output_dir = "/mnt/output"   # directory for converted files; leave empty to disable ffmpeg
 extra_args = ""              # extra ffmpeg arguments (appended after -map 0 -c copy)
+
+[slave.worker]
+batch_size = 1       # number of jobs to claim from master per poll
+poll_interval = 5    # seconds between poll attempts when queue is empty
 ```
 
 ---
@@ -100,7 +115,7 @@ python -m master.master [--bind ADDRESS] [--api-port PORT] [--config FILE]
 
 **Example:**
 ```bash
-python -m master.master --config master.toml
+python -m master.master --config packa.toml
 ```
 
 ### Slave
@@ -122,7 +137,7 @@ python -m slave.main [--bind ADDRESS] [--api-port PORT]
 
 **Example:**
 ```bash
-python -m slave.main --master-host 192.168.1.5 --config slave.toml
+python -m slave.main --master-host 192.168.1.5 --config packa.toml
 ```
 
 ---
@@ -150,24 +165,36 @@ GET /slaves
 DELETE /slaves/{id}
 ```
 
-#### Start a transfer
+#### Add a single file
 ```
 POST /transfer
 ```
 ```json
 { "file_path": "/mnt/data/shows/ep1.mkv" }
 ```
+Collects metadata for the file and creates a `pending` record. Returns the full record.
 
-Response `201 Created`:
+#### Claim jobs (pull model)
+```
+POST /jobs/claim
+```
 ```json
-{
-  "record_id": 42,
-  "slave_id": 1,
-  "slave_host": "192.168.1.10",
-  "file_name": "ep1.mkv",
-  "file_path": "/mnt/data/shows/ep1.mkv",
-  "checksum": "a3f9..."
-}
+{ "slave_id": "storage-01", "count": 1 }
+```
+Returns up to `count` pending records and marks them `assigned`. Called automatically by the slave poller.
+
+Response:
+```json
+[
+  {
+    "id": 42,
+    "file_name": "ep1.mkv",
+    "file_path": "shows/ep1.mkv",
+    "c_time": 1744123456.789,
+    "m_time": 1744123456.789,
+    "checksum": "a3f9..."
+  }
+]
 ```
 
 #### Sync record from slave
@@ -182,8 +209,29 @@ Called automatically by the slave after ffmpeg finishes. Master fetches the full
 #### Get records
 ```
 GET /files
+GET /files?status=pending
 GET /files/{id}
 ```
+
+#### Directory scan
+```
+POST /scan/start    — start a background scan of the configured scan.dir
+POST /scan/stop     — cancel a running scan
+GET  /scan/status   — current scan progress
+```
+
+`POST /scan/start` returns `202 Accepted` immediately. The scan runs in the background and creates a `pending` record for each matching file not already in the database.
+
+`GET /scan/status` response:
+```json
+{ "running": true, "found": 12, "skipped": 4, "errors": 0 }
+```
+
+| Field | Description |
+|-------|-------------|
+| `found` | New records created during this scan |
+| `skipped` | Files already in the database |
+| `errors` | Files that could not be read |
 
 ---
 
@@ -233,7 +281,7 @@ Filterable by status. Response:
   "c_time": 1744123456.789,
   "m_time": 1744123456.789,
   "checksum": "a3f9...",
-  "slave_id": null,
+  "slave_id": "storage-01",
   "status": "complete",
   "pid": 12345,
   "output_size": 820000000,
@@ -258,7 +306,8 @@ PATCH /files/{id}/status
 
 | Status | Description |
 |--------|-------------|
-| `pending` | Record created, ffmpeg not yet started |
+| `pending` | Record created, not yet claimed by a slave |
+| `assigned` | Claimed by a slave, not yet processing |
 | `processing` | ffmpeg is running |
 | `complete` | ffmpeg finished and output is smaller than source |
 | `discarded` | ffmpeg finished but output was not smaller than source — output file deleted |
@@ -297,19 +346,28 @@ ffmpeg -i {file_path} -map 0 -c copy [extra_args] -progress pipe:1 -nostats {out
 
 ```bash
 # 1. Start master
-python -m master.master --config master.toml
+python -m master.master --config packa.toml
 
 # 2. Start one or more slaves (each registers with master automatically)
-python -m slave.main --master-host 192.168.1.5 --config slave.toml
+python -m slave.main --master-host 192.168.1.5 --config packa.toml
 
-# 3. Trigger a transfer
+# 3a. Queue a single file
 curl -X POST http://localhost:9000/transfer \
      -H "Content-Type: application/json" \
      -d '{"file_path": "/mnt/data/shows/ep1.mkv"}'
 
-# 4. Poll status on slave
+# 3b. Or scan an entire directory
+curl -X POST http://localhost:9000/scan/start
+
+# 4. Poll scan progress
+curl http://localhost:9000/scan/status
+
+# 5. Check unclaimed jobs on master
+curl http://localhost:9000/files?status=pending
+
+# 6. Poll worker status on slave
 curl http://192.168.1.10:8000/status
 
-# 5. Check record on master (updated automatically when ffmpeg finishes)
+# 7. Check record on master (updated automatically when ffmpeg finishes)
 curl http://localhost:9000/files/42
 ```

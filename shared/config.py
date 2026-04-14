@@ -1,12 +1,11 @@
 import tomllib
 from dataclasses import dataclass, field
-from pathlib import Path
 
 
 @dataclass
 class ScanConfig:
-    dir: str = ""                                          # Directory to scan recursively
-    extensions: list[str] = field(                        # File extensions to include
+    # scan directory is always master's path_prefix — no separate setting
+    extensions: list[str] = field(
         default_factory=lambda: [".mkv", ".mp4", ".avi", ".mov"]
     )
 
@@ -38,18 +37,33 @@ class Config:
             self.path_prefix += "/"
 
 
-def load(config_path: str) -> Config:
+def load_master(config_path: str) -> Config:
     with open(config_path, "rb") as f:
         data = tomllib.load(f)
-
-    paths = data.get("paths", {})
-    ffmpeg_data = data.get("ffmpeg", {})
-    worker_data = data.get("worker", {})
-    scan_data = data.get("scan", {})
-
+    master = data.get("master", {})
+    paths = master.get("paths", {})
+    scan_data = master.get("scan", {})
     return Config(
-        slave_id=data.get("id", ""),
         path_prefix=paths.get("prefix", ""),
+        scan=ScanConfig(
+            extensions=scan_data.get("extensions", [".mkv", ".mp4", ".avi", ".mov"]),
+        ),
+    )
+
+
+def load_slave(config_path: str) -> Config:
+    with open(config_path, "rb") as f:
+        data = tomllib.load(f)
+    master_prefix = data.get("master", {}).get("paths", {}).get("prefix", "")
+    slave = data.get("slave", {})
+    paths = slave.get("paths", {})
+    ffmpeg_data = slave.get("ffmpeg", {})
+    worker_data = slave.get("worker", {})
+    # Fall back to master's prefix if slave doesn't define its own
+    path_prefix = paths.get("prefix", "") or master_prefix
+    return Config(
+        slave_id=slave.get("id", ""),
+        path_prefix=path_prefix,
         ffmpeg=FfmpegConfig(
             bin=ffmpeg_data.get("bin", "ffmpeg"),
             output_dir=ffmpeg_data.get("output_dir", ""),
@@ -58,9 +72,5 @@ def load(config_path: str) -> Config:
         worker=WorkerConfig(
             batch_size=worker_data.get("batch_size", 1),
             poll_interval=worker_data.get("poll_interval", 5),
-        ),
-        scan=ScanConfig(
-            dir=scan_data.get("dir", ""),
-            extensions=scan_data.get("extensions", [".mkv", ".mp4", ".avi", ".mov"]),
         ),
     )
