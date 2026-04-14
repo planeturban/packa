@@ -7,7 +7,7 @@ Distributed system where a **master** node accepts file paths via API or directo
 ```
 master/             Master node — accepts file paths, manages job queue, distributes to slaves
 slave/              Slave node — polls master for jobs, runs ffmpeg, reports back
-shared/             Code shared by both nodes (models, schemas, crud, config)
+shared/             Code shared by both nodes (models, schemas, crud, config, tls)
 packa.example.toml  Single config file for both master and slave
 requirements.txt
 ```
@@ -20,7 +20,8 @@ requirements.txt
 | `shared/models.py` | `FileRecord` ORM model and `FileStatus` enum |
 | `shared/schemas.py` | Pydantic schemas (`FileRecordCreate`, `FileRecordOut`, `StatusUpdate`) |
 | `shared/crud.py` | All DB operations — takes a `Session` parameter, no DB knowledge of its own |
-| `shared/config.py` | `Config` + sub-configs; `load_master(path)` and `load_slave(path)` parse TOML |
+| `shared/config.py` | `Config` + sub-configs including `TlsConfig`; `load_master(path)` and `load_slave(path)` parse TOML |
+| `shared/tls.py` | TLS helpers: `scheme()`, `httpx_kwargs()`, `uvicorn_kwargs()` — all take a `TlsConfig` |
 
 ## Databases
 
@@ -30,6 +31,8 @@ Each node has its own SQLite database with **identical schema**.
 - `slave.db` — created in the working directory when slave starts
 
 Master assigns the record ID. Slave stores the record under the same ID, so both databases share IDs for the same file.
+
+The slave also has a `slave_settings` table (key/value) used to persist the auto-generated slave ID.
 
 ## FileStatus enum
 
@@ -50,7 +53,7 @@ PENDING → ASSIGNED → PROCESSING → COMPLETE
 
 | File | Purpose |
 |------|---------|
-| `master/master.py` | CLI (`--bind`, `--api-port`, `--config`), starts uvicorn |
+| `master/master.py` | CLI (`--bind`, `--api-port`, `--config`), starts uvicorn (with TLS if configured) |
 | `master/api.py` | FastAPI app; module-level `_config` set via `set_config()` before uvicorn starts |
 | `master/registry.py` | In-memory `SlaveRegistry`; slaves identified by numeric `id` (int, auto) and `config_id` (string, from config file) |
 | `master/scanner.py` | `collect(file_path) → VideoFile` — reads stat, computes checksum |
@@ -77,12 +80,20 @@ PENDING → ASSIGNED → PROCESSING → COMPLETE
 
 | File | Purpose |
 |------|---------|
-| `slave/main.py` | CLI (`--bind`, `--api-port`, `--master-host`, `--master-port`, `--advertise-host`, `--config`); registers with master, sets `worker_state.slave_id`, `slave_config_id`, `master_url` |
-| `slave/api.py` | FastAPI app; lifespan starts `worker_loop` and `poller_loop` |
+| `slave/main.py` | CLI (`--bind`, `--api-port`, `--master-host`, `--master-port`, `--advertise-host`, `--config`); resolves slave ID, registers with master, sets `worker_state` fields |
+| `slave/api.py` | FastAPI app; lifespan sets `worker_state.tls`, starts `worker_loop` and `poller_loop` |
 | `slave/worker.py` | `worker_loop` — processes one job at a time from `worker_state.queue`; `recover()` called at startup |
 | `slave/poller.py` | `poller_loop` — polls master every `poll_interval` seconds when queue is empty; claims jobs and enqueues them |
-| `slave/state.py` | `WorkerState` (active, record_id, queue, progress, slave_id, slave_config_id, master_url) and `FfmpegProgress` dataclass |
+| `slave/state.py` | `WorkerState` (active, record_id, queue, progress, proc, slave_id, slave_config_id, master_url, tls) and `FfmpegProgress` dataclass |
+| `slave/identity.py` | `get_or_create_slave_id()` / `get_stored_slave_id()` — persists slave ID in `slave_settings` table |
 | `slave/database.py` | Engine + `SessionLocal` + `get_db()` for `slave.db` |
+
+**Slave ID resolution** (in `slave/main.py`):
+1. Use `slave.id` from config if set
+2. Otherwise look up persisted ID from `slave_settings` table in `slave.db`
+3. Otherwise generate a UUID4, store it, and use it
+
+If config has an ID and the DB has a different one, a warning is logged.
 
 **Worker queue:** jobs are `asyncio.Queue` items. Poller and API both enqueue; worker processes sequentially. At startup `recover()`:
 1. Finds `PROCESSING` records → deletes partial output files → resets to `PENDING`
@@ -101,16 +112,40 @@ All streams copied. `ffprobe` (derived from `ffmpeg.bin` path) fetches duration 
 **Key API endpoints:**
 - `GET /status` — idle/processing state, queue depth, live ffmpeg progress
 - `GET /files?status=...` — filterable, all fields including `output_size`, `started_at`, `finished_at`
-- `POST /files` — called by master only (creates record + enqueues ffmpeg job); also used indirectly by poller
+- `POST /conversion/stop` — terminates the running ffmpeg process (sets status to ERROR)
+
+## mTLS
+
+mTLS is optional and controlled entirely by config. All HTTP calls (registration, job claim, sync) use `https://` and client certificates when `tls.enabled` is true.
+
+`shared/tls.py` provides three helpers:
+- `scheme(tls)` — returns `"https"` or `"http"`
+- `httpx_kwargs(tls)` — returns `{"verify": ca, "cert": (cert, key)}` or `{}`
+- `uvicorn_kwargs(tls)` — returns uvicorn SSL kwargs including `ssl_cert_reqs=ssl.CERT_REQUIRED`, or `{}`
+
+**Behaviour matrix:**
+
+| Master TLS | Slave TLS | Result |
+|------------|-----------|--------|
+| enabled | enabled | mTLS on all connections |
+| disabled | disabled | plain HTTP |
+| enabled | disabled | master rejects slave (no client cert) |
+| disabled | enabled | slave connects without TLS (master has no TLS) |
+
+The fourth case works because the slave only uses TLS when `_config.tls.enabled` is true. If the slave has no TLS config, it calls plain HTTP regardless.
+
+`worker_state.tls` is set in `slave/api.py` lifespan (from `_config.tls`) so `worker.py` and `poller.py` can use it without importing `_config`.
 
 ## Config file (TOML)
 
 Both master and slave use the same config file (`packa.toml`). Parsed with `tomllib` (stdlib, Python 3.11+).
 
-- `load_master(path)` reads the `[master]` section
-- `load_slave(path)` reads the `[slave]` section; if `slave.paths.prefix` is empty, falls back to `master.paths.prefix`
+- `load_master(path)` reads the `[master]` section and `[tls]` / `[master.tls]`
+- `load_slave(path)` reads the `[slave]` section and `[tls]` / `[slave.tls]`; if `slave.paths.prefix` is empty, falls back to `master.paths.prefix`
 
-**Master config fields (`[master]`):**
+TLS: `[tls]` holds shared fields (typically `ca`). `[master.tls]` / `[slave.tls]` hold node-specific fields (cert, key). Node-specific values override shared ones.
+
+**Master config fields:**
 
 ```toml
 [master.paths]
@@ -119,13 +154,17 @@ prefix = "/mnt/data/"      # root path: stripped from file paths sent to slaves
 
 [master.scan]
 extensions = [".mkv", ".mp4", ".avi", ".mov"]
+
+[master.tls]               # optional — omit to disable mTLS
+cert = "/etc/packa/master.crt"
+key  = "/etc/packa/master.key"
 ```
 
-**Slave config fields (`[slave]`):**
+**Slave config fields:**
 
 ```toml
 [slave]
-id = "storage-01"          # unique string ID sent to master on registration
+id = "storage-01"          # unique string ID; if omitted, persisted UUID from slave.db is used
 
 [slave.paths]
 prefix = "/mnt/files/"     # prepended to relative paths received from master
@@ -139,6 +178,17 @@ extra_args = ""            # appended after -map 0 -c copy, parsed with shlex
 [slave.worker]
 batch_size = 1             # jobs to claim per poll
 poll_interval = 5          # seconds between poll attempts
+
+[slave.tls]                # optional — omit to disable mTLS
+cert = "/etc/packa/slave.crt"
+key  = "/etc/packa/slave.key"
+```
+
+**Shared TLS field:**
+
+```toml
+[tls]
+ca = "/etc/packa/ca.crt"   # CA cert for verifying the other side; shared by master and slave
 ```
 
 ## Running
@@ -158,7 +208,9 @@ python -m slave.main --master-host 192.168.1.5 --config packa.toml
 - **Pull model:** slaves poll master for work via `POST /jobs/claim`. Master never pushes. Slaves continue processing queued jobs if master goes down.
 - **Shared ID:** master auto-increments the ID, returns it in `/jobs/claim`. Slave stores the record under that ID. Both databases use the same ID for the same file.
 - **slave_id column:** `FileRecord.slave_id` (string) in master's DB records which slave holds the file, using the slave's config `id` field.
+- **Persistent slave ID:** if `slave.id` is omitted from config, the ID is looked up in `slave_settings` in `slave.db`. If absent, a UUID4 is generated and stored so the same ID survives restarts.
 - **No file transfer:** only metadata travels over HTTP. Files are accessed by slaves directly via the filesystem (path prefix translation).
-- **Single config file:** `packa.toml` has `[master]` and `[slave]` sections. Each node reads only its own section via `load_master()` / `load_slave()`.
+- **Single config file:** `packa.toml` has `[master]`, `[slave]`, and optional `[tls]` sections. Each node reads only its own section via `load_master()` / `load_slave()`.
+- **mTLS optional:** enabled when all three TLS fields (cert, key, ca) are set for a node. Implemented via `shared/tls.py` helpers used by uvicorn setup and every httpx call.
 - **asyncio throughout:** uvicorn, worker loop, poller loop, ffmpeg subprocess and progress streaming all share one event loop per process.
-- **Config before app:** `set_config()` must be called before uvicorn starts. It sets a module-level `_config` in `api.py`. The lifespan reads `_config` to start (or skip) the worker and poller loops.
+- **Config before app:** `set_config()` must be called before uvicorn starts. It sets a module-level `_config` in `api.py`. The lifespan reads `_config` to start (or skip) the worker and poller loops, and sets `worker_state.tls`.

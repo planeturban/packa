@@ -25,6 +25,7 @@ from pathlib import Path
 import httpx
 
 from shared.crud import get_file_record, update_conversion_result, update_status
+from shared.tls import httpx_kwargs
 from shared.models import FileRecord, FileStatus
 
 from .database import SessionLocal
@@ -137,7 +138,7 @@ async def _notify_master(record_id: int) -> None:
         return
     url = f"{worker_state.master_url}/files/{record_id}/sync"
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, **httpx_kwargs(worker_state.tls)) as client:
             response = await client.post(url, json={"slave_id": worker_state.slave_id})
             response.raise_for_status()
         print(f"[worker] master notified for record {record_id}")

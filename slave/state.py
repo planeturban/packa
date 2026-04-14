@@ -1,6 +1,8 @@
 import asyncio
 from dataclasses import dataclass
 
+from shared.config import TlsConfig
+
 
 @dataclass
 class Job:
@@ -31,6 +33,7 @@ class WorkerState:
         self.slave_id: int | None = None          # numeric ID assigned by master
         self.slave_config_id: str | None = None   # string ID from config file
         self.master_url: str | None = None
+        self.tls: TlsConfig = TlsConfig()
 
     def start(self, record_id: int) -> None:
         self.active = True

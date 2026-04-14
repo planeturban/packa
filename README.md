@@ -9,15 +9,15 @@ No files are transferred over the network — slaves access files directly via t
 ```
 master/          — accepts file paths, stores metadata, distributes jobs to slaves
 slave/           — polls master for jobs, runs ffmpeg, reports back
-shared/          — common models, schemas, CRUD and config (used by both)
+shared/          — common models, schemas, CRUD, config and TLS helpers (used by both)
 ```
 
 ### Ports
 
-| Service    | Protocol | Default |
-|------------|----------|---------|
-| Master API | HTTP     | 9000    |
-| Slave API  | HTTP     | 8000    |
+| Service    | Protocol    | Default |
+|------------|-------------|---------|
+| Master API | HTTP(S)     | 9000    |
+| Slave API  | HTTP(S)     | 8000    |
 
 ### Databases
 
@@ -82,6 +82,7 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 ```toml
 [slave]
 id = "storage-01"       # unique string ID, used by master to track which slave holds which file
+                        # if omitted, a UUID is loaded from slave.db (or generated on first run)
 
 [slave.paths]
 prefix = "/mnt/files/"  # prepended to relative paths received from master
@@ -97,6 +98,25 @@ batch_size = 1       # number of jobs to claim from master per poll
 poll_interval = 5    # seconds between poll attempts when queue is empty
 ```
 
+### mTLS (optional)
+
+Mutual TLS can be enabled by adding certificate paths to the config. All three fields must be set for a node to enable mTLS.
+
+```toml
+[tls]
+ca = "/etc/packa/ca.crt"      # CA certificate — shared by master and slave
+
+[master.tls]
+cert = "/etc/packa/master.crt"
+key  = "/etc/packa/master.key"
+
+[slave.tls]
+cert = "/etc/packa/slave.crt"
+key  = "/etc/packa/slave.key"
+```
+
+If master has mTLS enabled, slaves without a valid client certificate are rejected. If master has no mTLS, slaves use plain HTTP regardless of their own TLS config.
+
 ---
 
 ## Running
@@ -109,7 +129,7 @@ python -m master.master [--bind ADDRESS] [--api-port PORT] [--config FILE]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--bind` | `0.0.0.0` | Address to bind the API server |
+| `--bind` | `localhost` | Address to bind the API server (`any` → `0.0.0.0`) |
 | `--api-port` | `9000` | API port |
 | `--config` | — | Path to TOML config file |
 
@@ -128,9 +148,9 @@ python -m slave.main [--bind ADDRESS] [--api-port PORT]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--bind` | `0.0.0.0` | Address to bind the API server |
+| `--bind` | `localhost` | Address to bind the API server (`any` → `0.0.0.0`) |
 | `--api-port` | `8000` | API port |
-| `--master-host` | — | Master hostname/IP (omit to run standalone) |
+| `--master-host` | `localhost` | Master hostname/IP (omit `--master-host` to skip registration) |
 | `--master-port` | `9000` | Master API port |
 | `--advertise-host` | auto | IP/hostname advertised to master. Auto-detected if omitted |
 | `--config` | — | Path to TOML config file |
@@ -215,7 +235,7 @@ GET /files/{id}
 
 #### Directory scan
 ```
-POST /scan/start    — start a background scan of the configured scan.dir
+POST /scan/start    — start a background scan of master.paths.prefix
 POST /scan/stop     — cancel a running scan
 GET  /scan/status   — current scan progress
 ```
@@ -265,6 +285,12 @@ Response while processing:
   }
 }
 ```
+
+#### Stop current conversion
+```
+POST /conversion/stop
+```
+Terminates the running ffmpeg process. Returns `409` if nothing is running. The record status is set to `error`.
 
 #### Get records
 ```

@@ -3,6 +3,17 @@ from dataclasses import dataclass, field
 
 
 @dataclass
+class TlsConfig:
+    cert: str = ""   # path to this node's certificate (PEM)
+    key: str = ""    # path to this node's private key (PEM)
+    ca: str = ""     # path to the CA certificate used to verify peers (PEM)
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.cert and self.key and self.ca)
+
+
+@dataclass
 class ScanConfig:
     # scan directory is always master's path_prefix — no separate setting
     extensions: list[str] = field(
@@ -27,6 +38,7 @@ class WorkerConfig:
 class Config:
     slave_id: str = ""
     path_prefix: str = ""
+    tls: TlsConfig = field(default_factory=TlsConfig)
     ffmpeg: FfmpegConfig = field(default_factory=FfmpegConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     scan: ScanConfig = field(default_factory=ScanConfig)
@@ -37,6 +49,15 @@ class Config:
             self.path_prefix += "/"
 
 
+def _load_tls(shared: dict, node: dict) -> TlsConfig:
+    """Merge shared [tls] and node-specific [*.tls] sections; node takes precedence."""
+    return TlsConfig(
+        cert=node.get("cert", shared.get("cert", "")),
+        key=node.get("key", shared.get("key", "")),
+        ca=node.get("ca", shared.get("ca", "")),
+    )
+
+
 def load_master(config_path: str) -> Config:
     with open(config_path, "rb") as f:
         data = tomllib.load(f)
@@ -45,6 +66,7 @@ def load_master(config_path: str) -> Config:
     scan_data = master.get("scan", {})
     return Config(
         path_prefix=paths.get("prefix", ""),
+        tls=_load_tls(data.get("tls", {}), master.get("tls", {})),
         scan=ScanConfig(
             extensions=scan_data.get("extensions", [".mkv", ".mp4", ".avi", ".mov"]),
         ),
@@ -64,6 +86,7 @@ def load_slave(config_path: str) -> Config:
     return Config(
         slave_id=slave.get("id", ""),
         path_prefix=path_prefix,
+        tls=_load_tls(data.get("tls", {}), slave.get("tls", {})),
         ffmpeg=FfmpegConfig(
             bin=ffmpeg_data.get("bin", "ffmpeg"),
             output_dir=ffmpeg_data.get("output_dir", ""),

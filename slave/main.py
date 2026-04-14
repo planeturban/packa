@@ -23,7 +23,8 @@ import socket
 import httpx
 import uvicorn
 
-from shared.config import Config, load_slave
+from shared.config import Config, TlsConfig, load_slave
+from shared.tls import httpx_kwargs, scheme, uvicorn_kwargs
 
 from .api import app, set_config
 from .identity import get_or_create_slave_id, get_stored_slave_id
@@ -45,10 +46,11 @@ def _register_with_master(
     config_id: str,
     advertise_host: str,
     api_port: int,
+    tls: TlsConfig,
 ) -> dict:
-    url = f"http://{master_host}:{master_port}/slaves"
+    url = f"{scheme(tls)}://{master_host}:{master_port}/slaves"
     payload = {"config_id": config_id, "host": advertise_host, "api_port": api_port}
-    with httpx.Client(timeout=10) as client:
+    with httpx.Client(timeout=10, **httpx_kwargs(tls)) as client:
         response = client.post(url, json=payload)
         response.raise_for_status()
         return response.json()
@@ -61,21 +63,23 @@ async def _main(
     master_port: int,
     advertise_host: str | None,
     slave_id: str,
+    tls: TlsConfig,
 ) -> None:
     effective_host = advertise_host or _detect_host()
     print(f"[slave] registering with master at {master_host}:{master_port}")
     try:
-        record = _register_with_master(master_host, master_port, slave_id, effective_host, api_port)
+        record = _register_with_master(master_host, master_port, slave_id, effective_host, api_port, tls)
         worker_state.slave_id = record["id"]
         worker_state.slave_config_id = slave_id
-        worker_state.master_url = f"http://{master_host}:{master_port}"
+        worker_state.master_url = f"{scheme(tls)}://{master_host}:{master_port}"
         print(f"[slave] registered as slave-{record['id']}")
     except Exception as exc:
         print(f"[slave] warning: could not register with master: {exc}")
         print("[slave] starting in standalone mode")
 
-    config = uvicorn.Config(app, host=bind, port=api_port, log_level="info")
-    await uvicorn.Server(config).serve()
+    uvi_config = uvicorn.Config(app, host=bind, port=api_port, log_level="info",
+                                **uvicorn_kwargs(tls))
+    await uvicorn.Server(uvi_config).serve()
 
 
 def main() -> None:
@@ -122,6 +126,7 @@ def main() -> None:
         print(f"[slave] id {source}: {slave_id!r}")
 
     print(f"[slave] path_prefix: {config.path_prefix!r}")
+    print(f"[slave] tls: {'enabled' if config.tls.enabled else 'disabled'}")
 
     asyncio.run(_main(
         bind=bind,
@@ -130,6 +135,7 @@ def main() -> None:
         master_port=args.master_port,
         advertise_host=args.advertise_host,
         slave_id=slave_id,
+        tls=config.tls,
     ))
 
 

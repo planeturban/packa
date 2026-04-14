@@ -19,13 +19,15 @@ import asyncio
 import uvicorn
 
 from shared.config import Config, load_master
+from shared.tls import uvicorn_kwargs
 
 from .api import app, set_config
 
 
-async def _main(bind: str, api_port: int) -> None:
-    config = uvicorn.Config(app, host=bind, port=api_port, log_level="info")
-    await uvicorn.Server(config).serve()
+async def _main(bind: str, api_port: int, config: Config) -> None:
+    uvi_config = uvicorn.Config(app, host=bind, port=api_port, log_level="info",
+                                **uvicorn_kwargs(config.tls))
+    await uvicorn.Server(uvi_config).serve()
 
 
 def main() -> None:
@@ -48,8 +50,9 @@ def main() -> None:
     config = load_master(args.config) if args.config else Config()
     set_config(config)
     print(f"[master] path_prefix: {config.path_prefix!r}")
+    print(f"[master] tls: {'enabled' if config.tls.enabled else 'disabled'}")
 
-    asyncio.run(_main(bind=bind, api_port=args.api_port))
+    asyncio.run(_main(bind=bind, api_port=args.api_port, config=config))
 
 
 if __name__ == "__main__":

@@ -16,7 +16,9 @@ import asyncio
 import httpx
 
 from shared import crud
+from shared.config import TlsConfig
 from shared.schemas import FileRecordCreate
+from shared.tls import httpx_kwargs
 
 from .database import SessionLocal
 from .state import Job, worker_state
@@ -29,13 +31,14 @@ async def poller_loop(
     batch_size: int,
     poll_interval: int,
     output_dir: str,
+    tls: TlsConfig,
 ) -> None:
     print(f"[poller] started (batch_size={batch_size}, poll_interval={poll_interval}s)")
     while True:
         await asyncio.sleep(poll_interval)
         if worker_state.queued > 0 or worker_state.active:
             continue
-        await _claim_and_enqueue(master_url, slave_config_id, path_prefix, batch_size, output_dir)
+        await _claim_and_enqueue(master_url, slave_config_id, path_prefix, batch_size, output_dir, tls)
 
 
 async def _claim_and_enqueue(
@@ -44,10 +47,11 @@ async def _claim_and_enqueue(
     path_prefix: str,
     batch_size: int,
     output_dir: str,
+    tls: TlsConfig,
 ) -> None:
     url = f"{master_url}/jobs/claim"
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, **httpx_kwargs(tls)) as client:
             response = await client.post(url, json={"slave_id": slave_config_id, "count": batch_size})
             response.raise_for_status()
             jobs = response.json()

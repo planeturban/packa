@@ -29,6 +29,7 @@ def set_config(config: Config) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tasks: list[asyncio.Task] = []
+    worker_state.tls = _config.tls
     if _config.ffmpeg.output_dir:
         recover(_config.ffmpeg.output_dir)
         tasks.append(asyncio.create_task(worker_loop(
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI):
                 batch_size=_config.worker.batch_size,
                 poll_interval=_config.worker.poll_interval,
                 output_dir=_config.ffmpeg.output_dir,
+                tls=_config.tls,
             )))
     yield
     for task in tasks:

@@ -19,6 +19,7 @@ import asyncio
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
+from shared.tls import httpx_kwargs, scheme
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -230,8 +231,8 @@ async def sync_file(record_id: int, body: SyncRequest, db: Session = Depends(get
     if slave is None:
         raise HTTPException(status_code=404, detail="Slave not found")
 
-    url = f"http://{slave.host}:{slave.api_port}/files/{record_id}"
-    async with httpx.AsyncClient(timeout=10) as client:
+    url = f"{scheme(_config.tls)}://{slave.host}:{slave.api_port}/files/{record_id}"
+    async with httpx.AsyncClient(timeout=10, **httpx_kwargs(_config.tls)) as client:
         response = await client.get(url)
         if response.status_code == 404:
             raise HTTPException(status_code=404, detail="Record not found on slave")

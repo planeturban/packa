@@ -4,6 +4,27 @@
 #   python -m slave.main   --config packa.toml
 
 # ---------------------------------------------------------------------------
+# mTLS (optional)
+# ---------------------------------------------------------------------------
+# Mutual TLS is enabled when all three fields below are set for a node.
+# The CA certificate is typically shared, so it belongs in [tls].
+# Each node's own certificate and key go in [master.tls] / [slave.tls].
+#
+# If master has mTLS enabled, slaves without a valid certificate are rejected.
+# If master has no mTLS, slaves ignore their own TLS config when calling master.
+#
+# [tls]
+# ca   = "/etc/packa/certs/ca.crt"      # CA cert — verifies the other side
+#
+# [master.tls]
+# cert = "/etc/packa/certs/master.crt"
+# key  = "/etc/packa/certs/master.key"
+#
+# [slave.tls]
+# cert = "/etc/packa/certs/slave.crt"
+# key  = "/etc/packa/certs/slave.key"
+
+# ---------------------------------------------------------------------------
 # Master
 # ---------------------------------------------------------------------------
 
