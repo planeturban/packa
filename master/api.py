@@ -4,12 +4,18 @@ Master REST API.
   POST   /slaves               — slave registration
   GET    /slaves               — list registered slaves
   DELETE /slaves/{id}          — deregister a slave
-  POST   /transfer             — send file metadata to the next slave
+  POST   /transfer             — accept a file path and create a PENDING record
+  POST   /jobs/claim           — slave claims N pending jobs (pull model)
   POST   /files/{id}/sync      — slave notifies master that conversion is done;
                                  master fetches the record from slave and updates its DB
-  GET    /files                — list all records in master DB
+  GET    /files[?status=]      — list records in master DB, filterable by status
   GET    /files/{id}           — get a single record from master DB
+  POST   /scan/start           — start background directory scan
+  POST   /scan/stop            — cancel running scan
+  GET    /scan/status          — show scan progress
 """
+
+import asyncio
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
@@ -19,13 +25,12 @@ from sqlalchemy.orm import Session
 from shared import crud
 from shared.base import Base
 from shared.config import Config
-from shared.models import FileStatus
+from shared.models import FileRecord, FileStatus
 from shared.schemas import FileRecordCreate, FileRecordOut
 
-from .database import engine, get_db
+from .database import SessionLocal, engine, get_db
 from .registry import registry
 from .scanner import collect
-from .sender import send_metadata
 
 Base.metadata.create_all(bind=engine)
 
@@ -37,6 +42,66 @@ _config: Config = Config()
 def set_config(config: Config) -> None:
     global _config
     _config = config
+
+
+# ---------------------------------------------------------------------------
+# Scan state
+# ---------------------------------------------------------------------------
+
+class _ScanState:
+    def __init__(self) -> None:
+        self.running: bool = False
+        self.found: int = 0    # new records created
+        self.skipped: int = 0  # already existed in DB
+        self.errors: int = 0   # collect() failures
+        self._task: asyncio.Task | None = None
+
+    def cancel(self) -> bool:
+        if self._task and not self._task.done():
+            self._task.cancel()
+            return True
+        return False
+
+
+_scan = _ScanState()
+
+
+async def _scan_task(scan_dir: str, extensions: set[str]) -> None:
+    from pathlib import Path
+    _scan.running = True
+    _scan.found = 0
+    _scan.skipped = 0
+    _scan.errors = 0
+    print(f"[scan] starting in '{scan_dir}' (extensions: {sorted(extensions)})")
+    db = SessionLocal()
+    try:
+        for path in Path(scan_dir).rglob("*"):
+            await asyncio.sleep(0)  # yield to event loop between files
+            if not path.is_file() or path.suffix.lower() not in extensions:
+                continue
+            if crud.get_record_by_path(db, str(path)):
+                _scan.skipped += 1
+                continue
+            try:
+                video = collect(str(path))
+                crud.create_file_record(db, FileRecordCreate(
+                    file_name=video.file_name,
+                    file_path=video.file_path,
+                    c_time=video.c_time,
+                    m_time=video.m_time,
+                    checksum=video.checksum,
+                ))
+                _scan.found += 1
+            except Exception as exc:
+                print(f"[scan] error on '{path}': {exc}")
+                _scan.errors += 1
+    except asyncio.CancelledError:
+        print(f"[scan] cancelled — found={_scan.found} skipped={_scan.skipped} errors={_scan.errors}")
+        return
+    finally:
+        db.close()
+        _scan.running = False
+    print(f"[scan] done — found={_scan.found} skipped={_scan.skipped} errors={_scan.errors}")
 
 
 # ---------------------------------------------------------------------------
@@ -62,12 +127,17 @@ class TransferRequest(BaseModel):
     file_path: str
 
 
-class TransferOut(BaseModel):
-    record_id: int
-    slave_id: int
-    slave_host: str
+class ClaimRequest(BaseModel):
+    slave_id: str  # slave's config_id string
+    count: int = 1
+
+
+class ClaimOut(BaseModel):
+    id: int
     file_name: str
-    file_path: str
+    file_path: str   # relative path (master prefix stripped)
+    c_time: float
+    m_time: float
     checksum: str
 
 
@@ -97,39 +167,55 @@ def remove_slave(slave_id: int):
 # Transfer route
 # ---------------------------------------------------------------------------
 
-@app.post("/transfer", response_model=TransferOut, status_code=201)
-async def transfer_file(body: TransferRequest, db: Session = Depends(get_db)):
-    slave = registry.next_slave()
-    if slave is None:
-        raise HTTPException(status_code=503, detail="No slaves registered")
-
+@app.post("/transfer", response_model=FileRecordOut, status_code=201)
+def transfer_file(body: TransferRequest, db: Session = Depends(get_db)):
     try:
         video = collect(body.file_path)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
-    # Create record in master DB using the full local path.
-    master_record = crud.create_file_record(db, FileRecordCreate(
-        slave_id=slave.config_id,
+    record = crud.create_file_record(db, FileRecordCreate(
         file_name=video.file_name,
         file_path=video.file_path,
         c_time=video.c_time,
         m_time=video.m_time,
         checksum=video.checksum,
     ))
+    print(f"[master] queued '{video.file_name}'  record={record.id}")
+    return record
 
-    # Send to slave with master prefix stripped from file_path.
-    await send_metadata(master_record.id, video, slave, path_prefix=_config.path_prefix)
 
-    print(f"[master] '{video.file_name}' → {slave}  record={master_record.id}")
-    return TransferOut(
-        record_id=master_record.id,
-        slave_id=slave.id,
-        slave_host=slave.host,
-        file_name=video.file_name,
-        file_path=video.file_path,
-        checksum=video.checksum,
+# ---------------------------------------------------------------------------
+# Job claim route — slaves pull work from master
+# ---------------------------------------------------------------------------
+
+@app.post("/jobs/claim", response_model=list[ClaimOut])
+def claim_jobs(body: ClaimRequest, db: Session = Depends(get_db)):
+    records = (
+        db.query(FileRecord)
+        .filter(FileRecord.status == FileStatus.PENDING)
+        .order_by(FileRecord.id)
+        .limit(body.count)
+        .all()
     )
+    result = []
+    for record in records:
+        record.status = FileStatus.ASSIGNED
+        record.slave_id = body.slave_id
+        relative_path = record.file_path
+        if _config.path_prefix and relative_path.startswith(_config.path_prefix):
+            relative_path = relative_path[len(_config.path_prefix):]
+        result.append(ClaimOut(
+            id=record.id,
+            file_name=record.file_name,
+            file_path=relative_path,
+            c_time=record.c_time,
+            m_time=record.m_time,
+            checksum=record.checksum,
+        ))
+    db.commit()
+    print(f"[master] slave '{body.slave_id}' claimed {len(result)} job(s)")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -175,8 +261,8 @@ async def sync_file(record_id: int, body: SyncRequest, db: Session = Depends(get
 # ---------------------------------------------------------------------------
 
 @app.get("/files", response_model=list[FileRecordOut])
-def list_files(db: Session = Depends(get_db)):
-    return crud.get_all_records(db)
+def list_files(status: FileStatus | None = None, db: Session = Depends(get_db)):
+    return crud.get_all_records(db, status=status)
 
 
 @app.get("/files/{record_id}", response_model=FileRecordOut)
@@ -185,3 +271,37 @@ def get_file(record_id: int, db: Session = Depends(get_db)):
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
     return record
+
+
+# ---------------------------------------------------------------------------
+# Scan routes
+# ---------------------------------------------------------------------------
+
+class ScanStatus(BaseModel):
+    running: bool
+    found: int
+    skipped: int
+    errors: int
+
+
+@app.post("/scan/start", response_model=ScanStatus, status_code=202)
+async def scan_start():
+    if _scan.running:
+        raise HTTPException(status_code=409, detail="Scan already running")
+    if not _config.scan.dir:
+        raise HTTPException(status_code=400, detail="scan.dir not configured")
+    extensions = {e if e.startswith(".") else f".{e}" for e in _config.scan.extensions}
+    _scan._task = asyncio.create_task(_scan_task(_config.scan.dir, extensions))
+    return ScanStatus(running=True, found=0, skipped=0, errors=0)
+
+
+@app.post("/scan/stop", response_model=ScanStatus)
+def scan_stop():
+    if not _scan.cancel():
+        raise HTTPException(status_code=409, detail="No scan running")
+    return ScanStatus(running=_scan.running, found=_scan.found, skipped=_scan.skipped, errors=_scan.errors)
+
+
+@app.get("/scan/status", response_model=ScanStatus)
+def scan_status():
+    return ScanStatus(running=_scan.running, found=_scan.found, skipped=_scan.skipped, errors=_scan.errors)

@@ -205,25 +205,4 @@ Master and slave communicate on port 8001 using the following protocol:
 
 Received files are stored in the `uploads/` directory on the slave, named `{record_id}_{file_name}`.
 
----
 
-## Example — complete flow
-
-```bash
-# 1. Start master
-python -m master.master
-
-# 2. Start one or more slaves (each slave registers with master automatically)
-python -m slave.main --master-host localhost --advertise-host 192.168.1.10
-python -m slave.main --master-host localhost --advertise-host 192.168.1.11 \
-                     --api-port 8100 --file-port 8101
-
-# 3. Trigger a transfer
-curl -X POST http://localhost:9000/transfer \
-     -H "Content-Type: application/json" \
-     -d '{"file_path": "/media/videos/film.mkv"}'
-
-# 4. Poll status
-curl http://localhost:9000/files/42
-curl http://192.168.1.10:8000/files/42
-```
