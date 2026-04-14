@@ -1,0 +1,51 @@
+import asyncio
+from dataclasses import dataclass
+
+
+@dataclass
+class Job:
+    record_id: int
+    file_path: str
+
+
+@dataclass
+class FfmpegProgress:
+    percent: float | None = None          # 0–100
+    speed: float | None = None            # e.g. 1.5 → 1.5× real-time
+    fps: float | None = None
+    out_time: str | None = None           # "HH:MM:SS.ms"
+    eta_seconds: int | None = None
+    bitrate: str | None = None            # e.g. "5000.0kbits/s"
+    current_size_bytes: int | None = None
+    projected_size_bytes: int | None = None
+
+
+class WorkerState:
+    def __init__(self) -> None:
+        self.active: bool = False
+        self.record_id: int | None = None
+        self.queue: asyncio.Queue[Job] = asyncio.Queue()
+        self.progress: FfmpegProgress | None = None
+        # Set after registration with master
+        self.slave_id: int | None = None
+        self.master_url: str | None = None
+
+    def start(self, record_id: int) -> None:
+        self.active = True
+        self.record_id = record_id
+        self.progress = None
+
+    def stop(self) -> None:
+        self.active = False
+        self.record_id = None
+        self.progress = None
+
+    @property
+    def queued(self) -> int:
+        return self.queue.qsize()
+
+    def enqueue(self, job: Job) -> None:
+        self.queue.put_nowait(job)
+
+
+worker_state = WorkerState()

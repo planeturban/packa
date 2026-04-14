@@ -1,0 +1,8 @@
+# Packa — master configuration
+# Copy to master.toml and adjust values, then start with:
+#   python -m master.master --config master.toml
+
+[paths]
+# Prefix to strip from file paths before sending to slaves.
+# Example: /mnt/data/katalog1/film.mkv → katalog1/film.mkv
+prefix = "/mnt/data/"
