@@ -12,7 +12,8 @@ class FileStatus(str, enum.Enum):
     ASSIGNED = "assigned"     # Claimed by a slave, not yet processing
     PROCESSING = "processing"
     COMPLETE = "complete"
-    DISCARDED = "discarded"   # Output was larger than source — new file deleted
+    DISCARDED = "discarded"   # ffmpeg finished but output >= source — output deleted
+    CANCELLED = "cancelled"   # Terminated mid-conversion (user or auto size limit)
     ERROR = "error"
 
 
@@ -33,6 +34,8 @@ class FileRecord(Base):
     status: Mapped[FileStatus] = mapped_column(
         SAEnum(FileStatus), nullable=False, default=FileStatus.PENDING
     )
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cancel_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

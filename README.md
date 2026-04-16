@@ -9,7 +9,8 @@ No files are transferred over the network — slaves access files directly via t
 ```
 master/          — accepts file paths, stores metadata, distributes jobs to slaves
 slave/           — polls master for jobs, runs ffmpeg, reports back
-shared/          — common models, schemas, CRUD, config and TLS helpers (used by both)
+web/             — browser dashboard (BFF: talks mTLS to master/slaves, plain HTTP to browser)
+shared/          — common models, schemas, CRUD, config and TLS helpers (used by all)
 ```
 
 ### Ports
@@ -18,6 +19,7 @@ shared/          — common models, schemas, CRUD, config and TLS helpers (used 
 |------------|-------------|---------|
 | Master API | HTTP(S)     | 9000    |
 | Slave API  | HTTP(S)     | 8000    |
+| Web UI     | HTTP(S)     | 8080    |
 
 ### Databases
 
@@ -60,7 +62,13 @@ Requires Python 3.11+. ffmpeg and ffprobe must be installed on slave nodes.
 
 ## Configuration
 
-Both master and slave share one config file:
+All three processes share one config file. Settings are applied in this order — later wins:
+
+```
+config file  <  environment variable  <  CLI flag
+```
+
+Copy the example file and adjust values:
 
 ```bash
 cp packa.example.toml packa.toml
@@ -69,6 +77,10 @@ cp packa.example.toml packa.toml
 ### Master section
 
 ```toml
+[master]
+bind     = "localhost"   # use "any" for 0.0.0.0
+api_port = 9000
+
 [master.paths]
 prefix = "/mnt/data/"   # root path: stripped from file paths sent to slaves,
                         # and used as the scan root for POST /scan/start
@@ -77,34 +89,102 @@ prefix = "/mnt/data/"   # root path: stripped from file paths sent to slaves,
 extensions = [".mkv", ".mp4", ".avi", ".mov"]
 ```
 
+#### Master environment variables
+
+| Variable | Config equivalent |
+|----------|-------------------|
+| `PACKA_MASTER_BIND` | `master.bind` |
+| `PACKA_MASTER_API_PORT` | `master.api_port` |
+| `PACKA_MASTER_PREFIX` | `master.paths.prefix` |
+| `PACKA_MASTER_EXTENSIONS` | `master.scan.extensions` (comma-separated) |
+| `PACKA_MASTER_TLS_CERT` | `master.tls.cert` |
+| `PACKA_MASTER_TLS_KEY` | `master.tls.key` |
+| `PACKA_TLS_CA` | `tls.ca` (shared) |
+
 ### Slave section
 
 ```toml
 [slave]
-id = "storage-01"       # unique string ID, used by master to track which slave holds which file
-                        # if omitted, a UUID is loaded from slave.db (or generated on first run)
+bind        = "localhost"   # use "any" for 0.0.0.0
+api_port    = 8000
+master_host = "localhost"
+master_port = 9000
+id          = "storage-01"  # unique string ID, used by master to track which slave holds which file
+                            # if omitted, a UUID is loaded from slave.db (or generated on first run)
 
 [slave.paths]
 prefix = "/mnt/files/"  # prepended to relative paths received from master
                         # if omitted, master.paths.prefix is used instead
 
 [slave.ffmpeg]
-bin = "ffmpeg"
+bin        = "ffmpeg"
 output_dir = "/mnt/output"   # directory for converted files; leave empty to disable ffmpeg
 extra_args = ""              # extra ffmpeg arguments (appended after -map 0 -c copy)
 
 [slave.worker]
-batch_size = 1       # number of jobs to claim from master per poll
-poll_interval = 5    # seconds between poll attempts when queue is empty
+batch_size    = 1   # number of jobs to claim from master per poll
+poll_interval = 5   # seconds between poll attempts when queue is empty
 ```
+
+#### Slave environment variables
+
+| Variable | Config equivalent |
+|----------|-------------------|
+| `PACKA_SLAVE_BIND` | `slave.bind` |
+| `PACKA_SLAVE_API_PORT` | `slave.api_port` |
+| `PACKA_SLAVE_MASTER_HOST` | `slave.master_host` |
+| `PACKA_SLAVE_MASTER_PORT` | `slave.master_port` |
+| `PACKA_SLAVE_ADVERTISE_HOST` | `slave.advertise_host` |
+| `PACKA_SLAVE_ID` | `slave.id` |
+| `PACKA_SLAVE_PREFIX` | `slave.paths.prefix` |
+| `PACKA_SLAVE_FFMPEG_BIN` | `slave.ffmpeg.bin` |
+| `PACKA_SLAVE_FFMPEG_OUTPUT_DIR` | `slave.ffmpeg.output_dir` |
+| `PACKA_SLAVE_FFMPEG_EXTRA_ARGS` | `slave.ffmpeg.extra_args` |
+| `PACKA_SLAVE_BATCH_SIZE` | `slave.worker.batch_size` |
+| `PACKA_SLAVE_POLL_INTERVAL` | `slave.worker.poll_interval` |
+| `PACKA_SLAVE_TLS_CERT` | `slave.tls.cert` |
+| `PACKA_SLAVE_TLS_KEY` | `slave.tls.key` |
+| `PACKA_TLS_CA` | `tls.ca` (shared) |
+
+### Web section
+
+```toml
+[web]
+bind        = "localhost"   # use "any" for 0.0.0.0
+port        = 8080
+master_host = "localhost"
+master_port = 9000
+username    = "admin"
+password    = "change-me"
+secret_key  = "change-me-use-a-long-random-string"   # signs session cookies
+
+[web.tls]
+cert = "/etc/packa/web.crt"
+key  = "/etc/packa/web.key"
+```
+
+#### Web environment variables
+
+| Variable | Config equivalent |
+|----------|-------------------|
+| `PACKA_WEB_BIND` | `web.bind` |
+| `PACKA_WEB_PORT` | `web.port` |
+| `PACKA_WEB_MASTER_HOST` | `web.master_host` |
+| `PACKA_WEB_MASTER_PORT` | `web.master_port` |
+| `PACKA_WEB_USERNAME` | `web.username` |
+| `PACKA_WEB_PASSWORD` | `web.password` |
+| `PACKA_WEB_SECRET_KEY` | `web.secret_key` |
+| `PACKA_WEB_TLS_CERT` | `web.tls.cert` |
+| `PACKA_WEB_TLS_KEY` | `web.tls.key` |
+| `PACKA_TLS_CA` | `tls.ca` (shared) |
 
 ### mTLS (optional)
 
-Mutual TLS can be enabled by adding certificate paths to the config. All three fields must be set for a node to enable mTLS.
+Mutual TLS can be enabled by adding certificate paths to the config. All three fields (ca, cert, key) must be set for a node to enable mTLS.
 
 ```toml
 [tls]
-ca = "/etc/packa/ca.crt"      # CA certificate — shared by master and slave
+ca = "/etc/packa/ca.crt"      # CA certificate — shared by all nodes
 
 [master.tls]
 cert = "/etc/packa/master.crt"
@@ -113,52 +193,92 @@ key  = "/etc/packa/master.key"
 [slave.tls]
 cert = "/etc/packa/slave.crt"
 key  = "/etc/packa/slave.key"
+
+[web.tls]
+cert = "/etc/packa/web.crt"
+key  = "/etc/packa/web.key"
 ```
 
 If master has mTLS enabled, slaves without a valid client certificate are rejected. If master has no mTLS, slaves use plain HTTP regardless of their own TLS config.
+
+The web process acts as a backend-for-frontend (BFF): it uses its own client certificate to communicate with master and slaves, while serving plain HTTP(S) to browsers. Browsers never need client certificates.
 
 ---
 
 ## Running
 
-### Master
-
 ```bash
+# Master
+python -m master.master --config packa.toml
+
+# Slave (registers with master automatically on startup)
+python -m slave.main --config packa.toml
+
+# Web dashboard
+python -m web.main --config packa.toml
+```
+
+### Master flags
+
+```
 python -m master.master [--bind ADDRESS] [--api-port PORT] [--config FILE]
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--bind` | `localhost` | Address to bind the API server (`any` → `0.0.0.0`) |
-| `--api-port` | `9000` | API port |
-| `--config` | — | Path to TOML config file |
+| Flag | Description |
+|------|-------------|
+| `--bind` | Address to bind (`any` → `0.0.0.0`) |
+| `--api-port` | API port |
+| `--config` | Path to TOML config file |
 
-**Example:**
-```bash
-python -m master.master --config packa.toml
+### Slave flags
+
 ```
-
-### Slave
-
-```bash
 python -m slave.main [--bind ADDRESS] [--api-port PORT]
                      [--master-host HOST] [--master-port PORT]
                      [--advertise-host HOST] [--config FILE]
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--bind` | `localhost` | Address to bind the API server (`any` → `0.0.0.0`) |
-| `--api-port` | `8000` | API port |
-| `--master-host` | `localhost` | Master hostname/IP (omit `--master-host` to skip registration) |
-| `--master-port` | `9000` | Master API port |
-| `--advertise-host` | auto | IP/hostname advertised to master. Auto-detected if omitted |
-| `--config` | — | Path to TOML config file |
+| Flag | Description |
+|------|-------------|
+| `--bind` | Address to bind (`any` → `0.0.0.0`) |
+| `--api-port` | API port |
+| `--master-host` | Master hostname/IP |
+| `--master-port` | Master API port |
+| `--advertise-host` | IP/hostname advertised to master (auto-detected if omitted) |
+| `--config` | Path to TOML config file |
 
-**Example:**
-```bash
-python -m slave.main --master-host 192.168.1.5 --config packa.toml
+### Web flags
+
 ```
+python -m web.main [--bind ADDRESS] [--port PORT]
+                   [--master-host HOST] [--master-port PORT]
+                   [--config FILE]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--bind` | Address to bind (`any` → `0.0.0.0`) |
+| `--port` | HTTP port |
+| `--master-host` | Master hostname/IP |
+| `--master-port` | Master API port |
+| `--config` | Path to TOML config file |
+
+---
+
+## Web dashboard
+
+The web process serves a browser dashboard at port 8080 (default). Log in with the username and password from the config. The dashboard shows:
+
+- Master file counts by status — each is clickable and opens a filtered file list
+- Active scan state and progress, periodic scan toggle and interval
+- Per-slave status: idle/converting/sleeping, queue depth, ffmpeg progress with speed/FPS/ETA/size
+- Full file table with search, status filter, bulk actions (delete / set to pending) and pagination
+
+Each slave card has controls for Pause, Finish current (drain — completes the active job then sleeps), Stop, and Sleep/Wake. Clicking a slave card opens a detail modal with live progress and the slave's full file history.
+
+The page auto-refreshes every 3 seconds with smooth DOM updates (no page reload). Checkboxes in the file table survive refreshes.
+
+**Dark mode:** the dashboard respects the system colour scheme preference and has a manual Light / System / Dark picker in the nav bar. The preference is saved to `localStorage`.
 
 ---
 
@@ -290,7 +410,15 @@ Response while processing:
 ```
 POST /conversion/stop
 ```
-Terminates the running ffmpeg process. Returns `409` if nothing is running. The record status is set to `error`.
+Terminates the running ffmpeg process. Returns `409` if nothing is running. The record status is set to `cancelled` with `cancel_reason = "user"`.
+
+#### Sleep / wake
+```
+POST /conversion/sleep   — stop polling and processing (even with queued files)
+POST /conversion/wake    — resume normal operation
+```
+
+`sleep` also cancels any active drain. While sleeping the slave will not poll master or start new jobs. A sleeping slave is visible in the dashboard and can be woken from there.
 
 #### Get records
 ```
@@ -336,7 +464,8 @@ PATCH /files/{id}/status
 | `assigned` | Claimed by a slave, not yet processing |
 | `processing` | ffmpeg is running |
 | `complete` | ffmpeg finished and output is smaller than source |
-| `discarded` | ffmpeg finished but output was not smaller than source — output file deleted |
+| `discarded` | File was already HEVC — skipped, no conversion needed |
+| `cancelled` | Conversion was stopped: by the user, or automatically because output exceeded source size. The `cancel_reason` field is `"user"` or `"auto"`. |
 | `error` | ffmpeg exited with a non-zero code |
 
 ---
@@ -361,9 +490,11 @@ Slaves run ffmpeg with all streams copied:
 ffmpeg -i {file_path} -map 0 -c copy [extra_args] -progress pipe:1 -nostats {output_path}
 ```
 
+- `ffprobe` (derived from `ffmpeg.bin`) is run first to detect the video codec
+- If the file is already HEVC the record is immediately marked `discarded` — ffmpeg is never started
 - All streams (video, audio, subtitles, attachments) are copied without re-encoding
-- `ffprobe` (derived from `ffmpeg.bin`) measures source duration for progress calculation
-- After conversion, if `output_size >= source_size` the output is discarded
+- Output size is monitored continuously. If the output file grows larger than the source before ffmpeg finishes, ffmpeg is terminated and the record is set to `cancelled` (`cancel_reason = "auto"`)
+- After conversion, if `output_size >= source_size` the output file is deleted and the record is set to `cancelled` (`cancel_reason = "auto"`)
 - On restart, any partial output files from interrupted jobs are deleted and those records are re-queued
 
 ---
@@ -375,25 +506,29 @@ ffmpeg -i {file_path} -map 0 -c copy [extra_args] -progress pipe:1 -nostats {out
 python -m master.master --config packa.toml
 
 # 2. Start one or more slaves (each registers with master automatically)
-python -m slave.main --master-host 192.168.1.5 --config packa.toml
+python -m slave.main --config packa.toml
 
-# 3a. Queue a single file
+# 3. Start the web dashboard
+python -m web.main --config packa.toml
+# Open http://localhost:8080 in a browser
+
+# 4a. Queue a single file
 curl -X POST http://localhost:9000/transfer \
      -H "Content-Type: application/json" \
      -d '{"file_path": "/mnt/data/shows/ep1.mkv"}'
 
-# 3b. Or scan an entire directory
+# 4b. Or scan an entire directory
 curl -X POST http://localhost:9000/scan/start
 
-# 4. Poll scan progress
+# 5. Poll scan progress
 curl http://localhost:9000/scan/status
 
-# 5. Check unclaimed jobs on master
+# 6. Check unclaimed jobs on master
 curl http://localhost:9000/files?status=pending
 
-# 6. Poll worker status on slave
+# 7. Poll worker status on slave
 curl http://192.168.1.10:8000/status
 
-# 7. Check record on master (updated automatically when ffmpeg finishes)
+# 8. Check record on master (updated automatically when ffmpeg finishes)
 curl http://localhost:9000/files/42
 ```

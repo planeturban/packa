@@ -10,6 +10,7 @@ class FileRecordCreate(BaseModel):
     slave_id: str | None = None # Which slave holds this file
     file_name: str
     file_path: str
+    file_size: int | None = None
     c_time: float
     m_time: float
     checksum: str
@@ -24,6 +25,8 @@ class FileRecordOut(BaseModel):
     checksum: str
     slave_id: str | None
     status: FileStatus
+    file_size: int | None
+    cancel_reason: str | None
     pid: int | None
     output_size: int | None
     started_at: datetime | None

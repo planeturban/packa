@@ -16,6 +16,8 @@ Master REST API.
 """
 
 import asyncio
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone  # noqa: F401 — datetime used in FileResultUpdate
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
@@ -27,15 +29,80 @@ from shared import crud
 from shared.base import Base
 from shared.config import Config
 from shared.models import FileRecord, FileStatus
-from shared.schemas import FileRecordCreate, FileRecordOut
+from shared.schemas import FileRecordCreate, FileRecordOut, StatusUpdate
 
-from .database import SessionLocal, engine, get_db
+from .database import SessionLocal, _migrate, engine, get_db
 from .registry import registry
 from .scanner import collect
+from .settings import MasterSetting, get_setting, set_setting  # noqa: F401
 
 Base.metadata.create_all(bind=engine)
+_migrate()
 
-app = FastAPI(title="Packa Master API")
+_last_periodic_start: datetime | None = None
+
+
+async def _periodic_scan_loop() -> None:
+    global _last_periodic_start
+    while True:
+        await asyncio.sleep(5)
+        if not _config.path_prefix:
+            continue
+        db = SessionLocal()
+        try:
+            enabled = get_setting(db, "scan_periodic_enabled") == "true"
+            interval = int(get_setting(db, "scan_interval_seconds") or "60")
+        finally:
+            db.close()
+        if not enabled or _scan.running:
+            continue
+        now = datetime.now(timezone.utc)
+        if _last_periodic_start is None or (now - _last_periodic_start).total_seconds() >= interval:
+            _last_periodic_start = now
+            extensions = {e if e.startswith(".") else f".{e}" for e in _config.scan.extensions}
+            _scan._task = asyncio.create_task(_scan_task(
+                _config.path_prefix, extensions,
+                _config.scan.min_size, _config.scan.max_size,
+            ))
+            print(f"[master] periodic scan started (interval={interval}s)")
+
+
+@asynccontextmanager
+def _recover() -> None:
+    """Reset any PROCESSING records to PENDING on startup.
+
+    These are records that were being processed when the master or slave
+    crashed before the slave could report the final result.
+    """
+    db = SessionLocal()
+    try:
+        stuck = (
+            db.query(FileRecord)
+            .filter(FileRecord.status == FileStatus.PROCESSING)
+            .all()
+        )
+        for record in stuck:
+            record.status = FileStatus.PENDING
+            record.pid = None
+        if stuck:
+            db.commit()
+            print(f"[master] reset {len(stuck)} stuck PROCESSING record(s) to PENDING")
+    finally:
+        db.close()
+
+
+async def lifespan(app: FastAPI):
+    _recover()
+    task = asyncio.create_task(_periodic_scan_loop())
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(title="Packa Master API", lifespan=lifespan)
 
 _config: Config = Config()
 
@@ -67,7 +134,12 @@ class _ScanState:
 _scan = _ScanState()
 
 
-async def _scan_task(scan_dir: str, extensions: set[str]) -> None:
+async def _scan_task(
+    scan_dir: str,
+    extensions: set[str],
+    min_size: int,
+    max_size: int,
+) -> None:
     from pathlib import Path
     _scan.running = True
     _scan.found = 0
@@ -80,6 +152,13 @@ async def _scan_task(scan_dir: str, extensions: set[str]) -> None:
             await asyncio.sleep(0)  # yield to event loop between files
             if not path.is_file() or path.suffix.lower() not in extensions:
                 continue
+            size = path.stat().st_size
+            if min_size > 0 and size < min_size:
+                _scan.skipped += 1
+                continue
+            if max_size > 0 and size > max_size:
+                _scan.skipped += 1
+                continue
             if crud.get_record_by_path(db, str(path)):
                 _scan.skipped += 1
                 continue
@@ -88,6 +167,7 @@ async def _scan_task(scan_dir: str, extensions: set[str]) -> None:
                 crud.create_file_record(db, FileRecordCreate(
                     file_name=video.file_name,
                     file_path=video.file_path,
+                    file_size=video.file_size,
                     c_time=video.c_time,
                     m_time=video.m_time,
                     checksum=video.checksum,
@@ -135,6 +215,7 @@ class ClaimOut(BaseModel):
     id: int
     file_name: str
     file_path: str   # relative path (master prefix stripped)
+    file_size: int | None
     c_time: float
     m_time: float
     checksum: str
@@ -176,6 +257,7 @@ def transfer_file(body: TransferRequest, db: Session = Depends(get_db)):
     record = crud.create_file_record(db, FileRecordCreate(
         file_name=video.file_name,
         file_path=video.file_path,
+        file_size=video.file_size,
         c_time=video.c_time,
         m_time=video.m_time,
         checksum=video.checksum,
@@ -208,6 +290,7 @@ def claim_jobs(body: ClaimRequest, db: Session = Depends(get_db)):
             id=record.id,
             file_name=record.file_name,
             file_path=relative_path,
+            file_size=record.file_size,
             c_time=record.c_time,
             m_time=record.m_time,
             checksum=record.checksum,
@@ -256,12 +339,47 @@ async def sync_file(record_id: int, body: SyncRequest, db: Session = Depends(get
 
 
 # ---------------------------------------------------------------------------
-# Master DB read routes
+# Master DB read / write routes
 # ---------------------------------------------------------------------------
+
+class FileResultUpdate(BaseModel):
+    status: FileStatus
+    pid: int | None = None
+    output_size: int | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    cancel_reason: str | None = None
+
+
+@app.patch("/files/{record_id}/result", response_model=FileRecordOut)
+def update_file_result(record_id: int, body: FileResultUpdate, db: Session = Depends(get_db)):
+    """Called by slave when ffmpeg finishes — pushes full result directly to master."""
+    record = crud.update_conversion_result(
+        db, record_id,
+        status=body.status,
+        pid=body.pid,
+        output_size=body.output_size,
+        started_at=body.started_at,
+        finished_at=body.finished_at,
+        cancel_reason=body.cancel_reason,
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="Record not found")
+    print(f"[master] record {record_id} → {body.status.value}")
+    return record
+
 
 @app.get("/files", response_model=list[FileRecordOut])
 def list_files(status: FileStatus | None = None, db: Session = Depends(get_db)):
     return crud.get_all_records(db, status=status)
+
+
+@app.patch("/files/{record_id}/status", response_model=FileRecordOut)
+def update_file_status(record_id: int, body: StatusUpdate, db: Session = Depends(get_db)):
+    record = crud.update_status(db, record_id, body.status)
+    if not record:
+        raise HTTPException(status_code=404, detail="Record not found")
+    return record
 
 
 @app.get("/files/{record_id}", response_model=FileRecordOut)
@@ -270,6 +388,24 @@ def get_file(record_id: int, db: Session = Depends(get_db)):
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
     return record
+
+
+@app.delete("/files/{record_id}", status_code=204)
+async def delete_file(record_id: int, db: Session = Depends(get_db)):
+    record = crud.get_file_record(db, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Record not found")
+    # Cascade to slave (best-effort)
+    if record.slave_id:
+        slave = registry.get_by_config_id(record.slave_id)
+        if slave:
+            url = f"{scheme(_config.tls)}://{slave.host}:{slave.api_port}/files/{record_id}"
+            try:
+                async with httpx.AsyncClient(timeout=5, **httpx_kwargs(_config.tls)) as client:
+                    await client.delete(url)
+            except Exception:
+                pass
+    crud.delete_file_record(db, record_id)
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +417,7 @@ class ScanStatus(BaseModel):
     found: int
     skipped: int
     errors: int
+    path: str
 
 
 @app.post("/scan/start", response_model=ScanStatus, status_code=202)
@@ -290,17 +427,44 @@ async def scan_start():
     if not _config.path_prefix:
         raise HTTPException(status_code=400, detail="master.paths.prefix not configured")
     extensions = {e if e.startswith(".") else f".{e}" for e in _config.scan.extensions}
-    _scan._task = asyncio.create_task(_scan_task(_config.path_prefix, extensions))
-    return ScanStatus(running=True, found=0, skipped=0, errors=0)
+    _scan._task = asyncio.create_task(_scan_task(
+        _config.path_prefix, extensions,
+        _config.scan.min_size, _config.scan.max_size,
+    ))
+    return ScanStatus(running=True, found=0, skipped=0, errors=0, path=_config.path_prefix)
 
 
 @app.post("/scan/stop", response_model=ScanStatus)
 def scan_stop():
     if not _scan.cancel():
         raise HTTPException(status_code=409, detail="No scan running")
-    return ScanStatus(running=_scan.running, found=_scan.found, skipped=_scan.skipped, errors=_scan.errors)
+    return ScanStatus(running=_scan.running, found=_scan.found, skipped=_scan.skipped, errors=_scan.errors, path=_config.path_prefix)
 
 
 @app.get("/scan/status", response_model=ScanStatus)
 def scan_status():
-    return ScanStatus(running=_scan.running, found=_scan.found, skipped=_scan.skipped, errors=_scan.errors)
+    return ScanStatus(running=_scan.running, found=_scan.found, skipped=_scan.skipped, errors=_scan.errors, path=_config.path_prefix)
+
+
+# ---------------------------------------------------------------------------
+# Periodic scan settings
+# ---------------------------------------------------------------------------
+
+class ScanSettings(BaseModel):
+    interval: int
+    enabled: bool
+
+
+@app.get("/scan/settings", response_model=ScanSettings)
+def get_scan_settings(db: Session = Depends(get_db)):
+    return ScanSettings(
+        interval=int(get_setting(db, "scan_interval_seconds") or "60"),
+        enabled=get_setting(db, "scan_periodic_enabled") == "true",
+    )
+
+
+@app.post("/scan/settings", response_model=ScanSettings)
+def update_scan_settings(body: ScanSettings, db: Session = Depends(get_db)):
+    set_setting(db, "scan_interval_seconds", str(max(10, body.interval)))
+    set_setting(db, "scan_periodic_enabled", "true" if body.enabled else "false")
+    return ScanSettings(interval=max(10, body.interval), enabled=body.enabled)

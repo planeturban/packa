@@ -35,6 +35,11 @@ class WorkerState:
         self.master_url: str | None = None
         self.tls: TlsConfig = TlsConfig()
 
+        self.paused: bool = False          # ffmpeg suspended (SIGSTOP)
+        self.drain: bool = False           # finish current job, then stop polling
+        self.sleeping: bool = False        # don't start new jobs, don't poll
+        self.cancel_reason: str | None = None  # "user" or "auto" when terminating
+
     def start(self, record_id: int) -> None:
         self.active = True
         self.record_id = record_id
@@ -46,6 +51,8 @@ class WorkerState:
         self.record_id = None
         self.progress = None
         self.proc = None
+        self.paused = False
+        self.cancel_reason = None
 
     @property
     def queued(self) -> int:

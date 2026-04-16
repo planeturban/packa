@@ -1,6 +1,8 @@
 import asyncio
+import signal
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -10,20 +12,64 @@ from shared.base import Base
 from shared.config import Config
 from shared.models import FileStatus
 from shared.schemas import FileRecordCreate, FileRecordOut, StatusUpdate
+from shared.tls import httpx_kwargs, scheme
 
-from .database import engine, get_db
+from .database import _migrate, engine, get_db
 from .poller import poller_loop
 from .state import FfmpegProgress, Job, worker_state
 from .worker import recover, worker_loop
 
 Base.metadata.create_all(bind=engine)
+_migrate()
 
 _config: Config = Config()
+_advertise_host: str = ""
+_slave_config_id: str = ""
 
 
 def set_config(config: Config) -> None:
     global _config
     _config = config
+
+
+def set_registration_params(advertise_host: str, slave_config_id: str) -> None:
+    global _advertise_host, _slave_config_id
+    _advertise_host = advertise_host
+    _slave_config_id = slave_config_id
+
+
+async def _register_and_poll() -> None:
+    """Retry registration until master is reachable, then run the poller."""
+    url = f"{scheme(_config.tls)}://{_config.master_host}:{_config.master_port}/slaves"
+    payload = {"config_id": _slave_config_id, "host": _advertise_host, "api_port": _config.api_port}
+    attempt = 0
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=10, **httpx_kwargs(_config.tls)) as client:
+                r = await client.post(url, json=payload)
+                r.raise_for_status()
+                record = r.json()
+            worker_state.slave_id = record["id"]
+            worker_state.slave_config_id = _slave_config_id
+            worker_state.master_url = f"{scheme(_config.tls)}://{_config.master_host}:{_config.master_port}"
+            print(f"[slave] registered as slave-{record['id']}")
+            break
+        except Exception as exc:
+            attempt += 1
+            wait = min(5 * attempt, 30)
+            print(f"[slave] registration failed (attempt {attempt}): {exc} — retrying in {wait}s")
+            await asyncio.sleep(wait)
+
+    if _config.ffmpeg.output_dir:
+        await poller_loop(
+            master_url=worker_state.master_url,
+            slave_config_id=_slave_config_id,
+            path_prefix=_config.path_prefix,
+            batch_size=_config.worker.batch_size,
+            poll_interval=_config.worker.poll_interval,
+            output_dir=_config.ffmpeg.output_dir,
+            tls=_config.tls,
+        )
 
 
 @asynccontextmanager
@@ -36,17 +82,9 @@ async def lifespan(app: FastAPI):
             ffmpeg_bin=_config.ffmpeg.bin,
             output_dir=_config.ffmpeg.output_dir,
             extra_args=_config.ffmpeg.extra_args,
+            video_encoder=_config.ffmpeg.video_encoder,
         )))
-        if worker_state.master_url and worker_state.slave_config_id:
-            tasks.append(asyncio.create_task(poller_loop(
-                master_url=worker_state.master_url,
-                slave_config_id=worker_state.slave_config_id,
-                path_prefix=_config.path_prefix,
-                batch_size=_config.worker.batch_size,
-                poll_interval=_config.worker.poll_interval,
-                output_dir=_config.ffmpeg.output_dir,
-                tls=_config.tls,
-            )))
+    tasks.append(asyncio.create_task(_register_and_poll()))
     yield
     for task in tasks:
         task.cancel()
@@ -79,6 +117,9 @@ class SlaveStatus(BaseModel):
     record_id: int | None
     queued: int
     progress: ProgressOut | None  # only present while processing
+    paused: bool
+    drain: bool
+    sleeping: bool
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +133,9 @@ def get_status():
         state="processing" if worker_state.active else "idle",
         record_id=worker_state.record_id,
         queued=worker_state.queued,
+        paused=worker_state.paused,
+        drain=worker_state.drain,
+        sleeping=worker_state.sleeping,
         progress=ProgressOut(
             percent=p.percent,
             speed=p.speed,
@@ -135,6 +179,12 @@ def get_file(record_id: int, db: Session = Depends(get_db)):
     return record
 
 
+@app.delete("/files/{record_id}", status_code=204)
+def delete_file(record_id: int, db: Session = Depends(get_db)):
+    if not crud.delete_file_record(db, record_id):
+        raise HTTPException(status_code=404, detail="Record not found")
+
+
 @app.patch("/files/{record_id}/status", response_model=FileRecordOut)
 def update_status(record_id: int, body: StatusUpdate, db: Session = Depends(get_db)):
     record = crud.update_status(db, record_id, body.status)
@@ -143,14 +193,47 @@ def update_status(record_id: int, body: StatusUpdate, db: Session = Depends(get_
     return record
 
 
-@app.post("/conversion/stop", response_model=SlaveStatus)
+@app.post("/conversion/stop")
 def stop_conversion():
     if not worker_state.active or worker_state.proc is None:
         raise HTTPException(status_code=409, detail="No conversion running")
+    if worker_state.paused:
+        worker_state.proc.send_signal(signal.SIGCONT)
+    worker_state.cancel_reason = "user"
     worker_state.proc.terminate()
-    return SlaveStatus(
-        state="processing",
-        record_id=worker_state.record_id,
-        queued=worker_state.queued,
-        progress=None,
-    )
+    worker_state.drain = False
+
+
+@app.post("/conversion/pause")
+def pause_conversion():
+    if not worker_state.active or worker_state.proc is None:
+        raise HTTPException(status_code=409, detail="No conversion running")
+    if worker_state.paused:
+        raise HTTPException(status_code=409, detail="Already paused")
+    worker_state.proc.send_signal(signal.SIGSTOP)
+    worker_state.paused = True
+
+
+@app.post("/conversion/resume")
+def resume_conversion():
+    if worker_state.paused:
+        if worker_state.proc is not None:
+            worker_state.proc.send_signal(signal.SIGCONT)
+        worker_state.paused = False
+    worker_state.drain = False
+
+
+@app.post("/conversion/drain")
+def drain_conversion():
+    worker_state.drain = True
+
+
+@app.post("/conversion/sleep")
+def sleep_conversion():
+    worker_state.sleeping = True
+    worker_state.drain = False
+
+
+@app.post("/conversion/wake")
+def wake_conversion():
+    worker_state.sleeping = False

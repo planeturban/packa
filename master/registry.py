@@ -50,6 +50,9 @@ class SlaveRegistry:
     def get(self, slave_id: int) -> SlaveInfo | None:
         return self._slaves.get(slave_id)
 
+    def get_by_config_id(self, config_id: str) -> SlaveInfo | None:
+        return next((s for s in self._slaves.values() if s.config_id == config_id), None)
+
     def all(self) -> list[SlaveInfo]:
         return list(self._slaves.values())
 

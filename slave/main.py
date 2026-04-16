@@ -3,11 +3,30 @@ Slave entry point.
 
   Port 8000 (default) — HTTP/JSON API (receives metadata from master)
 
+Configuration priority: config file < environment variables < CLI flags.
+
+Environment variables:
+  PACKA_SLAVE_BIND            Bind address
+  PACKA_SLAVE_API_PORT        API port
+  PACKA_SLAVE_ID              Slave ID (falls back to slave.db if unset)
+  PACKA_SLAVE_PREFIX          Path prefix for incoming file paths
+  PACKA_SLAVE_MASTER_HOST     Master hostname/IP
+  PACKA_SLAVE_MASTER_PORT     Master API port
+  PACKA_SLAVE_ADVERTISE_HOST  IP/hostname advertised to master
+  PACKA_SLAVE_FFMPEG_BIN      Path to ffmpeg binary
+  PACKA_SLAVE_FFMPEG_OUTPUT_DIR  Directory for converted files
+  PACKA_SLAVE_FFMPEG_EXTRA_ARGS  Extra ffmpeg arguments
+  PACKA_SLAVE_BATCH_SIZE      Jobs to claim per poll
+  PACKA_SLAVE_POLL_INTERVAL   Seconds between poll attempts
+  PACKA_SLAVE_TLS_CERT        Path to certificate
+  PACKA_SLAVE_TLS_KEY         Path to private key
+  PACKA_TLS_CA                Path to CA certificate (shared with master/web)
+
 Flags:
-  --bind            Address to bind the server (default: localhost; "any" → 0.0.0.0)
-  --api-port        Metadata API port (default: 8000)
-  --master-host     Master hostname/IP (default: localhost)
-  --master-port     Master API port (default: 9000)
+  --bind            Address to bind the server ("any" → 0.0.0.0)
+  --api-port        Metadata API port
+  --master-host     Master hostname/IP
+  --master-port     Master API port
   --advertise-host  IP/hostname to advertise to master. Auto-detected if omitted
   --config          Path to TOML config file
 
@@ -18,17 +37,22 @@ Usage:
 
 import argparse
 import asyncio
+import builtins
+from datetime import datetime
 import socket
 
-import httpx
+_orig_print = builtins.print
+def _ts_print(*args, **kwargs):
+    _orig_print(datetime.now().strftime('%H:%M:%S'), *args, **kwargs)
+builtins.print = _ts_print
+
 import uvicorn
 
-from shared.config import Config, TlsConfig, load_slave
-from shared.tls import httpx_kwargs, scheme, uvicorn_kwargs
+from shared.config import load_slave
+from shared.tls import UVICORN_LOG_CONFIG, uvicorn_kwargs
 
-from .api import app, set_config
+from .api import app, set_config, set_registration_params
 from .identity import get_or_create_slave_id, get_stored_slave_id
-from .state import worker_state
 
 
 def _detect_host() -> str:
@@ -40,79 +64,66 @@ def _detect_host() -> str:
         return socket.gethostbyname(socket.gethostname())
 
 
-def _register_with_master(
-    master_host: str,
-    master_port: int,
-    config_id: str,
-    advertise_host: str,
-    api_port: int,
-    tls: TlsConfig,
-) -> dict:
-    url = f"{scheme(tls)}://{master_host}:{master_port}/slaves"
-    payload = {"config_id": config_id, "host": advertise_host, "api_port": api_port}
-    with httpx.Client(timeout=10, **httpx_kwargs(tls)) as client:
-        response = client.post(url, json=payload)
-        response.raise_for_status()
-        return response.json()
-
-
 async def _main(
     bind: str,
     api_port: int,
-    master_host: str,
-    master_port: int,
     advertise_host: str | None,
     slave_id: str,
-    tls: TlsConfig,
+    tls,
 ) -> None:
     effective_host = advertise_host or _detect_host()
-    print(f"[slave] registering with master at {master_host}:{master_port}")
-    try:
-        record = _register_with_master(master_host, master_port, slave_id, effective_host, api_port, tls)
-        worker_state.slave_id = record["id"]
-        worker_state.slave_config_id = slave_id
-        worker_state.master_url = f"{scheme(tls)}://{master_host}:{master_port}"
-        print(f"[slave] registered as slave-{record['id']}")
-    except Exception as exc:
-        print(f"[slave] warning: could not register with master: {exc}")
-        print("[slave] starting in standalone mode")
+    set_registration_params(effective_host, slave_id)
 
     uvi_config = uvicorn.Config(app, host=bind, port=api_port, log_level="info",
-                                **uvicorn_kwargs(tls))
+                                log_config=UVICORN_LOG_CONFIG, **uvicorn_kwargs(tls))
     await uvicorn.Server(uvi_config).serve()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Packa slave")
     parser.add_argument(
-        "--bind", default="localhost",
-        help='Address to bind the server (default: localhost; use "any" for 0.0.0.0)',
+        "--bind", default=None,
+        help='Address to bind the server ("any" → 0.0.0.0)',
     )
     parser.add_argument(
-        "--api-port", type=int, default=8000,
-        help="Metadata API port (default: 8000)",
+        "--api-port", type=int, default=None,
+        help="Metadata API port",
     )
     parser.add_argument(
-        "--master-host", default="localhost",
-        help="Master hostname/IP to register with (default: localhost)",
+        "--master-host", default=None,
+        help="Master hostname/IP to register with",
     )
     parser.add_argument(
-        "--master-port", type=int, default=9000,
-        help="Master API port (default: 9000)",
+        "--master-port", type=int, default=None,
+        help="Master API port",
     )
     parser.add_argument(
-        "--advertise-host",
+        "--advertise-host", default=None,
         help="IP/hostname to advertise to master (auto-detected if omitted)",
     )
     parser.add_argument(
         "--config",
-        help="Path to JSON config file",
+        help="Path to TOML config file",
     )
     args = parser.parse_args()
-    bind = "0.0.0.0" if args.bind == "any" else args.bind
 
-    config = load_slave(args.config) if args.config else Config()
+    config = load_slave(args.config)
+
+    # CLI overrides config + env
+    bind_raw = args.bind if args.bind is not None else config.bind
+    bind = "0.0.0.0" if bind_raw == "any" else bind_raw
+    api_port = args.api_port if args.api_port is not None else config.api_port
+    if args.master_host is not None:
+        config.master_host = args.master_host
+    if args.master_port is not None:
+        config.master_port = args.master_port
+    advertise_host = (
+        args.advertise_host if args.advertise_host is not None
+        else config.advertise_host or None
+    )
+
     set_config(config)
+
     db_id = get_stored_slave_id()
     if config.slave_id:
         if db_id and db_id != config.slave_id:
@@ -125,15 +136,14 @@ def main() -> None:
         source = "db" if db_id else "generated"
         print(f"[slave] id {source}: {slave_id!r}")
 
+    print(f"[slave] bind: {bind}:{api_port}")
     print(f"[slave] path_prefix: {config.path_prefix!r}")
     print(f"[slave] tls: {'enabled' if config.tls.enabled else 'disabled'}")
 
     asyncio.run(_main(
         bind=bind,
-        api_port=args.api_port,
-        master_host=args.master_host,
-        master_port=args.master_port,
-        advertise_host=args.advertise_host,
+        api_port=api_port,
+        advertise_host=advertise_host,
         slave_id=slave_id,
         tls=config.tls,
     ))

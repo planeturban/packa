@@ -18,6 +18,8 @@ def create_file_record(db: Session, record: FileRecordCreate) -> FileRecord:
         kwargs["id"] = record.id
     if record.slave_id is not None:
         kwargs["slave_id"] = record.slave_id
+    if record.file_size is not None:
+        kwargs["file_size"] = record.file_size
 
     db_record = FileRecord(**kwargs)
     db.add(db_record)
@@ -41,6 +43,15 @@ def get_all_records(db: Session, status: FileStatus | None = None) -> list[FileR
     return q.all()
 
 
+def delete_file_record(db: Session, record_id: int) -> bool:
+    record = get_file_record(db, record_id)
+    if not record:
+        return False
+    db.delete(record)
+    db.commit()
+    return True
+
+
 def update_status(db: Session, record_id: int, status: FileStatus) -> FileRecord | None:
     record = get_file_record(db, record_id)
     if record:
@@ -58,6 +69,7 @@ def update_conversion_result(
     output_size: int | None,
     started_at: datetime | None,
     finished_at: datetime | None,
+    cancel_reason: str | None = None,
 ) -> FileRecord | None:
     record = get_file_record(db, record_id)
     if record:
@@ -66,6 +78,7 @@ def update_conversion_result(
         record.output_size = output_size
         record.started_at = started_at
         record.finished_at = finished_at
+        record.cancel_reason = cancel_reason
         db.commit()
         db.refresh(record)
     return record

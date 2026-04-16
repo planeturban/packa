@@ -2,16 +2,24 @@
 # Copy to packa.toml and adjust values, then start with:
 #   python -m master.master --config packa.toml
 #   python -m slave.main   --config packa.toml
+#   python -m web.main     --config packa.toml
+#
+# Configuration priority: config file < environment variables < CLI flags.
+# Every setting below has a corresponding environment variable (see each section).
 
 # ---------------------------------------------------------------------------
 # mTLS (optional)
 # ---------------------------------------------------------------------------
 # Mutual TLS is enabled when all three fields below are set for a node.
 # The CA certificate is typically shared, so it belongs in [tls].
-# Each node's own certificate and key go in [master.tls] / [slave.tls].
+# Each node's own certificate and key go in [master.tls] / [slave.tls] / [web.tls].
 #
 # If master has mTLS enabled, slaves without a valid certificate are rejected.
 # If master has no mTLS, slaves ignore their own TLS config when calling master.
+#
+# Env: PACKA_TLS_CA, PACKA_MASTER_TLS_CERT, PACKA_MASTER_TLS_KEY,
+#      PACKA_SLAVE_TLS_CERT, PACKA_SLAVE_TLS_KEY,
+#      PACKA_WEB_TLS_CERT, PACKA_WEB_TLS_KEY
 #
 # [tls]
 # ca   = "/etc/packa/certs/ca.crt"      # CA cert — verifies the other side
@@ -23,28 +31,56 @@
 # [slave.tls]
 # cert = "/etc/packa/certs/slave.crt"
 # key  = "/etc/packa/certs/slave.key"
+#
+# [web.tls]
+# cert = "/etc/packa/certs/web.crt"
+# key  = "/etc/packa/certs/web.key"
 
 # ---------------------------------------------------------------------------
 # Master
 # ---------------------------------------------------------------------------
+# Env: PACKA_MASTER_BIND, PACKA_MASTER_API_PORT
+
+[master]
+bind     = "localhost"   # use "any" for 0.0.0.0
+api_port = 9000
 
 [master.paths]
 # Root path for the master node.
 # - Stripped from file paths before sending to slaves (e.g. /mnt/data/shows/ep1.mkv → shows/ep1.mkv)
 # - Used as the root directory for POST /scan/start
+# Env: PACKA_MASTER_PREFIX
 prefix = "/mnt/data/"
 
 [master.scan]
 # File extensions to include when scanning (case-insensitive).
+# Env: PACKA_MASTER_EXTENSIONS  (comma-separated, e.g. ".mkv,.mp4")
 extensions = [".mkv", ".mp4", ".avi", ".mov"]
+
+# File size limits in bytes. 0 = no limit (default).
+# Files outside this range are counted as skipped during a scan.
+# Env: PACKA_MASTER_MIN_SIZE, PACKA_MASTER_MAX_SIZE
+# min_size = 0
+# max_size = 0
 
 # ---------------------------------------------------------------------------
 # Slave
 # ---------------------------------------------------------------------------
+# Env: PACKA_SLAVE_BIND, PACKA_SLAVE_API_PORT,
+#      PACKA_SLAVE_MASTER_HOST, PACKA_SLAVE_MASTER_PORT, PACKA_SLAVE_ADVERTISE_HOST
 
 [slave]
+bind     = "localhost"   # use "any" for 0.0.0.0
+api_port = 8000
+
+# Master to register with and poll for jobs.
+master_host    = "localhost"
+master_port    = 9000
+# advertise_host = ""   # auto-detected if omitted
+
 # Unique identifier for this slave. Used by master to track which slave
 # holds which file. Must be unique across all slaves.
+# Env: PACKA_SLAVE_ID
 #
 # If omitted, the slave looks for a previously generated ID in its local
 # database (slave.db). If none exists, a UUID is generated and stored there
@@ -55,9 +91,13 @@ id = "storage-01"
 # Prefix prepended to relative paths received from master.
 # Example: shows/ep1.mkv → /mnt/files/shows/ep1.mkv
 # If omitted, master.paths.prefix is used instead.
+# Env: PACKA_SLAVE_PREFIX
 prefix = "/mnt/files/"
 
 [slave.ffmpeg]
+# Env: PACKA_SLAVE_FFMPEG_BIN, PACKA_SLAVE_FFMPEG_OUTPUT_DIR, PACKA_SLAVE_FFMPEG_EXTRA_ARGS,
+#      PACKA_SLAVE_FFMPEG_VIDEO_ENCODER
+
 # Path to the ffmpeg binary.
 bin = "ffmpeg"
 
@@ -74,10 +114,40 @@ extra_args = ""
 # Example with metadata:
 # extra_args = "-metadata comment='processed by packa'"
 
+# Video encoder used for non-HEVC files. Default is libx265 (software).
+# On Apple Silicon, hevc_videotoolbox is much faster (hardware encoding).
+# Env: PACKA_SLAVE_FFMPEG_VIDEO_ENCODER
+# video_encoder = "libx265"
+# video_encoder = "hevc_videotoolbox"
+
 [slave.worker]
+# Env: PACKA_SLAVE_BATCH_SIZE, PACKA_SLAVE_POLL_INTERVAL
+
 # Number of jobs to claim from master in a single request.
 # Increase to keep the slave busy when master latency is high.
 batch_size = 1
 
 # Seconds between poll attempts when the job queue is empty.
 poll_interval = 5
+
+# ---------------------------------------------------------------------------
+# Web frontend
+# ---------------------------------------------------------------------------
+# Env: PACKA_WEB_BIND, PACKA_WEB_PORT,
+#      PACKA_WEB_USERNAME, PACKA_WEB_PASSWORD, PACKA_WEB_SECRET_KEY,
+#      PACKA_WEB_MASTER_HOST, PACKA_WEB_MASTER_PORT
+
+[web]
+bind = "localhost"   # use "any" for 0.0.0.0
+port = 8080
+
+# Credentials for the login page.
+username = "admin"
+password = "change-me"
+
+# Secret key used to sign session cookies. Must be a long random string.
+secret_key = "change-me-use-a-long-random-string"
+
+# Which master to connect to.
+master_host = "localhost"
+master_port = 9000

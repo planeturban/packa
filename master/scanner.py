@@ -11,6 +11,7 @@ from pathlib import Path
 class VideoFile:
     file_name: str
     file_path: str
+    file_size: int
     c_time: float
     m_time: float
     checksum: str
@@ -38,6 +39,7 @@ def collect(file_path: str) -> VideoFile:
     return VideoFile(
         file_name=file_name,
         file_path=resolved,
+        file_size=stat.st_size,
         c_time=c_time,
         m_time=m_time,
         checksum=checksum,
