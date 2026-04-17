@@ -15,6 +15,7 @@ from shared.schemas import FileRecordCreate, FileRecordOut, StatusUpdate
 from shared.tls import httpx_kwargs, scheme
 
 from .database import _migrate, engine, get_db
+from .identity import get_stored_slave_id
 from .poller import poller_loop
 from .settings import get_setting, set_setting
 from .state import FfmpegProgress, Job, worker_state
@@ -80,8 +81,13 @@ async def lifespan(app: FastAPI):
     worker_state.vaapi_device = _config.ffmpeg.vaapi_device
     # If the slave has never been activated via the web UI, start unconfigured (sleeping).
     # Once the user selects an encoder, ready=true is stored and this branch is skipped.
+    # Existing slaves (those with a stored slave_id) are never treated as unconfigured —
+    # they were registered before this feature existed and should use their config encoder.
     if get_setting("ready"):
         worker_state.encoder = get_setting("encoder") or _config.ffmpeg.encoder
+    elif get_stored_slave_id():
+        # Already registered slave with no explicit "ready" flag — treat as configured.
+        worker_state.encoder = _config.ffmpeg.encoder
     else:
         worker_state.encoder = _config.ffmpeg.encoder
         worker_state.sleeping = True

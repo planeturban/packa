@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS slave_settings (
 
 
 def get_setting(key: str) -> str | None:
-    with engine.connect() as conn:
+    with engine.begin() as conn:
         conn.execute(text(_CREATE))
         row = conn.execute(
             text("SELECT value FROM slave_settings WHERE key = :k"), {"k": key}
@@ -26,7 +26,7 @@ def get_setting(key: str) -> str | None:
 
 
 def set_setting(key: str, value: str) -> None:
-    with engine.connect() as conn:
+    with engine.begin() as conn:
         conn.execute(text(_CREATE))
         conn.execute(
             text("""
@@ -35,4 +35,3 @@ def set_setting(key: str, value: str) -> None:
             """),
             {"k": key, "v": value},
         )
-        conn.commit()
