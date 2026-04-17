@@ -44,6 +44,7 @@ class WorkerState:
         self.encoder: str = "libx265"              # libx265 | nvenc | vaapi | videotoolbox
         self.vaapi_device: str = "/dev/dri/renderD128"
         self.presets: dict[str, EncoderPreset] = {}  # loaded from config at startup
+        self.available_encoders: list[str] = ["libx265", "nvenc", "vaapi", "videotoolbox"]
 
     def start(self, record_id: int) -> None:
         self.active = True

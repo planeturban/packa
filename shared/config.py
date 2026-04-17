@@ -58,6 +58,10 @@ class FfmpegConfig:
     vaapi_device: str = "/dev/dri/renderD128"  # default pre_input device for vaapi preset
     # Per-encoder ffmpeg argument overrides — populated by load_slave()
     presets: dict[str, EncoderPreset] = field(default_factory=dict)
+    # Encoders shown in the web dashboard dropdown
+    available_encoders: list[str] = field(
+        default_factory=lambda: ["libx265", "nvenc", "vaapi", "videotoolbox"]
+    )
 
 
 @dataclass
@@ -186,6 +190,11 @@ def load_slave(config_path: str | None) -> Config:
             video_args=user.get("video_args", default.video_args),
         )
 
+    # Which encoders to show in the web dashboard dropdown.
+    # Explicit list in config wins; otherwise show all four.
+    _all_encoders = list(_defaults.keys())
+    available_encoders: list[str] = ffmpeg_data.get("encoders", _all_encoders)
+
     return Config(
         bind=_env("PACKA_SLAVE_BIND", slave.get("bind", "localhost")),
         api_port=_env_int("PACKA_SLAVE_API_PORT", slave.get("api_port", 8000)),
@@ -206,6 +215,7 @@ def load_slave(config_path: str | None) -> Config:
             encoder=_env("PACKA_SLAVE_FFMPEG_ENCODER", ffmpeg_data.get("encoder", "libx265")),
             vaapi_device=vaapi_device,
             presets=presets,
+            available_encoders=available_encoders,
         ),
         worker=WorkerConfig(
             batch_size=_env_int("PACKA_SLAVE_BATCH_SIZE", worker_data.get("batch_size", 1)),

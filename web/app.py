@@ -290,10 +290,41 @@ async def data_files_delete(request: Request):
     body = await request.json()
     ids: list[int] = body.get("ids", [])
     async with httpx.AsyncClient(timeout=10, **httpx_kwargs(_config.tls)) as client:
+        # Fetch slaves registry and file records so we can cascade to the right slave
+        try:
+            slaves_r = await client.get(f"{_master_url()}/slaves")
+            slaves_map = {s["config_id"]: s for s in slaves_r.json()}
+        except Exception:
+            slaves_map = {}
+
+        # Fetch each file record to find slave assignments, then delete from master
+        file_results = await asyncio.gather(
+            *[client.get(f"{_master_url()}/files/{i}") for i in ids],
+            return_exceptions=True,
+        )
         await asyncio.gather(
             *[client.delete(f"{_master_url()}/files/{i}") for i in ids],
             return_exceptions=True,
         )
+
+        # Cascade delete to the slave that holds each file
+        slave_deletes = []
+        for result in file_results:
+            if isinstance(result, Exception):
+                continue
+            try:
+                rec = result.json()
+                slave_cfg = rec.get("slave_id")
+                if slave_cfg and slave_cfg in slaves_map:
+                    s = slaves_map[slave_cfg]
+                    slave_deletes.append(
+                        client.delete(f"{_slave_url(s['host'], s['api_port'])}/files/{rec['id']}")
+                    )
+            except Exception:
+                pass
+        if slave_deletes:
+            await asyncio.gather(*slave_deletes, return_exceptions=True)
+
     return JSONResponse({"ok": True})
 
 

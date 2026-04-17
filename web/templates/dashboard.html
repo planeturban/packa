@@ -597,6 +597,17 @@ async function _doSlavePoll(host, port) {
         if (newSel) newSel.value = savedEnc;
       }
     }
+    // Refresh the file table if the list has changed
+    if (data.files) {
+      const sorted = (data.files).slice().sort((a,b) =>
+        (b.updated_at||'').localeCompare(a.updated_at||''));
+      const prevIds = _allFiles.map(f=>f.id+f.status).join(',');
+      const newIds  = sorted.map(f=>f.id+f.status).join(',');
+      if (prevIds !== newIds) {
+        _allFiles = sorted;
+        _renderTable();
+      }
+    }
     // Fast poll only during active conversion; idle/sleeping needs no sub-second updates
     const active = data.status && data.status.state === 'processing';
     _scheduleSlavePoll(host, port, active ? 500 : 2000);
@@ -628,7 +639,7 @@ function closeModal() {
   document.getElementById('modal').style.display = 'none';
   _ctx = null;
   _stopSlavePoll();
-  _resumeRefresh();
+  _dashRefresh(); // immediate refresh so cards reflect latest state
 }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
@@ -922,13 +933,17 @@ async function setSlaveEncoder(host, port) {
   if (r.ok) _applyDashboard(await r.json());
 }
 
-function _encoderSelect(encoder, host, port, unconfigured) {
+function _encoderSelect(encoder, host, port, unconfigured, availableEncoders) {
+  const available = (availableEncoders && availableEncoders.length)
+    ? availableEncoders
+    : Object.keys(_ENCODER_LABELS);
   let opts = unconfigured
     ? '<option value="" disabled selected>— Select encoder —</option>'
     : '';
-  opts += Object.entries(_ENCODER_LABELS).map(([v, l]) =>
-    `<option value="${v}"${!unconfigured && v === encoder ? ' selected' : ''}>${l}</option>`
-  ).join('');
+  opts += available
+    .filter(v => _ENCODER_LABELS[v])
+    .map(v => `<option value="${v}"${!unconfigured && v === encoder ? ' selected' : ''}>${_ENCODER_LABELS[v]}</option>`)
+    .join('');
   // Pause live-refresh while user has the dropdown open so it can't reset their selection
   const sel = `<select id="enc-${port}"
     onfocus="_stopSlavePoll()"
@@ -970,7 +985,7 @@ function _slaveStatusHtml(st, host, port) {
     </div>`;
   }
   h += `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.8rem;font-size:.8rem;color:var(--text-dim)">
-    <span>Encoder</span>${_encoderSelect(st.encoder || 'libx265', host, port, st.unconfigured)}
+    <span>Encoder</span>${_encoderSelect(st.encoder || 'libx265', host, port, st.unconfigured, st.available_encoders)}
   </div>`;
 
   if (st.state === 'processing' && st.progress) {

@@ -79,6 +79,7 @@ async def lifespan(app: FastAPI):
     worker_state.tls = _config.tls
     worker_state.vaapi_device = _config.ffmpeg.vaapi_device
     worker_state.presets = _config.ffmpeg.presets
+    worker_state.available_encoders = _config.ffmpeg.available_encoders
     # If the slave has never been activated via the web UI, start unconfigured (sleeping).
     # main.py writes "first_run=true" on the very first startup (no slave_id in DB yet).
     # Once the user selects an encoder, "ready=true" is written and this branch is skipped.
@@ -137,6 +138,7 @@ class SlaveStatus(BaseModel):
     sleeping: bool
     unconfigured: bool
     encoder: str
+    available_encoders: list[str]
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +157,7 @@ def get_status():
         sleeping=worker_state.sleeping,
         unconfigured=worker_state.unconfigured,
         encoder=worker_state.encoder,
+        available_encoders=worker_state.available_encoders,
         progress=ProgressOut(
             percent=p.percent,
             speed=p.speed,
@@ -200,6 +203,14 @@ def get_file(record_id: int, db: Session = Depends(get_db)):
 
 @app.delete("/files/{record_id}", status_code=204)
 def delete_file(record_id: int, db: Session = Depends(get_db)):
+    if (worker_state.active
+            and worker_state.record_id == record_id
+            and worker_state.proc is not None):
+        if worker_state.paused:
+            worker_state.proc.send_signal(signal.SIGCONT)
+        worker_state.cancel_reason = "user"
+        worker_state.proc.terminate()
+        worker_state.drain = False
     if not crud.delete_file_record(db, record_id):
         raise HTTPException(status_code=404, detail="Record not found")
 

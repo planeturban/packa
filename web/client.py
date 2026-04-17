@@ -80,6 +80,7 @@ async def fetch_dashboard(master_url: str, tls: TlsConfig) -> dict:
             "sleeping": (st or {}).get("sleeping", False),
             "unconfigured": (st or {}).get("unconfigured", False),
             "encoder": (st or {}).get("encoder", "libx265"),
+            "available_encoders": (st or {}).get("available_encoders", ["libx265", "nvenc", "vaapi", "videotoolbox"]),
         })
 
     return {

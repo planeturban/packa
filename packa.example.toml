@@ -130,6 +130,10 @@ encoder = "libx265"
 # Env: PACKA_SLAVE_FFMPEG_VAAPI_DEVICE
 # vaapi_device = "/dev/dri/renderD128"
 
+# Encoders shown in the web dashboard dropdown.
+# Defaults to all four. Set this to match the hardware on this machine.
+# encoders = ["libx265", "videotoolbox"]
+
 # ── Per-encoder ffmpeg argument overrides ────────────────────────────────────
 # Each encoder has built-in defaults (shown below). You only need these sections
 # if you want to change the arguments — omit any section to use the defaults.
