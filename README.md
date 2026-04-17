@@ -187,9 +187,13 @@ bind        = "localhost"   # use "any" for 0.0.0.0
 port        = 8080
 master_host = "localhost"
 master_port = 9000
+
+# Login credentials — if either is omitted, the dashboard is open without authentication.
 username    = "admin"
 password    = "change-me"
-secret_key  = "change-me-use-a-long-random-string"   # signs session cookies
+
+# Signs session cookies. Auto-generated at startup if omitted (sessions won't survive restarts).
+secret_key  = "change-me-use-a-long-random-string"
 
 [web.tls]
 cert = "/etc/packa/web.crt"
@@ -300,7 +304,7 @@ python -m web.main [--bind ADDRESS] [--port PORT]
 
 ## Web dashboard
 
-The web process serves a browser dashboard at port 8080 (default). Log in with the username and password from the config. The dashboard shows:
+The web process serves a browser dashboard at port 8080 (default). If `username` and `password` are set in the config, a login page is shown — otherwise the dashboard is accessible without authentication. The dashboard shows:
 
 - Master file counts by status — each is clickable and opens a filtered file list
 - Active scan state and progress, periodic scan toggle and interval

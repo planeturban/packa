@@ -179,6 +179,7 @@ Browser talks HTTP(S) to the web process. Web process talks mTLS to master and s
 | `web/client.py` | `fetch_dashboard()` — fans out to master + all slaves in parallel with one `AsyncClient` |
 | `web/config.py` | `WebConfig` dataclass + `load_web()` — reads `[web]` section + env vars |
 | `web/templates/` | `base.html`, `login.html`, `dashboard.html` |
+| `web/static/` | `style.css` (all CSS), `theme.js` (theme switcher), `dashboard.js` (all dashboard JS) |
 
 **Dashboard** auto-refreshes every 3 seconds with smooth DOM updates. Shows:
 - Master file counts by status (clickable, opens filtered file list modal)
@@ -186,8 +187,9 @@ Browser talks HTTP(S) to the web process. Web process talks mTLS to master and s
 - Per-slave cards: idle/converting/sleeping/draining badge, queue depth, ffmpeg progress with speed/FPS/ETA/size; controls for Pause, Finish current (drain), Stop, Sleep/Wake
 - Full file table with search, status filter, bulk actions (delete / set to pending) and pagination
 - Dark mode with manual Light / System / Dark picker (preference stored in `localStorage`); inline `<script>` in `<head>` applies theme before first render to avoid flash
+- Slave section height is locked in JS (`secEl.style.minHeight`) before each update so the file table doesn't jump when slave cards change between idle and processing state
 
-**Auth:** `SessionMiddleware` (starlette) with `secret_key` from config. Session stores `{"user": username}` after successful login. `secret_key` must be set — `set_config()` raises `ValueError` if empty.
+**Auth:** `SessionMiddleware` (starlette) with `secret_key` from config. Session stores `{"user": username}` after successful login. Auth is **optional** — if `username` or `password` is empty/missing, all routes are accessible without login. `secret_key` is auto-generated at startup if not set (sessions won't survive restarts).
 
 **Web env vars:**
 
@@ -287,9 +289,9 @@ key  = "/etc/packa/slave.key"
 [web]
 bind        = "localhost"
 port        = 8080
-username    = "admin"
+username    = "admin"    # optional — omit username or password to disable auth entirely
 password    = "secret"
-secret_key  = "long-random-string"
+secret_key  = "long-random-string"  # optional — auto-generated if omitted
 master_host = "localhost"
 master_port = 9000
 

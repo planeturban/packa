@@ -2,8 +2,8 @@
 Web frontend — FastAPI app.
 
 Routes:
-  GET  /        — dashboard (requires login)
-  GET  /login   — login form
+  GET  /        — dashboard (login required only when username+password are configured)
+  GET  /login   — login form (redirects to / when auth is disabled)
   POST /login   — authenticate
   POST /logout  — clear session
 """
@@ -11,10 +11,12 @@ Routes:
 from pathlib import Path
 
 import asyncio
+import secrets
 
 import httpx
 from fastapi import FastAPI, Form, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -29,12 +31,12 @@ _config: WebConfig = WebConfig()
 def set_config(config: WebConfig) -> None:
     global _config
     _config = config
-    if not config.secret_key:
-        raise ValueError("[web] secret_key must be set in config")
-    app.add_middleware(SessionMiddleware, secret_key=config.secret_key, https_only=config.tls.enabled)
+    secret_key = config.secret_key or secrets.token_hex(32)
+    app.add_middleware(SessionMiddleware, secret_key=secret_key, https_only=config.tls.enabled)
 
 
 app = FastAPI(title="Packa Web")
+app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 
 _templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -73,7 +75,13 @@ _templates.env.filters["filesize"] = _fmt_bytes
 # Auth helper
 # ---------------------------------------------------------------------------
 
+def _auth_enabled() -> bool:
+    return bool(_config.username and _config.password)
+
+
 def _logged_in(request: Request) -> bool:
+    if not _auth_enabled():
+        return True
     return bool(request.session.get("user"))
 
 
@@ -83,13 +91,15 @@ def _logged_in(request: Request) -> bool:
 
 @app.get("/login")
 def login_page(request: Request):
-    if _logged_in(request):
+    if not _auth_enabled() or _logged_in(request):
         return RedirectResponse("/", status_code=303)
     return _templates.TemplateResponse(request, "login.html")
 
 
 @app.post("/login")
 async def login(request: Request, username: str = Form(), password: str = Form()):
+    if not _auth_enabled():
+        return RedirectResponse("/", status_code=303)
     if username == _config.username and password == _config.password:
         request.session["user"] = username
         return RedirectResponse("/", status_code=303)
@@ -103,6 +113,8 @@ async def login(request: Request, username: str = Form(), password: str = Form()
 
 @app.post("/logout")
 def logout(request: Request):
+    if not _auth_enabled():
+        return RedirectResponse("/", status_code=303)
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
 
@@ -444,4 +456,4 @@ async def dashboard(request: Request):
         return RedirectResponse("/login", status_code=303)
     master_url = f"{scheme(_config.tls)}://{_config.master_host}:{_config.master_port}"
     data = await fetch_dashboard(master_url, _config.tls)
-    return _templates.TemplateResponse(request, "dashboard.html", {"data": data})
+    return _templates.TemplateResponse(request, "dashboard.html", {"data": data, "auth_enabled": _auth_enabled()})

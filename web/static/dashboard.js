@@ -1,0 +1,767 @@
+// ── Shared constants ──────────────────────────────────────────────────────
+const _ST_COLORS = {
+  pending:    { bg:'#f5f5f5', color:'#666' },
+  assigned:   { bg:'#fff3e0', color:'#e65100' },
+  processing: { bg:'#e3f2fd', color:'#1565c0' },
+  complete:   { bg:'#e8f5e9', color:'#2e7d32' },
+  discarded:  { bg:'#f5f5f5', color:'#aaa' },
+  cancelled:  { bg:'#fbe9e7', color:'#bf360c' },
+  error:      { bg:'#ffebee', color:'#c62828' },
+};
+
+// ── Dashboard file table ──────────────────────────────────────────────────
+let _dashFiles  = [];
+let _dashFilter = null;
+let _dashPage   = 1;
+let _dashQuery  = '';
+const _DASH_PER_PAGE = 50;
+
+function _dashFiltered() {
+  let result = _dashFiles;
+  if (_dashFilter) result = result.filter(f => f.status === _dashFilter);
+  if (_dashQuery) {
+    const q = _dashQuery.toLowerCase();
+    result = result.filter(f =>
+      (f.file_name || '').toLowerCase().includes(q) ||
+      (f.file_path || '').toLowerCase().includes(q) ||
+      (f.slave_id  || '').toLowerCase().includes(q)
+    );
+  }
+  return result;
+}
+
+function _setDashFilter(s) {
+  _dashFilter = (s === _dashFilter) ? null : s;
+  _dashPage = 1;
+  _renderDashFiles();
+}
+
+function _dashUpdateSel() {
+  const n = document.querySelectorAll('.dash-row-chk:checked').length;
+  const el = document.getElementById('dash-sel-count');
+  if (el) el.textContent = n ? `${n} selected` : '';
+  document.querySelectorAll('.dash-bulk-btn').forEach(b => b.disabled = n === 0);
+}
+
+function _dashToggleAll(src) {
+  document.querySelectorAll('.dash-row-chk').forEach(c => c.checked = src.checked);
+  _dashUpdateSel();
+}
+
+function _dashSelectedIds() {
+  return [...document.querySelectorAll('.dash-row-chk:checked')].map(el => +el.value);
+}
+
+async function bulkDashDelete() {
+  const ids = _dashSelectedIds();
+  if (!ids.length) return;
+  if (!confirm(`Delete ${ids.length} record(s)?`)) return;
+  await fetch('/data/files/delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ids}),
+  });
+  const r = await fetch('/data/dashboard');
+  if (r.ok) _applyDashboard(await r.json());
+}
+
+async function bulkDashPending() {
+  const ids = _dashSelectedIds();
+  if (!ids.length) return;
+  await fetch('/data/files/pending', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ids}),
+  });
+  const r = await fetch('/data/dashboard');
+  if (r.ok) _applyDashboard(await r.json());
+}
+
+function _renderDashFiles() {
+  const filtered = _dashFiltered();
+  const total    = filtered.length;
+  const pages    = Math.max(1, Math.ceil(total / _DASH_PER_PAGE));
+  if (_dashPage > pages) _dashPage = pages;
+  const slice = filtered.slice((_dashPage - 1) * _DASH_PER_PAGE, _dashPage * _DASH_PER_PAGE);
+
+  // File count
+  const cntEl = document.getElementById('dash-file-count');
+  if (cntEl) cntEl.textContent = _dashFiles.length;
+
+  // Status filter buttons
+  const base   = 'border:none;border-radius:3px;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;font-family:inherit;padding:.18rem .52rem;';
+  const shadow = 'box-shadow:inset 0 0 0 1.5px currentColor;';
+  let filters  = '<div style="display:flex;gap:.3rem;flex-wrap:wrap;margin-bottom:.55rem">';
+  const allActive = _dashFilter === null;
+  filters += `<button onclick="_setDashFilter(null)" style="${base}background:${allActive?'#e8eaf6':'#f0f0f0'};color:#3949ab;${allActive?shadow:''}">All</button>`;
+  for (const [s, c] of Object.entries(_ST_COLORS)) {
+    const n = _dashFiles.filter(f => f.status === s).length;
+    if (!n) continue;
+    const active = _dashFilter === s;
+    filters += `<button onclick="_setDashFilter('${s}')" style="${base}background:${c.bg};color:${c.color};${active?shadow:''}">${s} (${n})</button>`;
+  }
+  filters += '</div>';
+  const filtersEl = document.getElementById('dash-status-filters');
+  if (filtersEl) filtersEl.innerHTML = filters;
+
+  // Search + action bar
+  let h = `<input type="text" class="modal-search" id="dash-search" placeholder="Filter by filename, path or slave…"
+              value="${_esc(_dashQuery)}" oninput="_dashQuery=this.value;_dashPage=1;_renderDashFiles()">
+    <div class="modal-bar">
+      <span class="sel-count" id="dash-sel-count"></span>
+      <div class="modal-bar-right">
+        <button class="btn-act dash-bulk-btn" disabled onclick="bulkDashPending()">Set to pending</button>
+        <button class="btn-act danger dash-bulk-btn" disabled onclick="bulkDashDelete()">Delete selected</button>
+      </div>
+    </div>`;
+
+  // Table
+  h += '<div style="overflow-x:auto"><table class="modal-table"><thead><tr>';
+  h += `<th><input type="checkbox" class="chk-all" onchange="_dashToggleAll(this)"></th>`;
+  h += '<th>ID</th><th>Filename</th><th>Status</th><th>Slave</th><th>Source</th><th>Output</th><th>Duration</th><th>Finished</th>';
+  h += '</tr></thead><tbody>';
+  if (!slice.length) {
+    const msg = total === 0 && _dashQuery ? 'No results for this search.' : 'No files.';
+    h += `<tr><td colspan="9" style="color:#aaa;text-align:center;padding:.8rem">${msg}</td></tr>`;
+  } else {
+    for (const f of slice) {
+      h += `<tr>
+        <td><input type="checkbox" class="dash-row-chk" value="${f.id}" onchange="_dashUpdateSel()"></td>
+        <td>${f.id}</td>
+        <td><span class="modal-fname" title="${_esc(f.file_path)}">${_esc(f.file_name)}</span></td>
+        <td>${stBadge(f.status, f)}</td>
+        <td>${f.slave_id ? _esc(f.slave_id) : '—'}</td>
+        <td>${fmtBytes(f.file_size)}</td>
+        <td>${fmtBytes(f.output_size)}</td>
+        <td>${fmtDuration(f.started_at, f.finished_at)}</td>
+        <td>${fmtDate(f.finished_at)}</td>
+      </tr>`;
+    }
+  }
+  h += '</tbody></table></div>';
+
+  // Pagination
+  if (pages > 1) {
+    h += `<div class="modal-pagination">
+      <button class="btn-act" onclick="_dashPage--;_renderDashFiles()" ${_dashPage<=1?'disabled':''}>← Prev</button>
+      <span class="pag-info">Page ${_dashPage} of ${pages} &nbsp;·&nbsp; ${total} rows</span>
+      <button class="btn-act" onclick="_dashPage++;_renderDashFiles()" ${_dashPage>=pages?'disabled':''}>Next →</button>
+    </div>`;
+  } else if (total > 0) {
+    h += `<div class="modal-pagination"><span class="pag-info">${total} row${total!==1?'s':''}</span></div>`;
+  }
+
+  const prevChecked = new Set(_dashSelectedIds());
+  const tblEl = document.getElementById('dash-file-table');
+  if (tblEl) tblEl.innerHTML = h;
+  // Restore checked state
+  document.querySelectorAll('.dash-row-chk').forEach(c => {
+    if (prevChecked.has(+c.value)) c.checked = true;
+  });
+  // Restore focus to search if it was active
+  if (document.activeElement && document.activeElement.id === 'dash-search') {
+    const el = document.getElementById('dash-search');
+    if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  }
+  _dashUpdateSel();
+}
+
+// ── Auto-refresh (smooth, no page reload) ────────────────────────────────
+let _refreshTimer = null;
+
+function _pauseRefresh() { clearTimeout(_refreshTimer); }
+function _resumeRefresh() { _refreshTimer = setTimeout(_dashRefresh, 3000); }
+
+async function _dashRefresh() {
+  try {
+    const r = await fetch('/data/dashboard');
+    if (r.ok) _applyDashboard(await r.json());
+  } catch(e) {}
+  if (!_ctx) _resumeRefresh();
+}
+
+function _applyDashboard(data) {
+  // Master error / content
+  const errEl     = document.getElementById('master-error');
+  const contentEl = document.getElementById('master-content');
+  if (data.master_error) {
+    errEl?.classList.remove('hidden');
+    contentEl?.classList.add('hidden');
+    const msg = document.getElementById('master-error-msg');
+    if (msg) msg.textContent = data.master_error;
+  } else {
+    errEl?.classList.add('hidden');
+    contentEl?.classList.remove('hidden');
+    // File counts
+    for (const [s, n] of Object.entries(data.file_counts || {})) {
+      const el = document.getElementById('cnt-' + s);
+      if (el) el.textContent = n;
+    }
+    // Scan live area
+    const scanEl = document.getElementById('scan-live');
+    if (scanEl && data.scan) scanEl.innerHTML = _scanLiveHtml(data.scan);
+  }
+  // File table
+  if (data.files) {
+    _dashFiles = data.files.slice().sort((a, b) => b.id - a.id);
+    _renderDashFiles();
+  }
+
+  // Slave section
+  const cntEl = document.getElementById('slave-count');
+  const secEl = document.getElementById('slave-section');
+  const slaves = data.slaves || [];
+  if (cntEl) cntEl.textContent = slaves.length;
+  if (secEl) {
+    // Lock current height before updating so the section can only grow, never shrink.
+    // This prevents the file table from jumping when a slave card changes between states.
+    secEl.style.minHeight = secEl.offsetHeight + 'px';
+    if (!slaves.length) {
+      secEl.innerHTML = '<p style="color:#aaa;font-size:.9rem;margin-top:.5rem">No slaves registered.</p>';
+    } else {
+      secEl.innerHTML = '<div class="slave-grid">' + slaves.map(_slaveCardHtml).join('') + '</div>';
+    }
+  }
+}
+
+function _scanLiveHtml(scan) {
+  if (scan.running) {
+    return `<span class="badge badge-scanning">Scanning</span>
+      <div class="scan-stats">
+        <span>Found: ${scan.found}</span>
+        <span>Skipped: ${scan.skipped}</span>
+        ${scan.errors ? `<span class="scan-err">Errors: ${scan.errors}</span>` : ''}
+      </div>
+      <div class="actions" style="margin-top:.6rem">
+        <form method="post" action="/actions/scan/stop">
+          <button class="btn-act danger" type="submit">Stop scan</button>
+        </form>
+        ${scan.path ? `<span style="font-size:.76rem;color:#aaa;align-self:center">${_esc(scan.path)}</span>` : ''}
+      </div>`;
+  }
+  return `<span class="badge badge-idle">Scan idle</span>
+    <div class="actions" style="margin-top:.6rem">
+      <form method="post" action="/actions/scan/start">
+        <button class="btn-act" type="submit">Start scan</button>
+      </form>
+      ${scan.path ? `<span style="font-size:.76rem;color:#aaa;align-self:center">${_esc(scan.path)}</span>` : ''}
+    </div>`;
+}
+
+function _slaveCardHtml(s) {
+  const badge = s.state === 'unreachable'
+    ? '<span class="badge badge-unreachable">Unreachable</span>'
+    : s.unconfigured ? '<span class="badge badge-unconfigured">Unconfigured</span>'
+    : s.sleeping ? '<span class="badge badge-sleeping">Sleeping</span>'
+    : s.paused   ? '<span class="badge badge-paused">Paused</span>'
+    : s.state === 'processing' ? `<span class="badge badge-processing">${s.drain ? 'Finishing' : 'Converting'}</span>`
+    : s.drain    ? '<span class="badge badge-drain">Draining</span>'
+    : '<span class="badge badge-idle">Idle</span>';
+
+  let h = `<div class="slave-card" data-host="${_esc(s.host)}" data-port="${s.api_port}" data-name="${_esc(s.config_id)}"
+    onclick="showSlave(this.dataset.host,+this.dataset.port,this.dataset.name)">
+    <div class="slave-head">
+      <div><div class="slave-name">${_esc(s.config_id)}</div>
+      <div class="slave-host">${_esc(s.host)}:${s.api_port}</div></div>
+      ${badge}
+    </div>`;
+
+  if (s.state !== 'unreachable') {
+    h += `<div class="meta-row"><span>Queue</span><span>${s.queued} job${s.queued!==1?'s':''}</span></div>`;
+  }
+
+  if (s.state === 'processing' && s.progress) {
+    const p = s.progress;
+    const pct = Math.min(p.percent || 0, 100);
+    h += `<div class="prog-wrap"><div class="prog-bar" style="width:${pct}%"></div></div>
+      <div class="meta-row">
+        <span>${pct.toFixed(1)}%</span>
+        <span>${p.fps ? p.fps+'\u00a0fps\u00a0\u00a0' : ''}${p.speed ? p.speed+'×\u00a0\u00a0' : ''}${p.eta_seconds != null ? 'ETA\u00a0'+fmtEta(p.eta_seconds) : ''}</span>
+      </div>`;
+    if (p.current_size_bytes) {
+      h += `<div class="meta-row"><span>Size</span><span>${fmtBytes(p.current_size_bytes)}${p.projected_size_bytes ? ' → '+fmtBytes(p.projected_size_bytes) : ''}</span></div>`;
+      if (p.bitrate) h += `<div class="meta-row"><span>Bitrate</span><span>${_esc(p.bitrate)}</span></div>`;
+    }
+  } else if (s.state === 'processing') {
+    h += '<p style="font-size:.78rem;color:#aaa;margin-top:.5rem">Waiting for progress…</p>';
+  }
+
+  if (s.state !== 'unreachable') {
+    h += `<div class="actions" onclick="event.stopPropagation()">`;
+    if (s.unconfigured) {
+      // no buttons — user opens the modal to select encoder and activate
+    } else if (s.sleeping) {
+      h += _slaveBtn('/actions/slave/wake', s, 'Wake up', '');
+    } else if (s.paused) {
+      h += _slaveBtn('/actions/slave/resume', s, 'Resume', '') + _slaveBtn('/actions/slave/stop', s, 'Stop', 'danger');
+    } else if (s.state === 'processing') {
+      h += _slaveBtn('/actions/slave/pause', s, 'Pause', '');
+      if (!s.drain) h += _slaveBtn('/actions/slave/drain', s, 'Finish current', 'warn');
+      h += _slaveBtn('/actions/slave/stop', s, 'Stop', 'danger');
+    } else if (s.drain) {
+      h += _slaveBtn('/actions/slave/resume', s, 'Resume polling', '');
+    } else {
+      h += _slaveBtn('/actions/slave/sleep', s, 'Sleep', '');
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+function _slaveBtn(action, s, label, cls) {
+  return `<form method="post" action="${action}">
+    <input type="hidden" name="host" value="${_esc(s.host)}">
+    <input type="hidden" name="api_port" value="${s.api_port}">
+    <button class="btn-act ${cls}" type="submit">${label}</button>
+  </form>`;
+}
+
+function _esc(str) {
+  return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Seed file table from server-rendered data on first load
+_dashFiles = JSON.parse(document.getElementById('init-files').textContent).sort((a, b) => b.id - a.id);
+_renderDashFiles();
+
+_resumeRefresh();
+
+// ── Slave status polling (500ms when slave modal is open) ─────────────────
+let _slaveStatusTimer = null;
+function _startSlavePoll(host, port) {
+  _stopSlavePoll();
+  _scheduleSlavePoll(host, port, 500);
+}
+function _stopSlavePoll() {
+  if (_slaveStatusTimer) { clearTimeout(_slaveStatusTimer); _slaveStatusTimer = null; }
+}
+function _scheduleSlavePoll(host, port, delay) {
+  _slaveStatusTimer = setTimeout(() => _doSlavePoll(host, port), delay);
+}
+async function _doSlavePoll(host, port) {
+  _slaveStatusTimer = null;
+  if (!_ctx || _ctx.type !== 'slave') return;
+  try {
+    const r = await fetch(`/data/slave?host=${encodeURIComponent(host)}&port=${port}`);
+    if (!r.ok) { _scheduleSlavePoll(host, port, 2000); return; }
+    const data = await r.json();
+    const el = document.getElementById('slave-status');
+    if (el) {
+      // Preserve whatever the user has selected in the encoder dropdown
+      const encSel = document.getElementById(`enc-${port}`);
+      const savedEnc = encSel ? encSel.value : null;
+      el.innerHTML = _slaveStatusHtml(data.status, host, port);
+      if (savedEnc) {
+        const newSel = document.getElementById(`enc-${port}`);
+        if (newSel) newSel.value = savedEnc;
+      }
+    }
+    // Refresh the file table if the list has changed
+    if (data.files) {
+      const sorted = (data.files).slice().sort((a,b) =>
+        (b.updated_at||'').localeCompare(a.updated_at||''));
+      const prevIds = _allFiles.map(f=>f.id+f.status).join(',');
+      const newIds  = sorted.map(f=>f.id+f.status).join(',');
+      if (prevIds !== newIds) {
+        _allFiles = sorted;
+        _renderTable();
+      }
+    }
+    // Fast poll only during active conversion; idle/sleeping needs no sub-second updates
+    const active = data.status && data.status.state === 'processing';
+    _scheduleSlavePoll(host, port, active ? 500 : 2000);
+  } catch(e) {
+    _scheduleSlavePoll(host, port, 2000);
+  }
+}
+async function _refreshSlaveStatus(host, port) {
+  return _doSlavePoll(host, port);
+}
+
+// ── Modal state ───────────────────────────────────────────────────────────
+let _ctx          = null;  // { type:'master', status } | { type:'slave', host, port, name }
+let _allFiles     = [];    // full fetched list
+let _cols         = [];    // column definitions for current table
+let _page         = 1;
+let _query        = '';
+let _statusFilter = null;  // null = all, or a status string (slave modal only)
+const _PER_PAGE   = 50;
+
+// ── Modal open/close ──────────────────────────────────────────────────────
+function _setModal(title, html) {
+  _pauseRefresh();
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').innerHTML = html;
+  document.getElementById('modal').style.display = 'flex';
+}
+function closeModal() {
+  document.getElementById('modal').style.display = 'none';
+  _ctx = null;
+  _stopSlavePoll();
+  _dashRefresh(); // immediate refresh so cards reflect latest state
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+// ── Formatters ────────────────────────────────────────────────────────────
+function fmtBytes(b) {
+  if (b == null || b === 0) return '—';
+  const units = ['B','KB','MB','GB','TB'];
+  for (const u of units) { if (b < 1024) return Math.round(b) + '\u00a0' + u; b /= 1024; }
+  return b.toFixed(1) + '\u00a0PB';
+}
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString(undefined, {dateStyle:'short', timeStyle:'short'});
+}
+function fmtDuration(a, b) {
+  if (!a || !b) return '—';
+  let s = Math.round((new Date(b) - new Date(a)) / 1000);
+  if (s < 0) return '—';
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm\u00a0' + String(s%60).padStart(2,'0') + 's';
+  return Math.floor(s/3600) + 'h\u00a0' + String(Math.floor((s%3600)/60)).padStart(2,'0') + 'm';
+}
+function fmtEta(s) {
+  if (s == null) return '';
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm\u00a0' + String(s%60).padStart(2,'0') + 's';
+  return Math.floor(s/3600) + 'h\u00a0' + String(Math.floor((s%3600)/60)).padStart(2,'0') + 'm';
+}
+function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+function stBadge(s, f) {
+  let title = '';
+  if (s === 'discarded') title = ' title="Already HEVC — no conversion needed"';
+  else if (s === 'cancelled') {
+    const reason = (f && f.cancel_reason) === 'auto'
+      ? 'Cancelled automatically — output exceeded source size'
+      : 'Cancelled by user';
+    title = ` title="${reason}"`;
+  }
+  return `<span class="st-badge st-${s}"${title}>${s}</span>`;
+}
+
+// ── Status filter (slave modal) ───────────────────────────────────────────
+
+function _setStatusFilter(s) {
+  _statusFilter = s;
+  _page = 1;
+  _renderTable();
+}
+
+function _statusFilterHtml() {
+  const base = 'border:none;border-radius:3px;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;font-family:inherit;padding:.18rem .52rem;';
+  const shadow = 'box-shadow:inset 0 0 0 1.5px currentColor;';
+  let h = '<div style="display:flex;gap:.3rem;flex-wrap:wrap;margin:.35rem 0 .55rem">';
+  const allActive = _statusFilter === null;
+  h += `<button onclick="_setStatusFilter(null)" style="${base}background:${allActive?'#e8eaf6':'#f0f0f0'};color:#3949ab;${allActive?shadow:''}">All</button>`;
+  for (const [s, c] of Object.entries(_ST_COLORS)) {
+    const active = _statusFilter === s;
+    h += `<button onclick="_setStatusFilter('${s}')" style="${base}background:${c.bg};color:${c.color};${active?shadow:''}">${s}</button>`;
+  }
+  h += '</div>';
+  return h;
+}
+
+// ── Search & pagination ───────────────────────────────────────────────────
+function _filtered() {
+  let result = _allFiles;
+  if (_statusFilter) result = result.filter(f => f.status === _statusFilter);
+  if (_query) {
+    const q = _query.toLowerCase();
+    result = result.filter(f =>
+      (f.file_name || '').toLowerCase().includes(q) ||
+      (f.file_path || '').toLowerCase().includes(q) ||
+      (f.slave_id  || '').toLowerCase().includes(q)
+    );
+  }
+  return result;
+}
+
+function _renderTable() {
+  const filtered = _filtered();
+  const total = filtered.length;
+  const pages = Math.max(1, Math.ceil(total / _PER_PAGE));
+  if (_page > pages) _page = pages;
+  const slice = filtered.slice((_page - 1) * _PER_PAGE, _page * _PER_PAGE);
+
+  let h = '<div class="modal-table-wrap"><table class="modal-table"><thead><tr>';
+  h += `<th><input type="checkbox" class="chk-all" onchange="toggleAll(this)"></th>`;
+  _cols.forEach(c => h += `<th>${c.label}</th>`);
+  h += '</tr></thead><tbody>';
+
+  if (!slice.length) {
+    const msg = total === 0 && _query ? 'No results for this search.' : 'No files.';
+    h += `<tr><td colspan="${_cols.length + 1}" style="color:#aaa;text-align:center;padding:.8rem">${msg}</td></tr>`;
+  } else {
+    slice.forEach(f => {
+      h += `<tr><td><input type="checkbox" class="row-chk" value="${f.id}" onchange="_updateSel()"></td>`;
+      h += _cols.map(c => `<td>${c.cell(f)}</td>`).join('');
+      h += '</tr>';
+    });
+  }
+  h += '</tbody></table></div>';
+
+  // Pagination controls
+  h += `<div class="modal-pagination">`;
+  if (pages > 1) {
+    h += `<button class="btn-act" onclick="_goPage(${_page-1})" ${_page<=1?'disabled':''}>← Prev</button>`;
+  }
+  h += `<span class="pag-info">`;
+  if (pages > 1) h += `Page ${_page} of ${pages} &nbsp;·&nbsp; `;
+  h += `${total} row${total!==1?'s':''}</span>`;
+  if (pages > 1) {
+    h += `<button class="btn-act" onclick="_goPage(${_page+1})" ${_page>=pages?'disabled':''}>Next →</button>`;
+  }
+  h += '</div>';
+
+  document.getElementById('tbl').innerHTML = h;
+  const filtersEl = document.getElementById('status-filters');
+  if (filtersEl) filtersEl.innerHTML = (_ctx && _ctx.type === 'slave') ? _statusFilterHtml() : '';
+  _updateSel();
+}
+
+function _onSearch() {
+  _query = document.getElementById('modal-search').value;
+  _page = 1;
+  _renderTable();
+}
+function _goPage(n) { _page = n; _renderTable(); }
+
+// ── Checkbox helpers ──────────────────────────────────────────────────────
+function toggleAll(src) {
+  document.querySelectorAll('.row-chk').forEach(c => c.checked = src.checked);
+  _updateSel();
+}
+function _updateSel() {
+  const n = document.querySelectorAll('.row-chk:checked').length;
+  const el = document.getElementById('sel-count');
+  if (el) el.textContent = n ? `${n} selected` : '';
+  document.querySelectorAll('.bulk-btn').forEach(b => b.disabled = n === 0);
+}
+function _selectedIds() {
+  return [...document.querySelectorAll('.row-chk:checked')].map(el => +el.value);
+}
+
+// ── Bulk actions ──────────────────────────────────────────────────────────
+async function bulkDelete() {
+  const ids = _selectedIds();
+  if (!ids.length) return;
+  if (!confirm(`Delete ${ids.length} record(s)?`)) return;
+  const url = _ctx.type === 'master'
+    ? '/data/files/delete'
+    : `/data/slave/delete?host=${encodeURIComponent(_ctx.host)}&port=${_ctx.port}`;
+  await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids})});
+  _ctxReload();
+}
+async function bulkPending() {
+  const ids = _selectedIds();
+  if (!ids.length) return;
+  const url = _ctx.type === 'master'
+    ? '/data/files/pending'
+    : `/data/slave/pending?host=${encodeURIComponent(_ctx.host)}&port=${_ctx.port}`;
+  await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids})});
+  _ctxReload();
+}
+function _ctxReload() {
+  if (_ctx.type === 'master') showFiles(_ctx.status);
+  else showSlave(_ctx.host, _ctx.port, _ctx.name);
+}
+
+// ── Shell HTML (search + action bar + table placeholder) ─────────────────
+function _shell() {
+  return `<input type="text" id="modal-search" class="modal-search"
+            placeholder="Filter by filename, path or slave…" oninput="_onSearch()">
+    <div id="status-filters"></div>
+    <div class="modal-bar">
+      <span class="sel-count" id="sel-count"></span>
+      <div class="modal-bar-right">
+        <button class="btn-act bulk-btn" disabled onclick="bulkPending()">Set to pending</button>
+        <button class="btn-act danger bulk-btn" disabled onclick="bulkDelete()">Delete selected</button>
+      </div>
+    </div>
+    <div id="tbl"></div>`;
+}
+
+// ── Master files modal ────────────────────────────────────────────────────
+async function showFiles(status) {
+  _ctx = { type:'master', status };
+  _page = 1; _query = ''; _allFiles = [];
+  _cols = fileColumns(status);
+  _setModal(cap(status) + ' files',
+    _shell() + '<p class="modal-note" style="margin-top:.5rem">Loading…</p>');
+  try {
+    const r = await fetch('/data/files?status=' + status);
+    _allFiles = await r.json();
+    _sortFiles(status);
+    _renderTable();
+  } catch(e) {
+    document.getElementById('tbl').innerHTML = '<p class="modal-err">Failed to load.</p>';
+  }
+}
+
+function _sortFiles(status) {
+  _allFiles.sort((a, b) => {
+    if (status === 'pending') return a.id - b.id;
+    return (b.finished_at || b.updated_at || '').localeCompare(a.finished_at || a.updated_at || '');
+  });
+}
+
+function fileColumns(status) {
+  const id       = { label:'ID',       cell: f => f.id };
+  const name     = { label:'Filename', cell: f => `<span class="modal-fname">${f.file_name}</span>` };
+  const path     = { label:'Path',     cell: f => `<span class="modal-path">${f.file_path}</span>` };
+  const slave    = { label:'Slave',    cell: f => f.slave_id || '—' };
+  const added    = { label:'Added',    cell: f => fmtDate(f.created_at) };
+  const started  = { label:'Started',  cell: f => fmtDate(f.started_at) };
+  const finished = { label:'Finished', cell: f => fmtDate(f.finished_at) };
+  const duration = { label:'Duration', cell: f => fmtDuration(f.started_at, f.finished_at) };
+  const output   = { label:'Output',   cell: f => fmtBytes(f.output_size) };
+  switch (status) {
+    case 'pending':    return [id, name, path, added];
+    case 'assigned':   return [id, name, slave, path, {label:'Claimed', cell: f => fmtDate(f.updated_at)}];
+    case 'processing': return [id, name, slave, path, started];
+    case 'complete':   return [id, name, slave, output, duration, finished];
+    case 'discarded':  return [id, name, slave, output, duration, finished];
+    case 'error':      return [id, name, slave, path, started, finished];
+    default:           return [id, name, path, added];
+  }
+}
+
+// ── Slave detail modal ────────────────────────────────────────────────────
+async function showSlave(host, port, name) {
+  _ctx = { type:'slave', host, port, name };
+  _page = 1; _query = ''; _allFiles = []; _statusFilter = null;
+  _cols = [
+    { label:'ID',       cell: f => f.id },
+    { label:'Filename', cell: f => `<span class="modal-fname">${f.file_name}</span>` },
+    { label:'Status',   cell: f => stBadge(f.status, f) },
+    { label:'Source',   cell: f => fmtBytes(f.file_size) },
+    { label:'Output',   cell: f => fmtBytes(f.output_size) },
+    { label:'Duration', cell: f => fmtDuration(f.started_at, f.finished_at) },
+    { label:'Finished', cell: f => fmtDate(f.finished_at) },
+  ];
+  _setModal(name, '<p class="modal-note">Loading…</p>');
+  try {
+    const r = await fetch(`/data/slave?host=${encodeURIComponent(host)}&port=${port}`);
+    const data = await r.json();
+    _allFiles = (data.files || []).sort((a,b) =>
+      (b.updated_at||'').localeCompare(a.updated_at||''));
+
+    const section = `<div class="modal-section">File history (${_allFiles.length} records)</div>`;
+    _setModal(name,
+      `<div id="slave-status">${_slaveStatusHtml(data.status, host, port)}</div>` +
+      section + _shell());
+    _renderTable();
+    _startSlavePoll(host, port);
+  } catch(e) {
+    document.getElementById('modal-body').innerHTML = '<p class="modal-err">Failed to load.</p>';
+  }
+}
+
+const _ENCODER_LABELS = {
+  libx265:      'Software (libx265)',
+  nvenc:        'NVIDIA (NVENC)',
+  vaapi:        'Intel/AMD (VAAPI)',
+  videotoolbox: 'Apple Silicon (VideoToolbox)',
+};
+
+async function setSlaveEncoder(host, port) {
+  const sel = document.getElementById(`enc-${port}`);
+  if (!sel) return;
+  const encoder = sel.value;
+  if (!encoder) return;
+  const btn = document.getElementById(`enc-save-${port}`);
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const r = await fetch('/data/slave/encoder', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({host, port, encoder}),
+    });
+    if (!r.ok) throw new Error('failed');
+    if (btn) { btn.textContent = 'Saved'; setTimeout(() => { if (btn) btn.textContent = 'Save'; }, 1500); }
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Error — retry'; }
+    return;
+  }
+  if (btn) btn.disabled = false;
+  // Refresh modal status immediately (badge + actions change)
+  await _refreshSlaveStatus(host, port);
+  // Refresh dashboard data so the card is correct when the modal closes
+  const r = await fetch('/data/dashboard');
+  if (r.ok) _applyDashboard(await r.json());
+}
+
+function _encoderSelect(encoder, host, port, unconfigured, availableEncoders) {
+  const available = (availableEncoders && availableEncoders.length)
+    ? availableEncoders
+    : Object.keys(_ENCODER_LABELS);
+  let opts = unconfigured
+    ? '<option value="" disabled selected>— Select encoder —</option>'
+    : '';
+  opts += available
+    .filter(v => _ENCODER_LABELS[v])
+    .map(v => `<option value="${v}"${!unconfigured && v === encoder ? ' selected' : ''}>${_ENCODER_LABELS[v]}</option>`)
+    .join('');
+  // Pause live-refresh while user has the dropdown open so it can't reset their selection
+  const sel = `<select id="enc-${port}"
+    onfocus="_stopSlavePoll()"
+    onblur="_scheduleSlavePoll('${_esc(host)}',${port},3000)"
+    style="padding:.25rem .45rem;border:1px solid var(--border-input);border-radius:4px;font-size:.8rem;font-family:inherit;background:var(--surface);color:var(--text);cursor:pointer">${opts}</select>`;
+  const savebtn = `<button id="enc-save-${port}" class="btn-act" type="button" onclick="setSlaveEncoder('${_esc(host)}',${port})">Save</button>`;
+  return sel + ' ' + savebtn;
+}
+
+function _slaveStatusHtml(st, host, port) {
+  let h = `<div style="font-size:.8rem;color:#aaa;margin-bottom:.7rem">${host}:${port}</div>`;
+  if (!st) return h + '<p class="modal-err" style="margin-bottom:.8rem">Unreachable.</p>';
+
+  const label = st.unconfigured ? 'Unconfigured'
+              : st.sleeping ? 'Sleeping' : st.paused ? 'Paused' : st.drain ? 'Draining'
+              : st.state === 'processing' ? 'Converting' : 'Idle';
+  const cls   = st.unconfigured ? 'badge-unconfigured'
+              : st.sleeping ? 'badge-sleeping' : st.paused ? 'badge-paused' : st.drain ? 'badge-drain'
+              : st.state === 'processing' ? 'badge-processing' : 'badge-idle';
+  const slaveActions = st.sleeping
+    ? `<form method="post" action="/actions/slave/wake" onclick="event.stopPropagation()">
+        <input type="hidden" name="host" value="${_esc(host)}">
+        <input type="hidden" name="api_port" value="${port}">
+        <button class="btn-act" type="submit">Wake up</button>
+      </form>`
+    : `<form method="post" action="/actions/slave/sleep" onclick="event.stopPropagation()">
+        <input type="hidden" name="host" value="${_esc(host)}">
+        <input type="hidden" name="api_port" value="${port}">
+        <button class="btn-act" type="submit">Sleep</button>
+      </form>`;
+  h += `<div class="modal-state-row">
+    <span class="badge ${cls}">${label}</span>
+    <span class="modal-meta">Queue: ${st.queued} job${st.queued!==1?'s':''}</span>`;
+  if (st.record_id != null) h += `<span class="modal-meta">Record #${st.record_id}</span>`;
+  h += slaveActions + '</div>';
+  if (st.unconfigured) {
+    h += `<div style="font-size:.82rem;color:var(--text-dim);margin-bottom:.6rem">
+      Select an encoder to activate this slave:
+    </div>`;
+  }
+  h += `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.8rem;font-size:.8rem;color:var(--text-dim)">
+    <span>Encoder</span>${_encoderSelect(st.encoder || 'libx265', host, port, st.unconfigured, st.available_encoders)}
+  </div>`;
+
+  if (st.state === 'processing' && st.progress) {
+    const p = st.progress;
+    const pct = Math.min(p.percent || 0, 100).toFixed(1);
+    h += `<div style="margin:.4rem 0 1rem">
+      <div class="prog-wrap-lg">
+        <div class="prog-bar-lg" style="width:${pct}%"></div>
+      </div>
+      <div class="meta-sm" style="display:flex;justify-content:space-between">
+        <span>${pct}%</span>
+        <span>${p.fps?p.fps+'\u00a0fps\u00a0\u00a0':''}${p.speed?p.speed+'×\u00a0\u00a0':''}${p.eta_seconds!=null?'ETA\u00a0'+fmtEta(p.eta_seconds):''}</span>
+      </div>`;
+    if (p.current_size_bytes)
+      h += `<div class="meta-xs">${fmtBytes(p.current_size_bytes)}${p.projected_size_bytes?' → '+fmtBytes(p.projected_size_bytes):''}${p.bitrate?' &middot; '+p.bitrate:''}</div>`;
+    h += '</div>';
+  }
+  return h;
+}
