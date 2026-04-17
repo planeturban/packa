@@ -1,0 +1,40 @@
+services:
+  master:
+    build: .
+    # Uses the default CMD from the Dockerfile — no override needed here.
+    ports:
+      - "9000:9000"
+    volumes:
+      - master-data:/data
+    restart: unless-stopped
+
+  slave:
+    build: .
+    command: python -m slave.main --config /data/packa.toml --bind any
+    ports:
+      - "8000:8000"
+    volumes:
+      - slave-data:/data
+      # Mount the source and output directories that ffmpeg reads/writes.
+      # Adjust these paths to match your setup.
+      - /mnt/data:/mnt/data:ro
+      - /mnt/output:/mnt/output
+    depends_on:
+      - master
+    restart: unless-stopped
+
+  web:
+    build: .
+    command: python -m web.main --config /data/packa.toml --bind any
+    ports:
+      - "8080:8080"
+    volumes:
+      - web-data:/data
+    depends_on:
+      - master
+    restart: unless-stopped
+
+volumes:
+  master-data:
+  slave-data:
+  web-data:
