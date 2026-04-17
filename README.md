@@ -119,11 +119,42 @@ prefix = "/mnt/files/"  # prepended to relative paths received from master
 [slave.ffmpeg]
 bin        = "ffmpeg"
 output_dir = "/mnt/output"   # directory for converted files; leave empty to disable ffmpeg
-extra_args = ""              # extra ffmpeg arguments (appended after -map 0 -c copy)
+extra_args = ""              # extra ffmpeg arguments (appended after video codec args)
+encoder    = "libx265"       # default encoder: libx265 | nvenc | vaapi | videotoolbox
+                             # can also be changed at runtime from the web dashboard
+# vaapi_device = "/dev/dri/renderD128"   # render device for vaapi encoder
+# encoders = ["libx265", "videotoolbox"] # encoders shown in the web dashboard dropdown
+                                         # defaults to all four if omitted
 
 [slave.worker]
 batch_size    = 1   # number of jobs to claim from master per poll
 poll_interval = 5   # seconds between poll attempts when queue is empty
+```
+
+#### Per-encoder ffmpeg argument overrides
+
+Each encoder has built-in defaults. Add a `[slave.ffmpeg.<name>]` section to override for this machine only — omit any section to use the defaults.
+
+| Key | Description |
+|-----|-------------|
+| `pre_input` | Arguments inserted before `-i` (e.g. hardware device init) |
+| `video_args` | Video codec arguments replacing the encoder's default flags |
+
+```toml
+# Built-in defaults — shown here so you can copy and adjust:
+
+[slave.ffmpeg.libx265]
+video_args = "-c:v libx265"
+
+[slave.ffmpeg.nvenc]
+video_args = "-c:v hevc_nvenc -preset p5 -cq 24"
+
+[slave.ffmpeg.vaapi]
+pre_input  = "-vaapi_device /dev/dri/renderD128"
+video_args = "-c:v hevc_vaapi -vf format=nv12,hwupload -qp 24"
+
+[slave.ffmpeg.videotoolbox]
+video_args = "-c:v hevc_videotoolbox -q:v 65"
 ```
 
 #### Slave environment variables
@@ -140,6 +171,8 @@ poll_interval = 5   # seconds between poll attempts when queue is empty
 | `PACKA_SLAVE_FFMPEG_BIN` | `slave.ffmpeg.bin` |
 | `PACKA_SLAVE_FFMPEG_OUTPUT_DIR` | `slave.ffmpeg.output_dir` |
 | `PACKA_SLAVE_FFMPEG_EXTRA_ARGS` | `slave.ffmpeg.extra_args` |
+| `PACKA_SLAVE_FFMPEG_ENCODER` | `slave.ffmpeg.encoder` |
+| `PACKA_SLAVE_FFMPEG_VAAPI_DEVICE` | `slave.ffmpeg.vaapi_device` |
 | `PACKA_SLAVE_BATCH_SIZE` | `slave.worker.batch_size` |
 | `PACKA_SLAVE_POLL_INTERVAL` | `slave.worker.poll_interval` |
 | `PACKA_SLAVE_TLS_CERT` | `slave.tls.cert` |
@@ -271,12 +304,16 @@ The web process serves a browser dashboard at port 8080 (default). Log in with t
 
 - Master file counts by status — each is clickable and opens a filtered file list
 - Active scan state and progress, periodic scan toggle and interval
-- Per-slave status: idle/converting/sleeping, queue depth, ffmpeg progress with speed/FPS/ETA/size
+- Per-slave status cards: idle/converting/sleeping/draining/unconfigured badge, queue depth, ffmpeg progress with speed/FPS/ETA/size
 - Full file table with search, status filter, bulk actions (delete / set to pending) and pagination
 
-Each slave card has controls for Pause, Finish current (drain — completes the active job then sleeps), Stop, and Sleep/Wake. Clicking a slave card opens a detail modal with live progress and the slave's full file history.
+Each slave card has controls for Pause, Finish current (drain — completes the active job then sleeps), Stop, and Sleep/Wake. Clicking a slave card opens a detail modal with live progress, encoder selection, and the slave's full file history.
 
-The page auto-refreshes every 3 seconds with smooth DOM updates (no page reload). Checkboxes in the file table survive refreshes.
+**Encoder selection:** each slave's encoder can be changed at runtime from the detail modal. Select an encoder from the dropdown and press Save. The choice is persisted in the slave's local database and survives restarts. The available encoders shown in the dropdown can be restricted with `encoders = [...]` in `[slave.ffmpeg]`.
+
+**Unconfigured state:** a brand-new slave (no prior configuration in its database) starts in an unconfigured state — it will not poll master or accept jobs until an encoder is selected and saved via the web dashboard.
+
+The page auto-refreshes every 3 seconds with smooth DOM updates (no page reload). The slave modal polls live progress at 500 ms during conversion and 2 s when idle. Checkboxes in the file table survive refreshes.
 
 **Dark mode:** the dashboard respects the system colour scheme preference and has a manual Light / System / Dark picker in the nav bar. The preference is saved to `localStorage`.
 
@@ -384,7 +421,18 @@ GET /status
 
 Response when idle:
 ```json
-{ "state": "idle", "record_id": null, "queued": 0, "progress": null }
+{
+  "state": "idle",
+  "record_id": null,
+  "queued": 0,
+  "progress": null,
+  "paused": false,
+  "drain": false,
+  "sleeping": false,
+  "unconfigured": false,
+  "encoder": "libx265",
+  "available_encoders": ["libx265", "nvenc", "vaapi", "videotoolbox"]
+}
 ```
 
 Response while processing:
@@ -393,6 +441,12 @@ Response while processing:
   "state": "processing",
   "record_id": 42,
   "queued": 2,
+  "paused": false,
+  "drain": false,
+  "sleeping": false,
+  "unconfigured": false,
+  "encoder": "nvenc",
+  "available_encoders": ["libx265", "nvenc"],
   "progress": {
     "percent": 37.4,
     "speed": 1.82,
@@ -405,6 +459,20 @@ Response while processing:
   }
 }
 ```
+
+#### Encoder settings
+```
+GET  /settings
+POST /settings
+```
+
+`GET /settings` returns the current encoder and vaapi device.
+
+`POST /settings` changes the encoder at runtime:
+```json
+{ "encoder": "nvenc" }
+```
+Valid values: `libx265`, `nvenc`, `vaapi`, `videotoolbox`. The choice is persisted to the slave database and applied immediately. If the slave was in unconfigured state, this activates it and begins normal operation.
 
 #### Stop current conversion
 ```
@@ -484,17 +552,20 @@ The record ID is not included in the calculation.
 
 ## ffmpeg
 
-Slaves run ffmpeg with all streams copied:
+Slaves run ffmpeg using the configured encoder preset. The general form is:
 
 ```
-ffmpeg -i {file_path} -map 0 -c copy [extra_args] -progress pipe:1 -nostats {output_path}
+ffmpeg [pre_input] -i {file_path} -map 0 -c copy {video_args} [extra_args] -progress pipe:1 -nostats {output_path}
 ```
+
+Where `pre_input` and `video_args` come from the active encoder preset (see [Per-encoder ffmpeg argument overrides](#per-encoder-ffmpeg-argument-overrides) above). `extra_args` is appended from `slave.ffmpeg.extra_args`.
 
 - `ffprobe` (derived from `ffmpeg.bin`) is run first to detect the video codec
 - If the file is already HEVC the record is immediately marked `discarded` — ffmpeg is never started
-- All streams (video, audio, subtitles, attachments) are copied without re-encoding
+- Audio, subtitles and attachments are always copied without re-encoding (`-map 0 -c copy`)
 - Output size is monitored continuously. If the output file grows larger than the source before ffmpeg finishes, ffmpeg is terminated and the record is set to `cancelled` (`cancel_reason = "auto"`)
 - After conversion, if `output_size >= source_size` the output file is deleted and the record is set to `cancelled` (`cancel_reason = "auto"`)
+- Deleting a file that is currently being converted stops ffmpeg immediately
 - On restart, any partial output files from interrupted jobs are deleted and those records are re-queued
 
 ---
