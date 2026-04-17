@@ -880,6 +880,11 @@ async function setSlaveEncoder(host, port, encoder) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({host, port, encoder}),
   });
+  // Refresh modal status immediately (badge + actions change)
+  _refreshSlaveStatus(host, port);
+  // Refresh dashboard data so the card is correct when the modal closes
+  const r = await fetch('/data/dashboard');
+  if (r.ok) _applyDashboard(await r.json());
 }
 
 function _encoderSelect(encoder, host, port) {
