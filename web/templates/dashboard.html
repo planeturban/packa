@@ -571,20 +571,41 @@ _resumeRefresh();
 let _slaveStatusTimer = null;
 function _startSlavePoll(host, port) {
   _stopSlavePoll();
-  _slaveStatusTimer = setInterval(() => _refreshSlaveStatus(host, port), 500);
+  _scheduleSlavePoll(host, port, 500);
 }
 function _stopSlavePoll() {
-  if (_slaveStatusTimer) { clearInterval(_slaveStatusTimer); _slaveStatusTimer = null; }
+  if (_slaveStatusTimer) { clearTimeout(_slaveStatusTimer); _slaveStatusTimer = null; }
 }
-async function _refreshSlaveStatus(host, port) {
-  if (!_ctx || _ctx.type !== 'slave') { _stopSlavePoll(); return; }
+function _scheduleSlavePoll(host, port, delay) {
+  _slaveStatusTimer = setTimeout(() => _doSlavePoll(host, port), delay);
+}
+async function _doSlavePoll(host, port) {
+  _slaveStatusTimer = null;
+  if (!_ctx || _ctx.type !== 'slave') return;
   try {
     const r = await fetch(`/data/slave?host=${encodeURIComponent(host)}&port=${port}`);
-    if (!r.ok) return;
+    if (!r.ok) { _scheduleSlavePoll(host, port, 2000); return; }
     const data = await r.json();
     const el = document.getElementById('slave-status');
-    if (el) el.innerHTML = _slaveStatusHtml(data.status, host, port);
-  } catch(e) {}
+    if (el) {
+      // Preserve whatever the user has selected in the encoder dropdown
+      const encSel = document.getElementById(`enc-${port}`);
+      const savedEnc = encSel ? encSel.value : null;
+      el.innerHTML = _slaveStatusHtml(data.status, host, port);
+      if (savedEnc) {
+        const newSel = document.getElementById(`enc-${port}`);
+        if (newSel) newSel.value = savedEnc;
+      }
+    }
+    // Fast poll only during active conversion; idle/sleeping needs no sub-second updates
+    const active = data.status && data.status.state === 'processing';
+    _scheduleSlavePoll(host, port, active ? 500 : 2000);
+  } catch(e) {
+    _scheduleSlavePoll(host, port, 2000);
+  }
+}
+async function _refreshSlaveStatus(host, port) {
+  return _doSlavePoll(host, port);
 }
 
 // ── Modal state ───────────────────────────────────────────────────────────
@@ -874,25 +895,47 @@ const _ENCODER_LABELS = {
   videotoolbox: 'Apple Silicon (VideoToolbox)',
 };
 
-async function setSlaveEncoder(host, port, encoder) {
-  await fetch('/data/slave/encoder', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({host, port, encoder}),
-  });
+async function setSlaveEncoder(host, port) {
+  const sel = document.getElementById(`enc-${port}`);
+  if (!sel) return;
+  const encoder = sel.value;
+  if (!encoder) return;
+  const btn = document.getElementById(`enc-save-${port}`);
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const r = await fetch('/data/slave/encoder', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({host, port, encoder}),
+    });
+    if (!r.ok) throw new Error('failed');
+    if (btn) { btn.textContent = 'Saved'; setTimeout(() => { if (btn) btn.textContent = 'Save'; }, 1500); }
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Error — retry'; }
+    return;
+  }
+  if (btn) btn.disabled = false;
   // Refresh modal status immediately (badge + actions change)
-  _refreshSlaveStatus(host, port);
+  await _refreshSlaveStatus(host, port);
   // Refresh dashboard data so the card is correct when the modal closes
   const r = await fetch('/data/dashboard');
   if (r.ok) _applyDashboard(await r.json());
 }
 
-function _encoderSelect(encoder, host, port) {
-  const opts = Object.entries(_ENCODER_LABELS).map(([v, l]) =>
-    `<option value="${v}"${v === encoder ? ' selected' : ''}>${l}</option>`
+function _encoderSelect(encoder, host, port, unconfigured) {
+  let opts = unconfigured
+    ? '<option value="" disabled selected>— Select encoder —</option>'
+    : '';
+  opts += Object.entries(_ENCODER_LABELS).map(([v, l]) =>
+    `<option value="${v}"${!unconfigured && v === encoder ? ' selected' : ''}>${l}</option>`
   ).join('');
-  return `<select style="padding:.25rem .45rem;border:1px solid var(--border-input);border-radius:4px;font-size:.8rem;font-family:inherit;background:var(--surface);color:var(--text);cursor:pointer"
-    onchange="setSlaveEncoder('${_esc(host)}',${port},this.value)">${opts}</select>`;
+  // Pause live-refresh while user has the dropdown open so it can't reset their selection
+  const sel = `<select id="enc-${port}"
+    onfocus="_stopSlavePoll()"
+    onblur="_scheduleSlavePoll('${_esc(host)}',${port},3000)"
+    style="padding:.25rem .45rem;border:1px solid var(--border-input);border-radius:4px;font-size:.8rem;font-family:inherit;background:var(--surface);color:var(--text);cursor:pointer">${opts}</select>`;
+  const savebtn = `<button id="enc-save-${port}" class="btn-act" type="button" onclick="setSlaveEncoder('${_esc(host)}',${port})">Save</button>`;
+  return sel + ' ' + savebtn;
 }
 
 function _slaveStatusHtml(st, host, port) {
@@ -927,7 +970,7 @@ function _slaveStatusHtml(st, host, port) {
     </div>`;
   }
   h += `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.8rem;font-size:.8rem;color:var(--text-dim)">
-    <span>Encoder</span>${_encoderSelect(st.encoder || 'libx265', host, port)}
+    <span>Encoder</span>${_encoderSelect(st.encoder || 'libx265', host, port, st.unconfigured)}
   </div>`;
 
   if (st.state === 'processing' && st.progress) {

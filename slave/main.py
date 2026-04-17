@@ -53,6 +53,7 @@ from shared.tls import UVICORN_LOG_CONFIG, uvicorn_kwargs
 
 from .api import app, set_config, set_registration_params
 from .identity import get_or_create_slave_id, get_stored_slave_id
+from .settings import set_setting as _persist
 
 
 def _detect_host() -> str:
@@ -125,6 +126,8 @@ def main() -> None:
     set_config(config)
 
     db_id = get_stored_slave_id()
+    is_new = db_id is None  # True only on the very first startup (no slave_id in DB yet)
+
     if config.slave_id:
         if db_id and db_id != config.slave_id:
             print(f"[slave] id from config: {config.slave_id!r} (db has a different id: {db_id!r})")
@@ -135,6 +138,12 @@ def main() -> None:
         slave_id = get_or_create_slave_id()
         source = "db" if db_id else "generated"
         print(f"[slave] id {source}: {slave_id!r}")
+
+    # Always persist the resolved slave_id so subsequent restarts are not treated as new.
+    _persist("slave_id", slave_id)
+    # Mark genuinely new slaves so the lifespan can start them in unconfigured mode.
+    if is_new:
+        _persist("first_run", "true")
 
     print(f"[slave] bind: {bind}:{api_port}")
     print(f"[slave] path_prefix: {config.path_prefix!r}")
