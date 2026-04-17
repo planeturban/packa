@@ -5,7 +5,9 @@ services:
     ports:
       - "9000:9000"
     volumes:
+      - ./packa.toml:/data/packa.toml:ro
       - master-data:/data
+      - /mnt/data:/mnt/data:ro
     restart: unless-stopped
 
   slave:
@@ -14,6 +16,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      - ./packa.toml:/data/packa.toml:ro
       - slave-data:/data
       # Mount the source and output directories that ffmpeg reads/writes.
       # Adjust these paths to match your setup.
@@ -29,6 +32,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
+      - ./packa.toml:/data/packa.toml:ro
       - web-data:/data
     depends_on:
       - master
