@@ -42,18 +42,31 @@ def _ffprobe_bin(ffmpeg_bin: str) -> str:
     return str(p.parent / "ffprobe") if p.parent.name else "ffprobe"
 
 
+_VALID_ENCODERS = {"libx265", "nvenc", "vaapi", "videotoolbox"}
+
+
 def _build_cmd(
     ffmpeg_bin: str,
     file_path: str,
     output_path: str,
     extra_args: str,
-    already_hevc: bool,
-    video_encoder: str,
+    encoder: str,
+    vaapi_device: str,
 ) -> list[str]:
-    cmd = [ffmpeg_bin, "-i", file_path, "-map", "0", "-c", "copy"]
-    if not already_hevc:
-        # Override only the video codec; audio/subtitles/attachments stay as copy
-        cmd += ["-c:v", video_encoder]
+    pre_input: list[str] = []
+    video_args: list[str] = []
+
+    if encoder == "vaapi":
+        pre_input = ["-vaapi_device", vaapi_device]
+        video_args = ["-c:v", "hevc_vaapi", "-vf", "format=nv12,hwupload", "-qp", "24"]
+    elif encoder == "nvenc":
+        video_args = ["-c:v", "hevc_nvenc", "-preset", "p5", "-cq", "24"]
+    elif encoder == "videotoolbox":
+        video_args = ["-c:v", "hevc_videotoolbox", "-q:v", "65"]
+    else:  # libx265 (default)
+        video_args = ["-c:v", "libx265"]
+
+    cmd = [ffmpeg_bin] + pre_input + ["-i", file_path, "-map", "0", "-c", "copy"] + video_args
     if extra_args:
         cmd.extend(shlex.split(extra_args))
     cmd += ["-y", "-progress", "pipe:1", "-nostats", output_path]
@@ -231,7 +244,7 @@ async def _monitor_output_size(output_path: str, source_size: int, proc: asyncio
             pass
 
 
-async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str, video_encoder: str) -> None:
+async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) -> None:
     output_path = str(Path(output_dir) / Path(job.file_path).name)
     db = SessionLocal()
     try:
@@ -256,8 +269,9 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str, 
             await _report_result_to_master(job.record_id, FileStatus.DISCARDED)
             return
 
-        cmd = _build_cmd(ffmpeg_bin, job.file_path, output_path, extra_args, already_hevc, video_encoder)
-        print(f"[worker] record {job.record_id} → {' '.join(cmd)}")
+        cmd = _build_cmd(ffmpeg_bin, job.file_path, output_path, extra_args,
+                         worker_state.encoder, worker_state.vaapi_device)
+        print(f"[worker] record {job.record_id} encoder={worker_state.encoder!r} → {' '.join(cmd)}")
 
         started_at = _utcnow()
         proc = await asyncio.create_subprocess_exec(
@@ -413,7 +427,7 @@ def recover(output_dir: str) -> None:
         db.close()
 
 
-async def worker_loop(ffmpeg_bin: str, output_dir: str, extra_args: str, video_encoder: str = "libx265") -> None:
+async def worker_loop(ffmpeg_bin: str, output_dir: str, extra_args: str) -> None:
     print("[worker] loop started")
     while True:
         while worker_state.sleeping:
@@ -424,7 +438,7 @@ async def worker_loop(ffmpeg_bin: str, output_dir: str, extra_args: str, video_e
             continue
         worker_state.start(job.record_id)
         try:
-            await _process(job, ffmpeg_bin, output_dir, extra_args, video_encoder)
+            await _process(job, ffmpeg_bin, output_dir, extra_args)
         finally:
             if worker_state.drain:
                 worker_state.drain = False

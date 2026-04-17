@@ -96,7 +96,7 @@ prefix = "/mnt/files/"
 
 [slave.ffmpeg]
 # Env: PACKA_SLAVE_FFMPEG_BIN, PACKA_SLAVE_FFMPEG_OUTPUT_DIR, PACKA_SLAVE_FFMPEG_EXTRA_ARGS,
-#      PACKA_SLAVE_FFMPEG_VIDEO_ENCODER
+#      PACKA_SLAVE_FFMPEG_ENCODER, PACKA_SLAVE_FFMPEG_VAAPI_DEVICE
 
 # Path to the ffmpeg binary.
 bin = "ffmpeg"
@@ -114,11 +114,20 @@ extra_args = ""
 # Example with metadata:
 # extra_args = "-metadata comment='processed by packa'"
 
-# Video encoder used for non-HEVC files. Default is libx265 (software).
-# On Apple Silicon, hevc_videotoolbox is much faster (hardware encoding).
-# Env: PACKA_SLAVE_FFMPEG_VIDEO_ENCODER
-# video_encoder = "libx265"
-# video_encoder = "hevc_videotoolbox"
+# Encoder preset for non-HEVC files. Files already in HEVC are skipped entirely.
+# Can also be changed at runtime from the web dashboard (per slave).
+# Env: PACKA_SLAVE_FFMPEG_ENCODER
+#
+#   libx265       — software (default, works everywhere)
+#   nvenc         — NVIDIA GPU: hevc_nvenc -preset p5 -cq 24
+#   vaapi         — Intel/AMD GPU: hevc_vaapi, requires vaapi_device below
+#   videotoolbox  — Apple Silicon: hevc_videotoolbox -q:v 65
+#
+encoder = "libx265"
+
+# VAAPI render device. Only used when encoder = "vaapi".
+# Env: PACKA_SLAVE_FFMPEG_VAAPI_DEVICE
+# vaapi_device = "/dev/dri/renderD128"
 
 [slave.worker]
 # Env: PACKA_SLAVE_BATCH_SIZE, PACKA_SLAVE_POLL_INTERVAL

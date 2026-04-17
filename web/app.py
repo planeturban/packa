@@ -374,6 +374,23 @@ async def data_slave_pending(request: Request, host: str = Query(), port: int = 
     return JSONResponse({"ok": True})
 
 
+@app.post("/data/slave/encoder")
+async def data_slave_encoder(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    host = body.get("host")
+    port = body.get("port")
+    encoder = body.get("encoder")
+    async with httpx.AsyncClient(timeout=5, **httpx_kwargs(_config.tls)) as client:
+        try:
+            r = await client.post(f"{_slave_url(host, port)}/settings", json={"encoder": encoder})
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
 @app.get("/data/slave")
 async def data_slave(request: Request, host: str = Query(), port: int = Query()):
     if not _logged_in(request):

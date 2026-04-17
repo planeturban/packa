@@ -46,7 +46,9 @@ class FfmpegConfig:
     bin: str = "ffmpeg"
     output_dir: str = ""        # Directory where ffmpeg writes the output file
     extra_args: str = ""        # Extra CLI arguments as a single string
-    video_encoder: str = "libx265"  # Encoder for non-HEVC files, e.g. "hevc_videotoolbox"
+    # Encoder preset: libx265 | nvenc | vaapi | videotoolbox
+    encoder: str = "libx265"
+    vaapi_device: str = "/dev/dri/renderD128"  # only used when encoder = "vaapi"
 
 
 @dataclass
@@ -168,7 +170,8 @@ def load_slave(config_path: str | None) -> Config:
             bin=_env("PACKA_SLAVE_FFMPEG_BIN", ffmpeg_data.get("bin", "ffmpeg")),
             output_dir=_env("PACKA_SLAVE_FFMPEG_OUTPUT_DIR", ffmpeg_data.get("output_dir", "")),
             extra_args=_env("PACKA_SLAVE_FFMPEG_EXTRA_ARGS", ffmpeg_data.get("extra_args", "")),
-            video_encoder=_env("PACKA_SLAVE_FFMPEG_VIDEO_ENCODER", ffmpeg_data.get("video_encoder", "libx265")),
+            encoder=_env("PACKA_SLAVE_FFMPEG_ENCODER", ffmpeg_data.get("encoder", "libx265")),
+            vaapi_device=_env("PACKA_SLAVE_FFMPEG_VAAPI_DEVICE", ffmpeg_data.get("vaapi_device", "/dev/dri/renderD128")),
         ),
         worker=WorkerConfig(
             batch_size=_env_int("PACKA_SLAVE_BATCH_SIZE", worker_data.get("batch_size", 1)),

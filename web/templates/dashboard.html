@@ -860,6 +860,29 @@ async function showSlave(host, port, name) {
   }
 }
 
+const _ENCODER_LABELS = {
+  libx265:      'Software (libx265)',
+  nvenc:        'NVIDIA (NVENC)',
+  vaapi:        'Intel/AMD (VAAPI)',
+  videotoolbox: 'Apple Silicon (VideoToolbox)',
+};
+
+async function setSlaveEncoder(host, port, encoder) {
+  await fetch('/data/slave/encoder', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({host, port, encoder}),
+  });
+}
+
+function _encoderSelect(encoder, host, port) {
+  const opts = Object.entries(_ENCODER_LABELS).map(([v, l]) =>
+    `<option value="${v}"${v === encoder ? ' selected' : ''}>${l}</option>`
+  ).join('');
+  return `<select style="padding:.25rem .45rem;border:1px solid var(--border-input);border-radius:4px;font-size:.8rem;font-family:inherit;background:var(--surface);color:var(--text);cursor:pointer"
+    onchange="setSlaveEncoder('${_esc(host)}',${port},this.value)">${opts}</select>`;
+}
+
 function _slaveStatusHtml(st, host, port) {
   let h = `<div style="font-size:.8rem;color:#aaa;margin-bottom:.7rem">${host}:${port}</div>`;
   if (!st) return h + '<p class="modal-err" style="margin-bottom:.8rem">Unreachable.</p>';
@@ -884,6 +907,9 @@ function _slaveStatusHtml(st, host, port) {
     <span class="modal-meta">Queue: ${st.queued} job${st.queued!==1?'s':''}</span>`;
   if (st.record_id != null) h += `<span class="modal-meta">Record #${st.record_id}</span>`;
   h += slaveActions + '</div>';
+  h += `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.8rem;font-size:.8rem;color:var(--text-dim)">
+    <span>Encoder</span>${_encoderSelect(st.encoder || 'libx265', host, port)}
+  </div>`;
 
   if (st.state === 'processing' && st.progress) {
     const p = st.progress;

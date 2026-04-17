@@ -76,13 +76,14 @@ async def _register_and_poll() -> None:
 async def lifespan(app: FastAPI):
     tasks: list[asyncio.Task] = []
     worker_state.tls = _config.tls
+    worker_state.encoder = _config.ffmpeg.encoder
+    worker_state.vaapi_device = _config.ffmpeg.vaapi_device
     if _config.ffmpeg.output_dir:
         recover(_config.ffmpeg.output_dir)
         tasks.append(asyncio.create_task(worker_loop(
             ffmpeg_bin=_config.ffmpeg.bin,
             output_dir=_config.ffmpeg.output_dir,
             extra_args=_config.ffmpeg.extra_args,
-            video_encoder=_config.ffmpeg.video_encoder,
         )))
     tasks.append(asyncio.create_task(_register_and_poll()))
     yield
@@ -120,6 +121,7 @@ class SlaveStatus(BaseModel):
     paused: bool
     drain: bool
     sleeping: bool
+    encoder: str
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +138,7 @@ def get_status():
         paused=worker_state.paused,
         drain=worker_state.drain,
         sleeping=worker_state.sleeping,
+        encoder=worker_state.encoder,
         progress=ProgressOut(
             percent=p.percent,
             speed=p.speed,
@@ -237,3 +240,31 @@ def sleep_conversion():
 @app.post("/conversion/wake")
 def wake_conversion():
     worker_state.sleeping = False
+
+
+# ---------------------------------------------------------------------------
+# Encoder settings
+# ---------------------------------------------------------------------------
+
+_VALID_ENCODERS = {"libx265", "nvenc", "vaapi", "videotoolbox"}
+
+
+class EncoderUpdate(BaseModel):
+    encoder: str
+
+
+@app.get("/settings")
+def get_settings():
+    return {"encoder": worker_state.encoder, "vaapi_device": worker_state.vaapi_device}
+
+
+@app.post("/settings")
+def update_settings(body: EncoderUpdate):
+    if body.encoder not in _VALID_ENCODERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"encoder must be one of: {', '.join(sorted(_VALID_ENCODERS))}",
+        )
+    worker_state.encoder = body.encoder
+    print(f"[slave] encoder changed to {body.encoder!r}")
+    return {"encoder": worker_state.encoder, "vaapi_device": worker_state.vaapi_device}

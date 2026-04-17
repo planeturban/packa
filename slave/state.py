@@ -39,6 +39,9 @@ class WorkerState:
         self.drain: bool = False           # finish current job, then stop polling
         self.sleeping: bool = False        # don't start new jobs, don't poll
         self.cancel_reason: str | None = None  # "user" or "auto" when terminating
+        # Encoder preset — can be changed at runtime via POST /settings
+        self.encoder: str = "libx265"              # libx265 | nvenc | vaapi | videotoolbox
+        self.vaapi_device: str = "/dev/dri/renderD128"
 
     def start(self, record_id: int) -> None:
         self.active = True
