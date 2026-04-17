@@ -42,13 +42,22 @@ class ScanConfig:
 
 
 @dataclass
+class EncoderPreset:
+    """FFmpeg arguments for one encoder preset."""
+    pre_input: str = ""    # args inserted before -i  (e.g. "-vaapi_device /dev/dri/renderD128")
+    video_args: str = ""   # video codec args after -c copy (e.g. "-c:v hevc_nvenc -preset p5 -cq 24")
+
+
+@dataclass
 class FfmpegConfig:
     bin: str = "ffmpeg"
     output_dir: str = ""        # Directory where ffmpeg writes the output file
     extra_args: str = ""        # Extra CLI arguments as a single string
     # Encoder preset: libx265 | nvenc | vaapi | videotoolbox
     encoder: str = "libx265"
-    vaapi_device: str = "/dev/dri/renderD128"  # only used when encoder = "vaapi"
+    vaapi_device: str = "/dev/dri/renderD128"  # default pre_input device for vaapi preset
+    # Per-encoder ffmpeg argument overrides — populated by load_slave()
+    presets: dict[str, EncoderPreset] = field(default_factory=dict)
 
 
 @dataclass
@@ -153,6 +162,30 @@ def load_slave(config_path: str | None) -> Config:
         paths.get("prefix", "") or master_prefix,
     )
 
+    vaapi_device = _env(
+        "PACKA_SLAVE_FFMPEG_VAAPI_DEVICE",
+        ffmpeg_data.get("vaapi_device", "/dev/dri/renderD128"),
+    )
+
+    # Built-in defaults for each encoder preset.
+    _defaults: dict[str, EncoderPreset] = {
+        "libx265":      EncoderPreset(video_args="-c:v libx265"),
+        "nvenc":        EncoderPreset(video_args="-c:v hevc_nvenc -preset p5 -cq 24"),
+        "vaapi":        EncoderPreset(
+                            pre_input=f"-vaapi_device {vaapi_device}",
+                            video_args="-c:v hevc_vaapi -vf format=nv12,hwupload -qp 24",
+                        ),
+        "videotoolbox": EncoderPreset(video_args="-c:v hevc_videotoolbox -q:v 65"),
+    }
+    # Apply per-encoder overrides from [slave.ffmpeg.<name>] TOML sections.
+    presets: dict[str, EncoderPreset] = {}
+    for name, default in _defaults.items():
+        user = ffmpeg_data.get(name, {})
+        presets[name] = EncoderPreset(
+            pre_input=user.get("pre_input", default.pre_input),
+            video_args=user.get("video_args", default.video_args),
+        )
+
     return Config(
         bind=_env("PACKA_SLAVE_BIND", slave.get("bind", "localhost")),
         api_port=_env_int("PACKA_SLAVE_API_PORT", slave.get("api_port", 8000)),
@@ -171,7 +204,8 @@ def load_slave(config_path: str | None) -> Config:
             output_dir=_env("PACKA_SLAVE_FFMPEG_OUTPUT_DIR", ffmpeg_data.get("output_dir", "")),
             extra_args=_env("PACKA_SLAVE_FFMPEG_EXTRA_ARGS", ffmpeg_data.get("extra_args", "")),
             encoder=_env("PACKA_SLAVE_FFMPEG_ENCODER", ffmpeg_data.get("encoder", "libx265")),
-            vaapi_device=_env("PACKA_SLAVE_FFMPEG_VAAPI_DEVICE", ffmpeg_data.get("vaapi_device", "/dev/dri/renderD128")),
+            vaapi_device=vaapi_device,
+            presets=presets,
         ),
         worker=WorkerConfig(
             batch_size=_env_int("PACKA_SLAVE_BATCH_SIZE", worker_data.get("batch_size", 1)),

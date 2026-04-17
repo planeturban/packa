@@ -119,15 +119,36 @@ extra_args = ""
 # Env: PACKA_SLAVE_FFMPEG_ENCODER
 #
 #   libx265       — software (default, works everywhere)
-#   nvenc         — NVIDIA GPU: hevc_nvenc -preset p5 -cq 24
-#   vaapi         — Intel/AMD GPU: hevc_vaapi, requires vaapi_device below
-#   videotoolbox  — Apple Silicon: hevc_videotoolbox -q:v 65
+#   nvenc         — NVIDIA GPU
+#   vaapi         — Intel/AMD GPU
+#   videotoolbox  — Apple Silicon
 #
 encoder = "libx265"
 
-# VAAPI render device. Only used when encoder = "vaapi".
+# VAAPI render device — used to build the default pre_input for the vaapi preset.
+# Override per-preset below if you need a different device.
 # Env: PACKA_SLAVE_FFMPEG_VAAPI_DEVICE
 # vaapi_device = "/dev/dri/renderD128"
+
+# ── Per-encoder ffmpeg argument overrides ────────────────────────────────────
+# Each encoder has built-in defaults (shown below). You only need these sections
+# if you want to change the arguments — omit any section to use the defaults.
+#
+# pre_input  — arguments inserted before -i  (e.g. for hardware device init)
+# video_args — video codec arguments replacing the default codec flags
+
+# [slave.ffmpeg.libx265]
+# video_args = "-c:v libx265"
+
+# [slave.ffmpeg.nvenc]
+# video_args = "-c:v hevc_nvenc -preset p5 -cq 24"
+
+# [slave.ffmpeg.vaapi]
+# pre_input  = "-vaapi_device /dev/dri/renderD128"
+# video_args = "-c:v hevc_vaapi -vf format=nv12,hwupload -qp 24"
+
+# [slave.ffmpeg.videotoolbox]
+# video_args = "-c:v hevc_videotoolbox -q:v 65"
 
 [slave.worker]
 # Env: PACKA_SLAVE_BATCH_SIZE, PACKA_SLAVE_POLL_INTERVAL

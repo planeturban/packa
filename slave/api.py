@@ -78,6 +78,7 @@ async def lifespan(app: FastAPI):
     tasks: list[asyncio.Task] = []
     worker_state.tls = _config.tls
     worker_state.vaapi_device = _config.ffmpeg.vaapi_device
+    worker_state.presets = _config.ffmpeg.presets
     # If the slave has never been activated via the web UI, start unconfigured (sleeping).
     # main.py writes "first_run=true" on the very first startup (no slave_id in DB yet).
     # Once the user selects an encoder, "ready=true" is written and this branch is skipped.

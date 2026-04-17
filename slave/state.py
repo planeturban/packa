@@ -1,7 +1,7 @@
 import asyncio
 from dataclasses import dataclass
 
-from shared.config import TlsConfig
+from shared.config import EncoderPreset, TlsConfig
 
 
 @dataclass
@@ -43,6 +43,7 @@ class WorkerState:
         # Encoder preset — can be changed at runtime via POST /settings
         self.encoder: str = "libx265"              # libx265 | nvenc | vaapi | videotoolbox
         self.vaapi_device: str = "/dev/dri/renderD128"
+        self.presets: dict[str, EncoderPreset] = {}  # loaded from config at startup
 
     def start(self, record_id: int) -> None:
         self.active = True

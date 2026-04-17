@@ -51,20 +51,15 @@ def _build_cmd(
     output_path: str,
     extra_args: str,
     encoder: str,
-    vaapi_device: str,
+    presets: dict,
 ) -> list[str]:
-    pre_input: list[str] = []
-    video_args: list[str] = []
-
-    if encoder == "vaapi":
-        pre_input = ["-vaapi_device", vaapi_device]
-        video_args = ["-c:v", "hevc_vaapi", "-vf", "format=nv12,hwupload", "-qp", "24"]
-    elif encoder == "nvenc":
-        video_args = ["-c:v", "hevc_nvenc", "-preset", "p5", "-cq", "24"]
-    elif encoder == "videotoolbox":
-        video_args = ["-c:v", "hevc_videotoolbox", "-q:v", "65"]
-    else:  # libx265 (default)
-        video_args = ["-c:v", "libx265"]
+    preset = presets.get(encoder)
+    pre_input = shlex.split(preset.pre_input) if preset and preset.pre_input.strip() else []
+    video_args = (
+        shlex.split(preset.video_args)
+        if preset and preset.video_args.strip()
+        else ["-c:v", "libx265"]
+    )
 
     cmd = [ffmpeg_bin] + pre_input + ["-i", file_path, "-map", "0", "-c", "copy"] + video_args
     if extra_args:
@@ -270,7 +265,7 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
             return
 
         cmd = _build_cmd(ffmpeg_bin, job.file_path, output_path, extra_args,
-                         worker_state.encoder, worker_state.vaapi_device)
+                         worker_state.encoder, worker_state.presets)
         print(f"[worker] record {job.record_id} encoder={worker_state.encoder!r} → {' '.join(cmd)}")
 
         started_at = _utcnow()
