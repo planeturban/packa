@@ -150,8 +150,8 @@ video_args = "-c:v libx265"
 video_args = "-c:v hevc_nvenc -preset p5 -cq 24"
 
 [slave.ffmpeg.vaapi]
-pre_input  = "-vaapi_device /dev/dri/renderD128"
-video_args = "-c:v hevc_vaapi -vf format=nv12,hwupload -qp 24"
+pre_input  = "-init_hw_device vaapi=vaapi0:/dev/dri/renderD128 -hwaccel vaapi -hwaccel_output_format vaapi -hwaccel_device vaapi0 -filter_hw_device vaapi0"
+video_args = "-vf format=nv12|vaapi,hwupload -c:v hevc_vaapi -rc_mode ICQ -global_quality 23"
 
 [slave.ffmpeg.videotoolbox]
 video_args = "-c:v hevc_videotoolbox -q:v 65"

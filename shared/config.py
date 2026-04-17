@@ -176,8 +176,12 @@ def load_slave(config_path: str | None) -> Config:
         "libx265":      EncoderPreset(video_args="-c:v libx265"),
         "nvenc":        EncoderPreset(video_args="-c:v hevc_nvenc -preset p5 -cq 24"),
         "vaapi":        EncoderPreset(
-                            pre_input=f"-vaapi_device {vaapi_device}",
-                            video_args="-c:v hevc_vaapi -vf format=nv12,hwupload -qp 24",
+                            pre_input=(
+                                f"-init_hw_device vaapi=vaapi0:{vaapi_device}"
+                                f" -hwaccel vaapi -hwaccel_output_format vaapi"
+                                f" -hwaccel_device vaapi0 -filter_hw_device vaapi0"
+                            ),
+                            video_args="-vf format=nv12|vaapi,hwupload -c:v hevc_vaapi -rc_mode ICQ -global_quality 23",
                         ),
         "videotoolbox": EncoderPreset(video_args="-c:v hevc_videotoolbox -q:v 65"),
     }
