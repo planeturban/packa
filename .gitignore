@@ -2,3 +2,4 @@
 __pycache__/
 *.pyc
 shared/__pycache__/config.cpython-313.pyc
+localtodo
