@@ -16,6 +16,7 @@ from shared.tls import httpx_kwargs, scheme
 
 from .database import _migrate, engine, get_db
 from .poller import poller_loop
+from .settings import get_setting, set_setting
 from .state import FfmpegProgress, Job, worker_state
 from .worker import recover, worker_loop
 
@@ -76,8 +77,16 @@ async def _register_and_poll() -> None:
 async def lifespan(app: FastAPI):
     tasks: list[asyncio.Task] = []
     worker_state.tls = _config.tls
-    worker_state.encoder = _config.ffmpeg.encoder
     worker_state.vaapi_device = _config.ffmpeg.vaapi_device
+    # If the slave has never been activated via the web UI, start unconfigured (sleeping).
+    # Once the user selects an encoder, ready=true is stored and this branch is skipped.
+    if get_setting("ready"):
+        worker_state.encoder = get_setting("encoder") or _config.ffmpeg.encoder
+    else:
+        worker_state.encoder = _config.ffmpeg.encoder
+        worker_state.sleeping = True
+        worker_state.unconfigured = True
+        print("[slave] no stored configuration — starting in unconfigured state")
     if _config.ffmpeg.output_dir:
         recover(_config.ffmpeg.output_dir)
         tasks.append(asyncio.create_task(worker_loop(
@@ -121,6 +130,7 @@ class SlaveStatus(BaseModel):
     paused: bool
     drain: bool
     sleeping: bool
+    unconfigured: bool
     encoder: str
 
 
@@ -138,6 +148,7 @@ def get_status():
         paused=worker_state.paused,
         drain=worker_state.drain,
         sleeping=worker_state.sleeping,
+        unconfigured=worker_state.unconfigured,
         encoder=worker_state.encoder,
         progress=ProgressOut(
             percent=p.percent,
@@ -266,5 +277,12 @@ def update_settings(body: EncoderUpdate):
             detail=f"encoder must be one of: {', '.join(sorted(_VALID_ENCODERS))}",
         )
     worker_state.encoder = body.encoder
-    print(f"[slave] encoder changed to {body.encoder!r}")
+    set_setting("encoder", body.encoder)
+    set_setting("ready", "true")
+    if worker_state.unconfigured:
+        worker_state.unconfigured = False
+        worker_state.sleeping = False
+        print(f"[slave] activated with encoder={body.encoder!r}")
+    else:
+        print(f"[slave] encoder changed to {body.encoder!r}")
     return {"encoder": worker_state.encoder, "vaapi_device": worker_state.vaapi_device}

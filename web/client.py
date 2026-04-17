@@ -78,6 +78,7 @@ async def fetch_dashboard(master_url: str, tls: TlsConfig) -> dict:
             "paused": (st or {}).get("paused", False),
             "drain": (st or {}).get("drain", False),
             "sleeping": (st or {}).get("sleeping", False),
+            "unconfigured": (st or {}).get("unconfigured", False),
             "encoder": (st or {}).get("encoder", "libx265"),
         })
 

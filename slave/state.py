@@ -38,6 +38,7 @@ class WorkerState:
         self.paused: bool = False          # ffmpeg suspended (SIGSTOP)
         self.drain: bool = False           # finish current job, then stop polling
         self.sleeping: bool = False        # don't start new jobs, don't poll
+        self.unconfigured: bool = False    # first-time startup, no encoder chosen yet
         self.cancel_reason: str | None = None  # "user" or "auto" when terminating
         # Encoder preset — can be changed at runtime via POST /settings
         self.encoder: str = "libx265"              # libx265 | nvenc | vaapi | videotoolbox

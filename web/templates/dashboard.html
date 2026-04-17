@@ -100,6 +100,8 @@
     </div>
     {% if slave.state == "unreachable" %}
       <span class="badge badge-unreachable">Unreachable</span>
+    {% elif slave.unconfigured %}
+      <span class="badge badge-unconfigured">Unconfigured</span>
     {% elif slave.sleeping %}
       <span class="badge badge-sleeping">Sleeping</span>
     {% elif slave.paused %}
@@ -156,7 +158,9 @@
   {# Action buttons — stopPropagation so card click doesn't fire #}
   {% if slave.state != "unreachable" %}
   <div class="actions" onclick="event.stopPropagation()">
-    {% if slave.sleeping %}
+    {% if slave.unconfigured %}
+      {# No actions for unconfigured slaves — open the modal to configure #}
+    {% elif slave.sleeping %}
       <form method="post" action="/actions/slave/wake">
         <input type="hidden" name="host" value="{{ slave.host }}">
         <input type="hidden" name="api_port" value="{{ slave.api_port }}">
@@ -487,6 +491,7 @@ function _scanLiveHtml(scan) {
 function _slaveCardHtml(s) {
   const badge = s.state === 'unreachable'
     ? '<span class="badge badge-unreachable">Unreachable</span>'
+    : s.unconfigured ? '<span class="badge badge-unconfigured">Unconfigured</span>'
     : s.sleeping ? '<span class="badge badge-sleeping">Sleeping</span>'
     : s.paused   ? '<span class="badge badge-paused">Paused</span>'
     : s.state === 'processing' ? `<span class="badge badge-processing">${s.drain ? 'Finishing' : 'Converting'}</span>`
@@ -523,7 +528,9 @@ function _slaveCardHtml(s) {
 
   if (s.state !== 'unreachable') {
     h += `<div class="actions" onclick="event.stopPropagation()">`;
-    if (s.sleeping) {
+    if (s.unconfigured) {
+      // no buttons — user opens the modal to select encoder and activate
+    } else if (s.sleeping) {
       h += _slaveBtn('/actions/slave/wake', s, 'Wake up', '');
     } else if (s.paused) {
       h += _slaveBtn('/actions/slave/resume', s, 'Resume', '') + _slaveBtn('/actions/slave/stop', s, 'Stop', 'danger');
@@ -887,9 +894,11 @@ function _slaveStatusHtml(st, host, port) {
   let h = `<div style="font-size:.8rem;color:#aaa;margin-bottom:.7rem">${host}:${port}</div>`;
   if (!st) return h + '<p class="modal-err" style="margin-bottom:.8rem">Unreachable.</p>';
 
-  const label = st.sleeping ? 'Sleeping' : st.paused ? 'Paused' : st.drain ? 'Draining'
+  const label = st.unconfigured ? 'Unconfigured'
+              : st.sleeping ? 'Sleeping' : st.paused ? 'Paused' : st.drain ? 'Draining'
               : st.state === 'processing' ? 'Converting' : 'Idle';
-  const cls   = st.sleeping ? 'badge-sleeping' : st.paused ? 'badge-paused' : st.drain ? 'badge-drain'
+  const cls   = st.unconfigured ? 'badge-unconfigured'
+              : st.sleeping ? 'badge-sleeping' : st.paused ? 'badge-paused' : st.drain ? 'badge-drain'
               : st.state === 'processing' ? 'badge-processing' : 'badge-idle';
   const slaveActions = st.sleeping
     ? `<form method="post" action="/actions/slave/wake" onclick="event.stopPropagation()">
@@ -907,6 +916,11 @@ function _slaveStatusHtml(st, host, port) {
     <span class="modal-meta">Queue: ${st.queued} job${st.queued!==1?'s':''}</span>`;
   if (st.record_id != null) h += `<span class="modal-meta">Record #${st.record_id}</span>`;
   h += slaveActions + '</div>';
+  if (st.unconfigured) {
+    h += `<div style="font-size:.82rem;color:var(--text-dim);margin-bottom:.6rem">
+      Select an encoder to activate this slave:
+    </div>`;
+  }
   h += `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.8rem;font-size:.8rem;color:var(--text-dim)">
     <span>Encoder</span>${_encoderSelect(st.encoder || 'libx265', host, port)}
   </div>`;
