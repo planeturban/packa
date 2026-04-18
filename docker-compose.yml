@@ -6,7 +6,7 @@ services:
     volumes:
       - ./packa.toml:/data/packa.toml:ro
       - master-data:/data
-      - /mnt/data:/mnt/data:ro
+#      - /mnt/data:/mnt/data:ro # Path to data directory on host, read-only
     restart: unless-stopped
 
   slave:
@@ -20,8 +20,8 @@ services:
     volumes:
       - ./packa.toml:/data/packa.toml:ro
       - slave-data:/data
-      - /mnt/data:/mnt/data:ro
-      - /mnt/output:/mnt/output
+#      - /mnt/data:/mnt/data # Path to data directory on host.
+#      - /mnt/output:/mnt/output # Path to output directory on host. Needed if you don't want to overwrite the source files.
     depends_on:
       - master
     restart: unless-stopped
