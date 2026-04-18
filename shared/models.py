@@ -2,9 +2,11 @@ import enum
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, Enum as SAEnum, Float, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from .base import Base
+
+class Base(DeclarativeBase):
+    pass
 
 
 class FileStatus(str, enum.Enum):
@@ -12,7 +14,7 @@ class FileStatus(str, enum.Enum):
     ASSIGNED = "assigned"     # Claimed by a slave, not yet processing
     PROCESSING = "processing"
     COMPLETE = "complete"
-    DISCARDED = "discarded"   # ffmpeg finished but output >= source — output deleted
+    DISCARDED = "discarded"   # Already HEVC — skipped by slave
     CANCELLED = "cancelled"   # Terminated mid-conversion (user or auto size limit)
     ERROR = "error"
 

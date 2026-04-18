@@ -1,7 +1,7 @@
 import asyncio
 from dataclasses import dataclass
 
-from shared.config import EncoderPreset, TlsConfig
+from shared.config import EncoderPreset
 
 
 @dataclass
@@ -12,12 +12,12 @@ class Job:
 
 @dataclass
 class FfmpegProgress:
-    percent: float | None = None          # 0–100
-    speed: float | None = None            # e.g. 1.5 → 1.5× real-time
+    percent: float | None = None
+    speed: float | None = None
     fps: float | None = None
-    out_time: str | None = None           # "HH:MM:SS.ms"
+    out_time: str | None = None
     eta_seconds: int | None = None
-    bitrate: str | None = None            # e.g. "5000.0kbits/s"
+    bitrate: str | None = None
     current_size_bytes: int | None = None
     projected_size_bytes: int | None = None
 
@@ -28,22 +28,18 @@ class WorkerState:
         self.record_id: int | None = None
         self.queue: asyncio.Queue[Job] = asyncio.Queue()
         self.progress: FfmpegProgress | None = None
-        self.proc: asyncio.subprocess.Process | None = None  # running ffmpeg process
-        # Set after registration with master
-        self.slave_id: int | None = None          # numeric ID assigned by master
-        self.slave_config_id: str | None = None   # string ID from config file
+        self.proc: asyncio.subprocess.Process | None = None
+        self.slave_id: int | None = None
+        self.slave_config_id: str | None = None
         self.master_url: str | None = None
-        self.tls: TlsConfig = TlsConfig()
 
-        self.paused: bool = False          # ffmpeg suspended (SIGSTOP)
-        self.drain: bool = False           # finish current job, then stop polling
-        self.sleeping: bool = False        # don't start new jobs, don't poll
-        self.unconfigured: bool = False    # first-time startup, no encoder chosen yet
-        self.cancel_reason: str | None = None  # "user" or "auto" when terminating
-        # Encoder preset — can be changed at runtime via POST /settings
-        self.encoder: str = "libx265"              # libx265 | nvenc | vaapi | videotoolbox
-        self.vaapi_device: str = "/dev/dri/renderD128"
-        self.presets: dict[str, EncoderPreset] = {}  # loaded from config at startup
+        self.paused: bool = False
+        self.drain: bool = False
+        self.sleeping: bool = False
+        self.unconfigured: bool = False
+        self.cancel_reason: str | None = None
+        self.encoder: str = "libx265"
+        self.presets: dict[str, EncoderPreset] = {}
         self.available_encoders: list[str] = ["libx265", "nvenc", "vaapi", "videotoolbox"]
 
     def start(self, record_id: int) -> None:

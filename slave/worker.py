@@ -1,20 +1,15 @@
 """
 FFmpeg worker with an asyncio queue.
 
-Records are enqueued by the API and processed one at a time by worker_loop().
-If the slave is busy when a record arrives it is stored in the DB as PENDING
-and will be picked up when the current job finishes.
-
-All streams (video, audio, subtitles, attachments, etc.) are copied without
-re-encoding via -map 0 -c copy.
+Records are enqueued by the poller and processed one at a time by worker_loop().
+All streams are copied via -map 0 -c copy; video is re-encoded to HEVC.
 
 After conversion:
-  - Output smaller than source → COMPLETE, data written to DB, master notified
-  - Output same size or larger → output file deleted → DISCARDED
-  - ffmpeg non-zero exit        → ERROR
+  - Output smaller than source → COMPLETE
+  - Output same size or larger → output deleted → CANCELLED (cancel_reason="auto")
+  - ffmpeg non-zero exit        → ERROR (or CANCELLED if user/auto triggered)
 
-Progress is read from ffmpeg's -progress pipe:1 output and stored in
-worker_state.progress for the /status endpoint to serve.
+Progress is read from ffmpeg's -progress pipe:1 output.
 """
 
 import asyncio
@@ -25,7 +20,6 @@ from pathlib import Path
 import httpx
 
 from shared.crud import get_file_record, update_conversion_result, update_status
-from shared.tls import httpx_kwargs
 from shared.models import FileRecord, FileStatus
 
 from .database import SessionLocal
@@ -37,12 +31,8 @@ def _utcnow() -> datetime:
 
 
 def _ffprobe_bin(ffmpeg_bin: str) -> str:
-    """Derive ffprobe path from ffmpeg path."""
     p = Path(ffmpeg_bin)
     return str(p.parent / "ffprobe") if p.parent.name else "ffprobe"
-
-
-_VALID_ENCODERS = {"libx265", "nvenc", "vaapi", "videotoolbox"}
 
 
 def _build_cmd(
@@ -54,14 +44,12 @@ def _build_cmd(
     presets: dict,
 ) -> list[str]:
     preset = presets.get(encoder)
-    pre_input = shlex.split(preset.pre_input) if preset and preset.pre_input.strip() else []
     video_args = (
         shlex.split(preset.video_args)
         if preset and preset.video_args.strip()
         else ["-c:v", "libx265"]
     )
-
-    cmd = [ffmpeg_bin] + pre_input + ["-i", file_path, "-map", "0", "-c", "copy"] + video_args
+    cmd = [ffmpeg_bin, "-i", file_path, "-map", "0", "-c", "copy"] + video_args
     if extra_args:
         cmd.extend(shlex.split(extra_args))
     cmd += ["-y", "-progress", "pipe:1", "-nostats", output_path]
@@ -69,7 +57,6 @@ def _build_cmd(
 
 
 async def _get_duration(ffprobe: str, file_path: str) -> float | None:
-    """Return file duration in seconds using ffprobe, or None on failure."""
     try:
         proc = await asyncio.create_subprocess_exec(
             ffprobe, "-v", "quiet",
@@ -86,7 +73,6 @@ async def _get_duration(ffprobe: str, file_path: str) -> float | None:
 
 
 async def _get_video_codec(ffprobe: str, file_path: str) -> str | None:
-    """Return the codec name of the first video stream, or None on failure."""
     try:
         proc = await asyncio.create_subprocess_exec(
             ffprobe, "-v", "quiet",
@@ -120,37 +106,29 @@ def _safe_float(val: str | None) -> float:
 def _parse_progress(frame: dict[str, str], duration_s: float | None) -> FfmpegProgress:
     p = FfmpegProgress()
 
-    # Current output position
     out_time_us = _safe_int(frame.get("out_time_us"))
     out_time_s = out_time_us / 1_000_000
     p.out_time = (frame.get("out_time") or "").strip() or None
 
-    # Speed (e.g. "1.50x" → 1.5)
     speed_raw = (frame.get("speed") or "").replace("x", "").strip()
     speed = _safe_float(speed_raw) if speed_raw and speed_raw != "N/A" else 0.0
     p.speed = speed or None
 
-    # FPS
     fps = _safe_float(frame.get("fps"))
     p.fps = fps or None
 
-    # Bitrate (keep as string, e.g. "5000.0kbits/s")
     bitrate = (frame.get("bitrate") or "").strip()
     p.bitrate = bitrate if bitrate and bitrate != "N/A" else None
 
-    # Current output file size
     size = _safe_int(frame.get("total_size"))
     p.current_size_bytes = size or None
 
-    # Derived fields that need duration
     if duration_s and duration_s > 0 and out_time_s > 0:
         ratio = out_time_s / duration_s
         p.percent = round(min(ratio * 100, 100.0), 1)
-
         remaining_s = duration_s - out_time_s
         if p.speed and p.speed > 0:
             p.eta_seconds = max(0, round(remaining_s / p.speed))
-
         if p.current_size_bytes and ratio > 0:
             p.projected_size_bytes = int(p.current_size_bytes / ratio)
 
@@ -158,7 +136,6 @@ def _parse_progress(frame: dict[str, str], duration_s: float | None) -> FfmpegPr
 
 
 async def _stream_progress(stdout: asyncio.StreamReader, duration_s: float | None) -> None:
-    """Read ffmpeg -progress output line by line and update worker_state.progress."""
     frame: dict[str, str] = {}
     async for raw in stdout:
         line = raw.decode(errors="replace").strip()
@@ -183,7 +160,7 @@ async def _update_master_status(record_id: int, status: str) -> None:
         return
     url = f"{worker_state.master_url}/files/{record_id}/status"
     try:
-        async with httpx.AsyncClient(timeout=5, **httpx_kwargs(worker_state.tls)) as client:
+        async with httpx.AsyncClient(timeout=5) as client:
             await client.patch(url, json={"status": status})
     except Exception as exc:
         print(f"[worker] failed to update master status for record {record_id}: {exc}")
@@ -198,7 +175,6 @@ async def _report_result_to_master(
     finished_at: datetime | None = None,
     cancel_reason: str | None = None,
 ) -> None:
-    """Push final conversion result directly to master — no callback needed."""
     if not worker_state.master_url:
         return
     url = f"{worker_state.master_url}/files/{record_id}/result"
@@ -214,7 +190,7 @@ async def _report_result_to_master(
     if cancel_reason is not None:
         body["cancel_reason"] = cancel_reason
     try:
-        async with httpx.AsyncClient(timeout=10, **httpx_kwargs(worker_state.tls)) as client:
+        async with httpx.AsyncClient(timeout=10) as client:
             response = await client.patch(url, json=body)
             response.raise_for_status()
         print(f"[worker] master updated record {record_id} → {status.value}")
@@ -223,7 +199,6 @@ async def _report_result_to_master(
 
 
 async def _monitor_output_size(output_path: str, source_size: int, proc: asyncio.subprocess.Process) -> None:
-    """Terminate ffmpeg if the output file grows larger than the source."""
     while proc.returncode is None:
         await asyncio.sleep(5)
         try:
@@ -286,7 +261,6 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
         print(f"[worker] record {job.record_id} pid={proc.pid}  duration={duration_s}s  source={source_size}B")
         await _update_master_status(job.record_id, "processing")
 
-        # Read stdout (progress), stderr (errors) and monitor output size concurrently.
         results = await asyncio.gather(
             _stream_progress(proc.stdout, duration_s),
             _collect_stderr(proc.stderr),
@@ -298,15 +272,13 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
 
         if proc.returncode != 0:
             Path(output_path).unlink(missing_ok=True)
-            cancel_reason = worker_state.cancel_reason  # "user", "auto", or None
+            cancel_reason = worker_state.cancel_reason
             if cancel_reason:
                 update_conversion_result(
                     db, job.record_id,
                     status=FileStatus.CANCELLED,
-                    pid=proc.pid,
-                    output_size=None,
-                    started_at=started_at,
-                    finished_at=finished_at,
+                    pid=proc.pid, output_size=None,
+                    started_at=started_at, finished_at=finished_at,
                     cancel_reason=cancel_reason,
                 )
                 print(f"[worker] record {job.record_id} cancelled ({cancel_reason})")
@@ -319,10 +291,8 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                 update_conversion_result(
                     db, job.record_id,
                     status=FileStatus.ERROR,
-                    pid=proc.pid,
-                    output_size=None,
-                    started_at=started_at,
-                    finished_at=finished_at,
+                    pid=proc.pid, output_size=None,
+                    started_at=started_at, finished_at=finished_at,
                 )
                 print(f"[worker] record {job.record_id} error (exit {proc.returncode}):")
                 for line in stderr_output.splitlines():
@@ -340,10 +310,8 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
             update_conversion_result(
                 db, job.record_id,
                 status=FileStatus.CANCELLED,
-                pid=proc.pid,
-                output_size=output_size,
-                started_at=started_at,
-                finished_at=finished_at,
+                pid=proc.pid, output_size=output_size,
+                started_at=started_at, finished_at=finished_at,
                 cancel_reason="auto",
             )
             print(
@@ -360,10 +328,8 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
             update_conversion_result(
                 db, job.record_id,
                 status=FileStatus.COMPLETE,
-                pid=proc.pid,
-                output_size=output_size,
-                started_at=started_at,
-                finished_at=finished_at,
+                pid=proc.pid, output_size=output_size,
+                started_at=started_at, finished_at=finished_at,
             )
             print(
                 f"[worker] record {job.record_id} complete — "

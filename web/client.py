@@ -6,21 +6,15 @@ import asyncio
 
 import httpx
 
-from shared.config import TlsConfig
-from shared.tls import httpx_kwargs, scheme
-
 _STATUSES = ["pending", "assigned", "processing", "complete", "discarded", "cancelled", "error"]
 
 
-async def fetch_dashboard(master_url: str, tls: TlsConfig) -> dict:
+async def fetch_dashboard(master_url: str) -> dict:
     """
     Fetch all data needed for the dashboard in one call.
     Never raises — returns error fields on failure.
     """
-    kw = httpx_kwargs(tls)
-    slave_scheme = scheme(tls)
-
-    async with httpx.AsyncClient(timeout=5.0, **kw) as client:
+    async with httpx.AsyncClient(timeout=5.0) as client:
         try:
             slaves_r, scan_r, files_r, settings_r = await asyncio.gather(
                 client.get(f"{master_url}/slaves"),
@@ -50,7 +44,7 @@ async def fetch_dashboard(master_url: str, tls: TlsConfig) -> dict:
 
         status_results = await asyncio.gather(
             *[
-                client.get(f"{slave_scheme}://{s['host']}:{s['api_port']}/status")
+                client.get(f"http://{s['host']}:{s['api_port']}/status")
                 for s in slaves_list
             ],
             return_exceptions=True,
@@ -58,13 +52,12 @@ async def fetch_dashboard(master_url: str, tls: TlsConfig) -> dict:
 
     slaves = []
     for info, result in zip(slaves_list, status_results):
-        if isinstance(result, Exception):
-            st = None
-        else:
+        st = None
+        if not isinstance(result, Exception):
             try:
                 st = result.json()
             except Exception:
-                st = None
+                pass
 
         slaves.append({
             "id": info["id"],
@@ -81,6 +74,7 @@ async def fetch_dashboard(master_url: str, tls: TlsConfig) -> dict:
             "unconfigured": (st or {}).get("unconfigured", False),
             "encoder": (st or {}).get("encoder", "libx265"),
             "available_encoders": (st or {}).get("available_encoders", ["libx265", "nvenc", "vaapi", "videotoolbox"]),
+            "encoder_labels": (st or {}).get("encoder_labels", {}),
         })
 
     return {

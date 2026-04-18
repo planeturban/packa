@@ -659,12 +659,6 @@ async function showSlave(host, port, name) {
   }
 }
 
-const _ENCODER_LABELS = {
-  libx265:      'Software (libx265)',
-  nvenc:        'NVIDIA (NVENC)',
-  vaapi:        'Intel/AMD (VAAPI)',
-  videotoolbox: 'Apple Silicon (VideoToolbox)',
-};
 
 async function setSlaveEncoder(host, port) {
   const sel = document.getElementById(`enc-${port}`);
@@ -693,16 +687,16 @@ async function setSlaveEncoder(host, port) {
   if (r.ok) _applyDashboard(await r.json());
 }
 
-function _encoderSelect(encoder, host, port, unconfigured, availableEncoders) {
+function _encoderSelect(encoder, host, port, unconfigured, availableEncoders, encoderLabels) {
+  const labels = encoderLabels || {};
   const available = (availableEncoders && availableEncoders.length)
     ? availableEncoders
-    : Object.keys(_ENCODER_LABELS);
+    : Object.keys(labels);
   let opts = unconfigured
     ? '<option value="" disabled selected>— Select encoder —</option>'
     : '';
   opts += available
-    .filter(v => _ENCODER_LABELS[v])
-    .map(v => `<option value="${v}"${!unconfigured && v === encoder ? ' selected' : ''}>${_ENCODER_LABELS[v]}</option>`)
+    .map(v => `<option value="${v}"${!unconfigured && v === encoder ? ' selected' : ''}>${labels[v] || v}</option>`)
     .join('');
   // Pause live-refresh while user has the dropdown open so it can't reset their selection
   const sel = `<select id="enc-${port}"
@@ -745,7 +739,7 @@ function _slaveStatusHtml(st, host, port) {
     </div>`;
   }
   h += `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.8rem;font-size:.8rem;color:var(--text-dim)">
-    <span>Encoder</span>${_encoderSelect(st.encoder || 'libx265', host, port, st.unconfigured, st.available_encoders)}
+    <span>Encoder</span>${_encoderSelect(st.encoder || 'libx265', host, port, st.unconfigured, st.available_encoders, st.encoder_labels)}
   </div>`;
 
   if (st.state === 'processing' && st.progress) {

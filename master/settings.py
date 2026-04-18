@@ -1,11 +1,9 @@
-"""
-Key-value settings table for master node.
-"""
+"""Key-value settings table for master node."""
 
 from sqlalchemy import Column, String
 from sqlalchemy.orm import Session
 
-from shared.base import Base
+from shared.models import Base
 
 
 class MasterSetting(Base):

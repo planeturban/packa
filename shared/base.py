@@ -1,5 +1,1 @@
-from sqlalchemy.orm import DeclarativeBase
-
-
-class Base(DeclarativeBase):
-    pass
+from .models import Base  # noqa: F401 — kept for backward compatibility

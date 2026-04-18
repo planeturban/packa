@@ -1,3 +1,22 @@
+"""
+Slave REST API.
+
+  GET    /status                 — worker state + live ffmpeg progress
+  POST   /files                  — submit a file record (enqueues for conversion)
+  GET    /files[?status=]        — list file records
+  GET    /files/{id}             — get a single file record
+  DELETE /files/{id}             — delete a file record (terminates ffmpeg if running)
+  PATCH  /files/{id}/status      — update a record's status
+  POST   /conversion/stop        — terminate the running ffmpeg process
+  POST   /conversion/pause       — suspend the running ffmpeg process (SIGSTOP)
+  POST   /conversion/resume      — resume a paused process; clears drain flag
+  POST   /conversion/drain       — finish current job then stop polling
+  POST   /conversion/sleep       — enter sleep mode (no polling, no new jobs)
+  POST   /conversion/wake        — leave sleep mode
+  GET    /settings               — current encoder
+  POST   /settings               — change encoder (also activates unconfigured slave)
+"""
+
 import asyncio
 import signal
 from contextlib import asynccontextmanager
@@ -8,20 +27,19 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from shared import crud
-from shared.base import Base
 from shared.config import Config
-from shared.models import FileStatus
+from shared.db import migrate
+from shared.models import Base, FileStatus
 from shared.schemas import FileRecordCreate, FileRecordOut, StatusUpdate
-from shared.tls import httpx_kwargs, scheme
 
-from .database import _migrate, engine, get_db
+from .database import engine, get_db
 from .poller import poller_loop
-from .settings import get_setting, set_setting
 from .state import FfmpegProgress, Job, worker_state
+from .store import get_setting, set_setting
 from .worker import recover, worker_loop
 
 Base.metadata.create_all(bind=engine)
-_migrate()
+migrate(engine)
 
 _config: Config = Config()
 _advertise_host: str = ""
@@ -41,18 +59,18 @@ def set_registration_params(advertise_host: str, slave_config_id: str) -> None:
 
 async def _register_and_poll() -> None:
     """Retry registration until master is reachable, then run the poller."""
-    url = f"{scheme(_config.tls)}://{_config.master_host}:{_config.master_port}/slaves"
+    url = f"http://{_config.master_host}:{_config.master_port}/slaves"
     payload = {"config_id": _slave_config_id, "host": _advertise_host, "api_port": _config.api_port}
     attempt = 0
     while True:
         try:
-            async with httpx.AsyncClient(timeout=10, **httpx_kwargs(_config.tls)) as client:
+            async with httpx.AsyncClient(timeout=10) as client:
                 r = await client.post(url, json=payload)
                 r.raise_for_status()
                 record = r.json()
             worker_state.slave_id = record["id"]
             worker_state.slave_config_id = _slave_config_id
-            worker_state.master_url = f"{scheme(_config.tls)}://{_config.master_host}:{_config.master_port}"
+            worker_state.master_url = f"http://{_config.master_host}:{_config.master_port}"
             print(f"[slave] registered as slave-{record['id']}")
             break
         except Exception as exc:
@@ -69,30 +87,26 @@ async def _register_and_poll() -> None:
             batch_size=_config.worker.batch_size,
             poll_interval=_config.worker.poll_interval,
             output_dir=_config.ffmpeg.output_dir,
-            tls=_config.tls,
         )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tasks: list[asyncio.Task] = []
-    worker_state.tls = _config.tls
-    worker_state.vaapi_device = _config.ffmpeg.vaapi_device
     worker_state.presets = _config.ffmpeg.presets
     worker_state.available_encoders = _config.ffmpeg.available_encoders
-    # If the slave has never been activated via the web UI, start unconfigured (sleeping).
-    # main.py writes "first_run=true" on the very first startup (no slave_id in DB yet).
-    # Once the user selects an encoder, "ready=true" is written and this branch is skipped.
-    # Slaves that existed before this feature (no "first_run" key) start normally.
+
+    _default_encoder = worker_state.available_encoders[0] if worker_state.available_encoders else "libx265"
     if get_setting("ready"):
-        worker_state.encoder = get_setting("encoder") or _config.ffmpeg.encoder
+        worker_state.encoder = get_setting("encoder") or _default_encoder
     elif get_setting("first_run"):
-        worker_state.encoder = _config.ffmpeg.encoder
+        worker_state.encoder = _default_encoder
         worker_state.sleeping = True
         worker_state.unconfigured = True
         print("[slave] no stored configuration — starting in unconfigured state")
     else:
-        worker_state.encoder = _config.ffmpeg.encoder
+        worker_state.encoder = _default_encoder
+
     if _config.ffmpeg.output_dir:
         recover(_config.ffmpeg.output_dir)
         tasks.append(asyncio.create_task(worker_loop(
@@ -129,16 +143,21 @@ class ProgressOut(BaseModel):
 
 
 class SlaveStatus(BaseModel):
-    state: str                    # "idle" or "processing"
+    state: str
     record_id: int | None
     queued: int
-    progress: ProgressOut | None  # only present while processing
+    progress: ProgressOut | None
     paused: bool
     drain: bool
     sleeping: bool
     unconfigured: bool
     encoder: str
     available_encoders: list[str]
+    encoder_labels: dict[str, str]
+
+
+class EncoderUpdate(BaseModel):
+    encoder: str
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +177,7 @@ def get_status():
         unconfigured=worker_state.unconfigured,
         encoder=worker_state.encoder,
         available_encoders=worker_state.available_encoders,
+        encoder_labels={k: (v.description or k) for k, v in worker_state.presets.items()},
         progress=ProgressOut(
             percent=p.percent,
             speed=p.speed,
@@ -175,21 +195,15 @@ def get_status():
 def submit_file(record: FileRecordCreate, db: Session = Depends(get_db)):
     if _config.path_prefix:
         record = record.model_copy(update={"file_path": _config.path_prefix + record.file_path})
-
     db_record = crud.create_file_record(db, record)
-
     if _config.ffmpeg.output_dir:
         worker_state.enqueue(Job(record_id=db_record.id, file_path=db_record.file_path))
         print(f"[api] record {db_record.id} queued (queue size: {worker_state.queued})")
-
     return db_record
 
 
 @app.get("/files", response_model=list[FileRecordOut])
-def list_files(
-    status: FileStatus | None = None,
-    db: Session = Depends(get_db),
-):
+def list_files(status: FileStatus | None = None, db: Session = Depends(get_db)):
     return crud.get_all_records(db, status=status)
 
 
@@ -273,24 +287,17 @@ def wake_conversion():
 # Encoder settings
 # ---------------------------------------------------------------------------
 
-_VALID_ENCODERS = {"libx265", "nvenc", "vaapi", "videotoolbox"}
-
-
-class EncoderUpdate(BaseModel):
-    encoder: str
-
-
 @app.get("/settings")
 def get_settings():
-    return {"encoder": worker_state.encoder, "vaapi_device": worker_state.vaapi_device}
+    return {"encoder": worker_state.encoder}
 
 
 @app.post("/settings")
 def update_settings(body: EncoderUpdate):
-    if body.encoder not in _VALID_ENCODERS:
+    if body.encoder not in worker_state.presets:
         raise HTTPException(
             status_code=400,
-            detail=f"encoder must be one of: {', '.join(sorted(_VALID_ENCODERS))}",
+            detail=f"encoder must be one of: {', '.join(sorted(worker_state.presets))}",
         )
     worker_state.encoder = body.encoder
     set_setting("encoder", body.encoder)
@@ -302,4 +309,4 @@ def update_settings(body: EncoderUpdate):
         print(f"[slave] activated with encoder={body.encoder!r}")
     else:
         print(f"[slave] encoder changed to {body.encoder!r}")
-    return {"encoder": worker_state.encoder, "vaapi_device": worker_state.vaapi_device}
+    return {"encoder": worker_state.encoder}

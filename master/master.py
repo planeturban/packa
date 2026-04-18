@@ -1,8 +1,6 @@
 """
 Master entry point.
 
-  Port 9000 (default) — REST API for slave registration and job distribution.
-
 Configuration priority: config file < environment variables < CLI flags.
 
 Environment variables:
@@ -10,9 +8,6 @@ Environment variables:
   PACKA_MASTER_API_PORT    API port
   PACKA_MASTER_PREFIX      Root path prefix
   PACKA_MASTER_EXTENSIONS  Comma-separated file extensions (e.g. .mkv,.mp4)
-  PACKA_MASTER_TLS_CERT    Path to certificate
-  PACKA_MASTER_TLS_KEY     Path to private key
-  PACKA_TLS_CA             Path to CA certificate (shared with slave/web)
 
 Flags:
   --bind       Address to bind the API server (default: localhost; "any" → 0.0.0.0)
@@ -21,7 +16,6 @@ Flags:
 
 Usage:
   python -m master.master --config packa.toml
-  python -m master.master --bind any --config packa.toml
 """
 
 import argparse
@@ -36,47 +30,37 @@ builtins.print = _ts_print
 
 import uvicorn
 
-from shared.config import Config, load_master
-from shared.tls import UVICORN_LOG_CONFIG, uvicorn_kwargs
+from shared.config import load_master
+from shared.tls import UVICORN_LOG_CONFIG
 
 from .api import app, set_config
 
 
-async def _main(bind: str, api_port: int, config: Config) -> None:
+async def _main(bind: str, api_port: int) -> None:
     uvi_config = uvicorn.Config(app, host=bind, port=api_port, log_level="info",
-                                log_config=UVICORN_LOG_CONFIG, **uvicorn_kwargs(config.tls))
+                                log_config=UVICORN_LOG_CONFIG)
     await uvicorn.Server(uvi_config).serve()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Packa master")
-    parser.add_argument(
-        "--bind", default=None,
-        help='Address to bind the API server ("any" → 0.0.0.0)',
-    )
-    parser.add_argument(
-        "--api-port", type=int, default=None,
-        help="API port",
-    )
-    parser.add_argument(
-        "--config",
-        help="Path to TOML config file",
-    )
+    parser.add_argument("--bind", default=None,
+                        help='Address to bind the API server ("any" → 0.0.0.0)')
+    parser.add_argument("--api-port", type=int, default=None, help="API port")
+    parser.add_argument("--config", help="Path to TOML config file")
     args = parser.parse_args()
 
     config = load_master(args.config)
     set_config(config)
 
-    # CLI overrides config + env
     bind_raw = args.bind if args.bind is not None else config.bind
     bind = "0.0.0.0" if bind_raw == "any" else bind_raw
     api_port = args.api_port if args.api_port is not None else config.api_port
 
     print(f"[master] bind: {bind}:{api_port}")
     print(f"[master] path_prefix: {config.path_prefix!r}")
-    print(f"[master] tls: {'enabled' if config.tls.enabled else 'disabled'}")
 
-    asyncio.run(_main(bind=bind, api_port=api_port, config=config))
+    asyncio.run(_main(bind=bind, api_port=api_port))
 
 
 if __name__ == "__main__":

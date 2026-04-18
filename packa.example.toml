@@ -8,35 +8,6 @@
 # Every setting below has a corresponding environment variable (see each section).
 
 # ---------------------------------------------------------------------------
-# mTLS (optional)
-# ---------------------------------------------------------------------------
-# Mutual TLS is enabled when all three fields below are set for a node.
-# The CA certificate is typically shared, so it belongs in [tls].
-# Each node's own certificate and key go in [master.tls] / [slave.tls] / [web.tls].
-#
-# If master has mTLS enabled, slaves without a valid certificate are rejected.
-# If master has no mTLS, slaves ignore their own TLS config when calling master.
-#
-# Env: PACKA_TLS_CA, PACKA_MASTER_TLS_CERT, PACKA_MASTER_TLS_KEY,
-#      PACKA_SLAVE_TLS_CERT, PACKA_SLAVE_TLS_KEY,
-#      PACKA_WEB_TLS_CERT, PACKA_WEB_TLS_KEY
-#
-# [tls]
-# ca   = "/etc/packa/certs/ca.crt"      # CA cert — verifies the other side
-#
-# [master.tls]
-# cert = "/etc/packa/certs/master.crt"
-# key  = "/etc/packa/certs/master.key"
-#
-# [slave.tls]
-# cert = "/etc/packa/certs/slave.crt"
-# key  = "/etc/packa/certs/slave.key"
-#
-# [web.tls]
-# cert = "/etc/packa/certs/web.crt"
-# key  = "/etc/packa/certs/web.key"
-
-# ---------------------------------------------------------------------------
 # Master
 # ---------------------------------------------------------------------------
 # Env: PACKA_MASTER_BIND, PACKA_MASTER_API_PORT
@@ -98,61 +69,44 @@ prefix = "/mnt/files/"
 # Env: PACKA_SLAVE_FFMPEG_BIN, PACKA_SLAVE_FFMPEG_OUTPUT_DIR, PACKA_SLAVE_FFMPEG_EXTRA_ARGS,
 #      PACKA_SLAVE_FFMPEG_ENCODER, PACKA_SLAVE_FFMPEG_VAAPI_DEVICE
 
-# Path to the ffmpeg binary.
-bin = "ffmpeg"
-
-# Directory where converted files are written.
-# The output file keeps the same name as the source.
-# Leave empty to disable ffmpeg on this slave.
+bin        = "ffmpeg"
 output_dir = "/mnt/output"
 
-# Optional extra arguments passed to ffmpeg, as a single string.
-# All streams (video, audio, subtitles, etc.) are always copied with -map 0 -c copy.
-# Leave empty to pass no extra arguments.
-extra_args = ""
+# Optional extra arguments appended to every ffmpeg call (single string).
+# Example: extra_args = "-metadata comment='packa'"
+# Env: PACKA_SLAVE_FFMPEG_EXTRA_ARGS
+# extra_args = ""
 
-# Example with metadata:
-# extra_args = "-metadata comment='processed by packa'"
+# Restrict which encoders appear in the dashboard dropdown.
+# Defaults to all defined encoders. Useful when only certain hardware is available.
+# encoders = ["libx265", "nvenc"]
 
-# Encoder preset for non-HEVC files. Files already in HEVC are skipped entirely.
-# Can also be changed at runtime from the web dashboard (per slave).
-# Env: PACKA_SLAVE_FFMPEG_ENCODER
+# ── Per-encoder overrides ─────────────────────────────────────────────────────
+# Four encoders are built-in with sensible defaults. Define a section only to
+# override video_args / description, or to add a custom encoder.
 #
-#   libx265       — software (default, works everywhere)
-#   nvenc         — NVIDIA GPU
-#   vaapi         — Intel/AMD GPU
-#   videotoolbox  — Apple Silicon
+# description — label shown in the dashboard dropdown (falls back to the key name)
+# video_args  — replaces the built-in codec flags entirely
 #
-encoder = "libx265"
+# VAAPI device can be overridden via PACKA_SLAVE_FFMPEG_VAAPI_DEVICE (default: /dev/dri/renderD128)
+# or by setting video_args manually in [slave.ffmpeg.encoder.vaapi].
 
-# VAAPI render device — used to build the default pre_input for the vaapi preset.
-# Override per-preset below if you need a different device.
-# Env: PACKA_SLAVE_FFMPEG_VAAPI_DEVICE
-# vaapi_device = "/dev/dri/renderD128"
-
-# Encoders shown in the web dashboard dropdown.
-# Defaults to all four. Set this to match the hardware on this machine.
-# encoders = ["libx265", "videotoolbox"]
-
-# ── Per-encoder ffmpeg argument overrides ────────────────────────────────────
-# Each encoder has built-in defaults (shown below). You only need these sections
-# if you want to change the arguments — omit any section to use the defaults.
-#
-# pre_input  — arguments inserted before -i  (e.g. for hardware device init)
-# video_args — video codec arguments replacing the default codec flags
-
-# [slave.ffmpeg.libx265]
+# [slave.ffmpeg.encoder.libx265]
 # video_args = "-c:v libx265"
 
-# [slave.ffmpeg.nvenc]
+# [slave.ffmpeg.encoder.nvenc]
 # video_args = "-c:v hevc_nvenc -preset p5 -cq 24"
 
-# [slave.ffmpeg.vaapi]
-# pre_input  = "-init_hw_device vaapi=vaapi0:/dev/dri/renderD128 -hwaccel vaapi -hwaccel_output_format vaapi -hwaccel_device vaapi0 -filter_hw_device vaapi0"
-# video_args = "-vf format=nv12|vaapi,hwupload -c:v hevc_vaapi -rc_mode ICQ -global_quality 23"
+# [slave.ffmpeg.encoder.vaapi]
+# video_args = "-init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va -vf format=nv12,hwupload -c:v hevc_vaapi -rc_mode ICQ -global_quality 23"
 
-# [slave.ffmpeg.videotoolbox]
+# [slave.ffmpeg.encoder.videotoolbox]
 # video_args = "-c:v hevc_videotoolbox -q:v 65"
+
+# Custom encoder example — appears automatically in the dashboard dropdown:
+# [slave.ffmpeg.encoder.nvenc_hq]
+# description = "NVIDIA high quality"
+# video_args  = "-c:v hevc_nvenc -preset p7 -cq 18"
 
 [slave.worker]
 # Env: PACKA_SLAVE_BATCH_SIZE, PACKA_SLAVE_POLL_INTERVAL
