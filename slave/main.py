@@ -43,7 +43,7 @@ builtins.print = _ts_print
 import uvicorn
 
 from shared.config import load_slave
-from shared.tls import UVICORN_LOG_CONFIG
+from shared.log import UVICORN_LOG_CONFIG
 
 from .api import app, set_config, set_registration_params
 from .store import get_or_create_slave_id, get_stored_slave_id, set_setting

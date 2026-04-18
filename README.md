@@ -113,9 +113,6 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 | `PACKA_MASTER_API_PORT` | `master.api_port` |
 | `PACKA_MASTER_PREFIX` | `master.paths.prefix` |
 | `PACKA_MASTER_EXTENSIONS` | `master.scan.extensions` (comma-separated) |
-| `PACKA_MASTER_TLS_CERT` | `master.tls.cert` |
-| `PACKA_MASTER_TLS_KEY` | `master.tls.key` |
-| `PACKA_TLS_CA` | `tls.ca` |
 
 ### Slave
 
@@ -153,9 +150,6 @@ poll_interval = 5   # seconds between polls when queue is empty
 | `PACKA_SLAVE_FFMPEG_OUTPUT_DIR` | `slave.ffmpeg.output_dir` |
 | `PACKA_SLAVE_FFMPEG_EXTRA_ARGS` | `slave.ffmpeg.extra_args` |
 | `PACKA_SLAVE_POLL_INTERVAL` | `slave.worker.poll_interval` |
-| `PACKA_SLAVE_TLS_CERT` | `slave.tls.cert` |
-| `PACKA_SLAVE_TLS_KEY` | `slave.tls.key` |
-| `PACKA_TLS_CA` | `tls.ca` |
 
 #### Encoder presets
 
@@ -209,32 +203,6 @@ secret_key = "long-random-string"   # auto-generated if omitted (sessions won't 
 | `PACKA_WEB_USERNAME` | `web.username` |
 | `PACKA_WEB_PASSWORD` | `web.password` |
 | `PACKA_WEB_SECRET_KEY` | `web.secret_key` |
-| `PACKA_WEB_TLS_CERT` | `web.tls.cert` |
-| `PACKA_WEB_TLS_KEY` | `web.tls.key` |
-| `PACKA_TLS_CA` | `tls.ca` |
-
-### mTLS (optional)
-
-All three fields (ca, cert, key) must be set on a node to enable mTLS. If master has mTLS enabled, slaves without a valid client certificate are rejected.
-
-```toml
-[tls]
-ca = "/etc/packa/ca.crt"
-
-[master.tls]
-cert = "/etc/packa/master.crt"
-key  = "/etc/packa/master.key"
-
-[slave.tls]
-cert = "/etc/packa/slave.crt"
-key  = "/etc/packa/slave.key"
-
-[web.tls]
-cert = "/etc/packa/web.crt"
-key  = "/etc/packa/web.key"
-```
-
-The web process acts as a BFF: it uses its own client certificate when talking to master and slaves, while the browser connects without a client certificate.
 
 ---
 

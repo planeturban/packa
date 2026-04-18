@@ -36,7 +36,7 @@ builtins.print = _ts_print
 import uvicorn
 
 from shared.config import WebConfig, load_web
-from shared.tls import UVICORN_LOG_CONFIG
+from shared.log import UVICORN_LOG_CONFIG
 
 from .app import app, set_config
 
