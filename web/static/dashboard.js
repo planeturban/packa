@@ -729,42 +729,17 @@ async function showSlave(host, port, name) {
 }
 
 
-async function setSlaveEncoder(host, port) {
+async function saveSlaveSettings(host, port) {
   const sel = document.getElementById(`enc-${port}`);
+  const inp = document.getElementById(`batch-${port}`);
   if (!sel) return;
   const encoder = sel.value;
   if (!encoder) return;
-  const btn = document.getElementById(`enc-save-${port}`);
+  const batch_size = Math.max(1, parseInt(inp?.value) || 1);
+  if (inp) inp.value = batch_size;
+  const btn = document.getElementById(`settings-save-${port}`);
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
-    const r = await fetch('/data/slave/encoder', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({host, port, encoder}),
-    });
-    if (!r.ok) throw new Error('failed');
-    if (btn) { btn.textContent = 'Saved'; setTimeout(() => { if (btn) btn.textContent = 'Save'; }, 1500); }
-  } catch(e) {
-    if (btn) { btn.disabled = false; btn.textContent = 'Error — retry'; }
-    return;
-  }
-  if (btn) btn.disabled = false;
-  await _refreshSlaveStatus(host, port);
-  const r = await fetch('/data/dashboard');
-  if (r.ok) _applyDashboard(await r.json());
-}
-
-async function saveBatchSize(host, port) {
-  const inp = document.getElementById(`batch-${port}`);
-  if (!inp) return;
-  const batch_size = Math.max(1, parseInt(inp.value) || 1);
-  inp.value = batch_size;
-  const btn = document.getElementById(`batch-save-${port}`);
-  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-  try {
-    const encSel = document.getElementById(`enc-${port}`);
-    const encoder = encSel ? encSel.value : null;
-    if (!encoder) throw new Error('no encoder');
     const r = await fetch('/data/slave/encoder', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -777,6 +752,9 @@ async function saveBatchSize(host, port) {
     return;
   }
   if (btn) btn.disabled = false;
+  await _refreshSlaveStatus(host, port);
+  const r = await fetch('/data/dashboard');
+  if (r.ok) _applyDashboard(await r.json());
 }
 
 function _encoderSelect(encoder, host, port, unconfigured, availableEncoders, encoderLabels) {
@@ -795,8 +773,7 @@ function _encoderSelect(encoder, host, port, unconfigured, availableEncoders, en
     onfocus="_stopSlavePoll()"
     onblur="_scheduleSlavePoll('${_esc(host)}',${port},3000)"
     style="padding:.25rem .45rem;border:1px solid var(--border-input);border-radius:4px;font-size:.8rem;font-family:inherit;background:var(--surface);color:var(--text);cursor:pointer">${opts}</select>`;
-  const savebtn = `<button id="enc-save-${port}" class="btn-act" type="button" onclick="setSlaveEncoder('${_esc(host)}',${port})">Save</button>`;
-  return sel + ' ' + savebtn;
+  return sel;
 }
 
 function _slaveStatusHtml(st, host, port) {
@@ -837,7 +814,9 @@ function _slaveStatusHtml(st, host, port) {
     <span>Queue size</span>
     <input id="batch-${port}" type="number" min="1" value="${st.batch_size || 1}"
       style="width:4rem;padding:.25rem .45rem;border:1px solid var(--border-input);border-radius:4px;font-size:.8rem;font-family:inherit;background:var(--surface);color:var(--text)">
-    <button id="batch-save-${port}" class="btn-act" type="button" onclick="saveBatchSize('${_esc(host)}',${port})">Save</button>
+  </div>
+  <div style="margin-bottom:.8rem">
+    <button id="settings-save-${port}" class="btn-act" type="button" onclick="saveSlaveSettings('${_esc(host)}',${port})">Save</button>
   </div>`;
 
   if (st.state === 'processing') {
