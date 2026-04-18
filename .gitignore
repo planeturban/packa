@@ -1,4 +1,7 @@
 *.db
 **/__pycache__/
 *.pyc
+*.swp
+*.swo
 localtodo
+.claude/
