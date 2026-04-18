@@ -171,8 +171,13 @@ def load_slave(config_path: str | None) -> Config:
                 video_args=values.get("video_args", ""),
             )
 
-    # available_encoders: explicit list from config, or all preset keys
-    available_encoders: list[str] = ffmpeg_data.get("encoders", list(presets.keys()))
+    # explicit list > defined encoder sections > all built-in defaults
+    if ffmpeg_data.get("encoders"):
+        available_encoders: list[str] = ffmpeg_data["encoders"]
+    elif encoder_data:
+        available_encoders = list(encoder_data.keys())
+    else:
+        available_encoders = list(_defaults.keys())
 
     return Config(
         bind=_env("PACKA_SLAVE_BIND", slave.get("bind", "localhost")),
