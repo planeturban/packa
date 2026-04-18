@@ -807,16 +807,12 @@ function _slaveStatusHtml(st, host, port) {
       Select an encoder to activate this slave:
     </div>`;
   }
-  h += `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem;font-size:.8rem;color:var(--text-dim)">
+  h += `<div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.8rem;font-size:.8rem;color:var(--text-dim)">
     <span>Encoder</span>${_encoderSelect(st.encoder || 'libx265', host, port, st.unconfigured, st.available_encoders, st.encoder_labels)}
-  </div>`;
-  h += `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.8rem;font-size:.8rem;color:var(--text-dim)">
-    <span>Queue size</span>
+    <span style="margin-left:.25rem">Queue size</span>
     <input id="batch-${port}" type="number" min="1" value="${st.batch_size || 1}"
       style="width:4rem;padding:.25rem .45rem;border:1px solid var(--border-input);border-radius:4px;font-size:.8rem;font-family:inherit;background:var(--surface);color:var(--text)">
-  </div>
-  <div style="margin-bottom:.8rem">
-    <button id="settings-save-${port}" class="btn-act" type="button" onclick="saveSlaveSettings('${_esc(host)}',${port})">Save</button>
+    <button id="settings-save-${port}" class="btn-act" type="button" onclick="saveSlaveSettings('${_esc(host)}',${port})" style="margin-left:auto">Save</button>
   </div>`;
 
   if (st.state === 'processing') {

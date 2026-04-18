@@ -244,8 +244,6 @@ def update_status(record_id: int, body: StatusUpdate, db: Session = Depends(get_
     record = crud.update_status(db, record_id, body.status)
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
-    if body.status == FileStatus.PENDING and not (worker_state.active and worker_state.record_id == record_id):
-        worker_state.cancel_queued(record_id)
     return record
 
 
