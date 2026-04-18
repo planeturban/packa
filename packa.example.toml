@@ -110,11 +110,7 @@ video_args   = "-c:v hevc_videotoolbox -q:v 65"
 # video_args   = "-c:v hevc_nvenc -preset p7 -cq 18"
 
 [slave.worker]
-# Env: PACKA_SLAVE_BATCH_SIZE, PACKA_SLAVE_POLL_INTERVAL
-
-# Number of jobs to claim from master in a single request.
-# Increase to keep the slave busy when master latency is high.
-batch_size = 1
+# Env: PACKA_SLAVE_POLL_INTERVAL
 
 # Seconds between poll attempts when the job queue is empty.
 poll_interval = 5

@@ -137,7 +137,6 @@ output_dir = "/mnt/output"
 # encoders = ["libx265", "nvenc"]   # restrict the dashboard dropdown
 
 [slave.worker]
-batch_size    = 1   # jobs to claim per poll
 poll_interval = 5   # seconds between polls when queue is empty
 ```
 
@@ -153,7 +152,6 @@ poll_interval = 5   # seconds between polls when queue is empty
 | `PACKA_SLAVE_FFMPEG_BIN` | `slave.ffmpeg.bin` |
 | `PACKA_SLAVE_FFMPEG_OUTPUT_DIR` | `slave.ffmpeg.output_dir` |
 | `PACKA_SLAVE_FFMPEG_EXTRA_ARGS` | `slave.ffmpeg.extra_args` |
-| `PACKA_SLAVE_BATCH_SIZE` | `slave.worker.batch_size` |
 | `PACKA_SLAVE_POLL_INTERVAL` | `slave.worker.poll_interval` |
 | `PACKA_SLAVE_TLS_CERT` | `slave.tls.cert` |
 | `PACKA_SLAVE_TLS_KEY` | `slave.tls.key` |
@@ -250,6 +248,8 @@ Served at port 8080. If `username` and `password` are both set, a login page is 
 - Slave detail modal: live progress, encoder selector, full file history with encoder filter
 
 **Encoder badges** are colour-coded and appear on slave cards, in the detail modal, and in file lists. File tables can be filtered by encoder.
+
+**Queue size:** controls how many jobs the slave claims from master per poll. When greater than 1, multiple files are pre-fetched and marked `assigned` on the master while they wait in the slave's queue. Configurable from the slave detail modal and persisted in `slave.db`.
 
 **ffmpeg command:** while a conversion is running, clicking the active encoder badge in the slave modal reveals the exact ffmpeg command being used.
 

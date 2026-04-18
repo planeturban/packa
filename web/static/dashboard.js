@@ -170,6 +170,13 @@ function _renderDashFiles() {
   document.querySelectorAll('.dash-row-chk').forEach(c => {
     if (prevChecked.has(+c.value)) c.checked = true;
   });
+  const dashAllChk = document.querySelector('#dash-file-table .chk-all');
+  if (dashAllChk) {
+    const total   = document.querySelectorAll('.dash-row-chk').length;
+    const checked = document.querySelectorAll('.dash-row-chk:checked').length;
+    dashAllChk.checked       = total > 0 && checked === total;
+    dashAllChk.indeterminate = checked > 0 && checked < total;
+  }
   // Restore focus to search if it was active
   if (document.activeElement && document.activeElement.id === 'dash-search') {
     const el = document.getElementById('dash-search');
@@ -266,7 +273,7 @@ function _slaveCardHtml(s) {
     : s.unconfigured ? '<span class="badge badge-unconfigured">Unconfigured</span>'
     : s.sleeping ? '<span class="badge badge-sleeping">Sleeping</span>'
     : s.paused   ? '<span class="badge badge-paused">Paused</span>'
-    : s.state === 'processing' ? `<span class="badge badge-processing">${s.drain ? 'Finishing' : 'Converting'}</span>`
+    : s.state === 'processing' ? `<span class="badge badge-processing">${s.drain ? 'Draining' : 'Converting'}</span>`
     : s.drain    ? '<span class="badge badge-drain">Draining</span>'
     : '<span class="badge badge-idle">Idle</span>';
 
@@ -364,12 +371,18 @@ async function _doSlavePoll(host, port) {
     if (el) {
       const encSel = document.getElementById(`enc-${port}`);
       const savedEnc = encSel ? encSel.value : null;
+      const batchInp = document.getElementById(`batch-${port}`);
+      const savedBatch = batchInp ? batchInp.value : null;
       const cmdEl = document.getElementById(`ffcmd-${port}`);
       const cmdOpen = cmdEl ? cmdEl.style.display !== 'none' : false;
       el.innerHTML = _slaveStatusHtml(data.status, host, port);
       if (savedEnc) {
         const newSel = document.getElementById(`enc-${port}`);
         if (newSel) newSel.value = savedEnc;
+      }
+      if (savedBatch) {
+        const newInp = document.getElementById(`batch-${port}`);
+        if (newInp) newInp.value = savedBatch;
       }
       if (cmdOpen) {
         const newCmd = document.getElementById(`ffcmd-${port}`);
@@ -564,6 +577,13 @@ function _renderTable() {
     const encoderHtml = _encoderFilterHtml();
     filtersEl.innerHTML = statusHtml + encoderHtml;
   }
+  const tblAllChk = document.querySelector('#tbl .chk-all');
+  if (tblAllChk) {
+    const total   = document.querySelectorAll('.row-chk').length;
+    const checked = document.querySelectorAll('.row-chk:checked').length;
+    tblAllChk.checked       = total > 0 && checked === total;
+    tblAllChk.indeterminate = checked > 0 && checked < total;
+  }
   _updateSel();
 }
 
@@ -729,11 +749,34 @@ async function setSlaveEncoder(host, port) {
     return;
   }
   if (btn) btn.disabled = false;
-  // Refresh modal status immediately (badge + actions change)
   await _refreshSlaveStatus(host, port);
-  // Refresh dashboard data so the card is correct when the modal closes
   const r = await fetch('/data/dashboard');
   if (r.ok) _applyDashboard(await r.json());
+}
+
+async function saveBatchSize(host, port) {
+  const inp = document.getElementById(`batch-${port}`);
+  if (!inp) return;
+  const batch_size = Math.max(1, parseInt(inp.value) || 1);
+  inp.value = batch_size;
+  const btn = document.getElementById(`batch-save-${port}`);
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const encSel = document.getElementById(`enc-${port}`);
+    const encoder = encSel ? encSel.value : null;
+    if (!encoder) throw new Error('no encoder');
+    const r = await fetch('/data/slave/encoder', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({host, port, encoder, batch_size}),
+    });
+    if (!r.ok) throw new Error('failed');
+    if (btn) { btn.textContent = 'Saved'; setTimeout(() => { if (btn) btn.textContent = 'Save'; }, 1500); }
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Error — retry'; }
+    return;
+  }
+  if (btn) btn.disabled = false;
 }
 
 function _encoderSelect(encoder, host, port, unconfigured, availableEncoders, encoderLabels) {
@@ -787,8 +830,14 @@ function _slaveStatusHtml(st, host, port) {
       Select an encoder to activate this slave:
     </div>`;
   }
-  h += `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.8rem;font-size:.8rem;color:var(--text-dim)">
+  h += `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem;font-size:.8rem;color:var(--text-dim)">
     <span>Encoder</span>${_encoderSelect(st.encoder || 'libx265', host, port, st.unconfigured, st.available_encoders, st.encoder_labels)}
+  </div>`;
+  h += `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.8rem;font-size:.8rem;color:var(--text-dim)">
+    <span>Queue size</span>
+    <input id="batch-${port}" type="number" min="1" value="${st.batch_size || 1}"
+      style="width:4rem;padding:.25rem .45rem;border:1px solid var(--border-input);border-radius:4px;font-size:.8rem;font-family:inherit;background:var(--surface);color:var(--text)">
+    <button id="batch-save-${port}" class="btn-act" type="button" onclick="saveBatchSize('${_esc(host)}',${port})">Save</button>
   </div>`;
 
   if (st.state === 'processing') {

@@ -97,6 +97,9 @@ async def lifespan(app: FastAPI):
     worker_state.available_encoders = _config.ffmpeg.available_encoders
 
     _default_encoder = worker_state.available_encoders[0] if worker_state.available_encoders else "libx265"
+    stored_batch = get_setting("batch_size")
+    worker_state.batch_size = max(1, int(stored_batch)) if stored_batch else _config.worker.batch_size
+
     if get_setting("ready"):
         worker_state.encoder = get_setting("encoder") or _default_encoder
     elif get_setting("first_run"):
@@ -155,10 +158,12 @@ class SlaveStatus(BaseModel):
     available_encoders: list[str]
     encoder_labels: dict[str, str]
     current_cmd: str | None
+    batch_size: int
 
 
 class EncoderUpdate(BaseModel):
     encoder: str
+    batch_size: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +185,7 @@ def get_status():
         available_encoders=worker_state.available_encoders,
         encoder_labels={k: (f"{v.display_name} ({k})" if v.display_name else k) for k, v in worker_state.presets.items()},
         current_cmd=worker_state.current_cmd or None,
+        batch_size=worker_state.batch_size,
         progress=ProgressOut(
             percent=p.percent,
             speed=p.speed,
@@ -291,7 +297,7 @@ def wake_conversion():
 
 @app.get("/settings")
 def get_settings():
-    return {"encoder": worker_state.encoder}
+    return {"encoder": worker_state.encoder, "batch_size": worker_state.batch_size}
 
 
 @app.post("/settings")
@@ -305,10 +311,13 @@ def update_settings(body: EncoderUpdate):
     set_setting("encoder", body.encoder)
     set_setting("ready", "true")
     set_setting("first_run", "false")
+    if body.batch_size is not None:
+        worker_state.batch_size = max(1, body.batch_size)
+        set_setting("batch_size", str(worker_state.batch_size))
     if worker_state.unconfigured:
         worker_state.unconfigured = False
         worker_state.sleeping = False
         print(f"[slave] activated with encoder={body.encoder!r}")
     else:
         print(f"[slave] encoder changed to {body.encoder!r}")
-    return {"encoder": worker_state.encoder}
+    return {"encoder": worker_state.encoder, "batch_size": worker_state.batch_size}

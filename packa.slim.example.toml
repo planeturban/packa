@@ -43,7 +43,6 @@ video_args   = "-c:v libx265"
 # video_args   = "-c:v hevc_nvenc -preset p7 -cq 18"
 
 [slave.worker]
-batch_size    = 1
 poll_interval = 5
 
 # ---------------------------------------------------------------------------

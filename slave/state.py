@@ -39,6 +39,7 @@ class WorkerState:
         self.unconfigured: bool = False
         self.cancel_reason: str | None = None
         self.encoder: str = "libx265"
+        self.batch_size: int = 1
         self.current_cmd: str = ""
         self.presets: dict[str, EncoderPreset] = {}
         self.available_encoders: list[str] = ["libx265", "nvenc", "vaapi", "videotoolbox"]

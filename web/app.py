@@ -367,9 +367,12 @@ async def data_slave_encoder(request: Request):
     host = body.get("host")
     port = body.get("port")
     encoder = body.get("encoder")
+    payload: dict = {"encoder": encoder}
+    if body.get("batch_size") is not None:
+        payload["batch_size"] = max(1, int(body["batch_size"]))
     async with httpx.AsyncClient(timeout=5) as client:
         try:
-            r = await client.post(f"{_slave_url(host, port)}/settings", json={"encoder": encoder})
+            r = await client.post(f"{_slave_url(host, port)}/settings", json=payload)
             r.raise_for_status()
             return JSONResponse(r.json())
         except Exception as exc:

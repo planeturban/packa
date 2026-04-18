@@ -31,7 +31,7 @@ async def poller_loop(
         await asyncio.sleep(poll_interval)
         if worker_state.sleeping or worker_state.queued > 0 or worker_state.active or worker_state.drain:
             continue
-        await _claim_and_enqueue(master_url, slave_config_id, path_prefix, batch_size, output_dir)
+        await _claim_and_enqueue(master_url, slave_config_id, path_prefix, worker_state.batch_size, output_dir)
 
 
 async def _claim_and_enqueue(
