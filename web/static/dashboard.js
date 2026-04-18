@@ -807,7 +807,7 @@ function _slaveStatusHtml(st, host, port) {
       Select an encoder to activate this slave:
     </div>`;
   }
-  h += `<div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.8rem;font-size:.8rem;color:var(--text-dim)">
+  h += `<div style="display:flex;flex-wrap:nowrap;align-items:center;gap:.75rem;margin-bottom:.8rem;font-size:.8rem;color:var(--text-dim)">
     <span>Encoder</span>${_encoderSelect(st.encoder || 'libx265', host, port, st.unconfigured, st.available_encoders, st.encoder_labels)}
     <span style="margin-left:.25rem">Queue size</span>
     <input id="batch-${port}" type="number" min="1" value="${st.batch_size || 1}"
