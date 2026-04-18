@@ -1,5 +1,4 @@
 *.db
-__pycache__/
+**/__pycache__/
 *.pyc
-shared/__pycache__/config.cpython-313.pyc
 localtodo
