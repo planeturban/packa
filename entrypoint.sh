@@ -6,13 +6,13 @@ CONFIG=${PACKA_CONFIG:-/data/packa.toml}
 
 case "$ROLE" in
   master)
-    exec python -m master.master --config "$CONFIG" --bind any
+    exec python3 -m master.master --config "$CONFIG" --bind any
     ;;
   slave)
-    exec python -m slave.main --config "$CONFIG" --bind any
+    exec python3 -m slave.main --config "$CONFIG" --bind any
     ;;
   web)
-    exec python -m web.main --config "$CONFIG" --bind any
+    exec python3 -m web.main --config "$CONFIG" --bind any
     ;;
   *)
     echo "Unknown role: $ROLE. Must be master, slave, or web." >&2

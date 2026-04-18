@@ -1,7 +1,6 @@
 services:
   master:
-    build: .
-    # PACKA_ROLE defaults to master — no override needed.
+    image: planeturban/packa
     ports:
       - "9000:9000"
     volumes:
@@ -11,16 +10,16 @@ services:
     restart: unless-stopped
 
   slave:
-    build: .
+    image: planeturban/packa
     environment:
       PACKA_ROLE: slave
+      PACKA_SLAVE_MASTER_HOST: master
+      PACKA_SLAVE_ADVERTISE_HOST: slave
     ports:
       - "8000:8000"
     volumes:
       - ./packa.toml:/data/packa.toml:ro
       - slave-data:/data
-      # Mount the source and output directories that ffmpeg reads/writes.
-      # Adjust these paths to match your setup.
       - /mnt/data:/mnt/data:ro
       - /mnt/output:/mnt/output
     depends_on:
@@ -28,9 +27,10 @@ services:
     restart: unless-stopped
 
   web:
-    build: .
+    image: planeturban/packa
     environment:
       PACKA_ROLE: web
+      PACKA_WEB_MASTER_HOST: master
     ports:
       - "8080:8080"
     volumes:

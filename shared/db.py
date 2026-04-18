@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 _MIGRATE_COLS = [
     ("file_size", "INTEGER"),
     ("cancel_reason", "VARCHAR(32)"),
+    ("encoder", "VARCHAR(64)"),
 ]
 
 

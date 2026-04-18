@@ -29,6 +29,7 @@ class FileRecordOut(BaseModel):
     cancel_reason: str | None
     pid: int | None
     output_size: int | None
+    encoder: str | None
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime

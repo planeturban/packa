@@ -39,6 +39,7 @@ class WorkerState:
         self.unconfigured: bool = False
         self.cancel_reason: str | None = None
         self.encoder: str = "libx265"
+        self.current_cmd: str = ""
         self.presets: dict[str, EncoderPreset] = {}
         self.available_encoders: list[str] = ["libx265", "nvenc", "vaapi", "videotoolbox"]
 
@@ -55,6 +56,7 @@ class WorkerState:
         self.proc = None
         self.paused = False
         self.cancel_reason = None
+        self.current_cmd = ""
 
     @property
     def queued(self) -> int:

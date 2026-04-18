@@ -32,8 +32,8 @@ class ScanConfig:
 @dataclass
 class EncoderPreset:
     """FFmpeg arguments for one encoder preset."""
-    description: str = ""  # label shown in the web dashboard dropdown
-    video_args: str = ""   # video codec args (e.g. "-c:v hevc_nvenc -preset p5 -cq 24")
+    display_name: str = ""  # human-readable label for the web dashboard dropdown
+    video_args: str = ""    # video codec args (e.g. "-c:v hevc_nvenc -preset p5 -cq 24")
 
 
 @dataclass
@@ -132,52 +132,26 @@ def load_slave(config_path: str | None) -> Config:
         paths.get("prefix", "") or master_prefix,
     )
 
-    vaapi_device = _env(
-        "PACKA_SLAVE_FFMPEG_VAAPI_DEVICE",
-        ffmpeg_data.get("vaapi_device", "/dev/dri/renderD128"),
-    )
-
     encoder_data: dict = ffmpeg_data.get("encoder", {})
 
-    _defaults: dict[str, EncoderPreset] = {
-        "libx265":      EncoderPreset(description="Software (libx265)",
-                            video_args="-c:v libx265"),
-        "nvenc":        EncoderPreset(description="NVIDIA (NVENC)",
-                            video_args="-c:v hevc_nvenc -preset p5 -cq 24"),
-        "vaapi":        EncoderPreset(description="Intel/AMD (VAAPI)",
-                            video_args=(
-                                f"-init_hw_device vaapi=va:{vaapi_device}"
-                                " -filter_hw_device va"
-                                " -vf format=nv12,hwupload"
-                                " -c:v hevc_vaapi -rc_mode ICQ -global_quality 23"
-                            )),
-        "videotoolbox": EncoderPreset(description="Apple Silicon (VideoToolbox)",
-                            video_args="-c:v hevc_videotoolbox -q:v 65"),
-    }
-
-    # Built-in presets, overridden by [slave.ffmpeg.encoder.<name>] sections
-    presets: dict[str, EncoderPreset] = {
-        name: EncoderPreset(
-            description=encoder_data.get(name, {}).get("description", default.description),
-            video_args=encoder_data.get(name, {}).get("video_args", default.video_args),
-        )
-        for name, default in _defaults.items()
-    }
-    # Custom encoders defined in config that aren't built-in
-    for name, values in encoder_data.items():
-        if name not in presets:
-            presets[name] = EncoderPreset(
-                description=values.get("description", ""),
+    # Presets are entirely config-driven; only what's in [slave.ffmpeg.encoder.*] is loaded.
+    # If nothing is configured, fall back to a bare libx265 preset so the slave can run.
+    if encoder_data:
+        presets: dict[str, EncoderPreset] = {
+            name: EncoderPreset(
+                display_name=values.get("display_name", ""),
                 video_args=values.get("video_args", ""),
             )
+            for name, values in encoder_data.items()
+        }
+    else:
+        presets = {"libx265": EncoderPreset(video_args="-c:v libx265")}
 
-    # explicit list > defined encoder sections > all built-in defaults
+    # explicit list > keys from defined encoder sections
     if ffmpeg_data.get("encoders"):
         available_encoders: list[str] = ffmpeg_data["encoders"]
-    elif encoder_data:
-        available_encoders = list(encoder_data.keys())
     else:
-        available_encoders = list(_defaults.keys())
+        available_encoders = list(presets.keys())
 
     return Config(
         bind=_env("PACKA_SLAVE_BIND", slave.get("bind", "localhost")),

@@ -154,6 +154,7 @@ class SlaveStatus(BaseModel):
     encoder: str
     available_encoders: list[str]
     encoder_labels: dict[str, str]
+    current_cmd: str | None
 
 
 class EncoderUpdate(BaseModel):
@@ -177,7 +178,8 @@ def get_status():
         unconfigured=worker_state.unconfigured,
         encoder=worker_state.encoder,
         available_encoders=worker_state.available_encoders,
-        encoder_labels={k: (v.description or k) for k, v in worker_state.presets.items()},
+        encoder_labels={k: (f"{v.display_name} ({k})" if v.display_name else k) for k, v in worker_state.presets.items()},
+        current_cmd=worker_state.current_cmd or None,
         progress=ProgressOut(
             percent=p.percent,
             speed=p.speed,

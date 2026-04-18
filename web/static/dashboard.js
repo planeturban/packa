@@ -1,4 +1,16 @@
 // ── Shared constants ──────────────────────────────────────────────────────
+const _ENC_COLORS = {
+  libx265:      { bg:'#e3f2fd', color:'#1565c0' },
+  nvenc:        { bg:'#e8f5e9', color:'#2e7d32' },
+  vaapi:        { bg:'#fff3e0', color:'#e65100' },
+  videotoolbox: { bg:'#f3e5f5', color:'#6a1b9a' },
+};
+function _encBadge(enc) {
+  if (!enc) return '<span style="color:#aaa">—</span>';
+  const c = _ENC_COLORS[enc] || { bg:'#f5f5f5', color:'#666' };
+  return `<span style="background:${c.bg};color:${c.color};padding:.1rem .35rem;border-radius:3px;font-size:.7rem;font-weight:700;white-space:nowrap">${_esc(enc)}</span>`;
+}
+
 const _ST_COLORS = {
   pending:    { bg:'#f5f5f5', color:'#666' },
   assigned:   { bg:'#fff3e0', color:'#e65100' },
@@ -268,6 +280,8 @@ function _slaveCardHtml(s) {
 
   if (s.state !== 'unreachable') {
     h += `<div class="meta-row"><span>Queue</span><span>${s.queued} job${s.queued!==1?'s':''}</span></div>`;
+    if (!s.unconfigured)
+      h += `<div class="meta-row"><span>Encoder</span><span>${_encBadge(s.encoder)}</span></div>`;
   }
 
   if (s.state === 'processing' && s.progress) {
@@ -348,13 +362,18 @@ async function _doSlavePoll(host, port) {
     const data = await r.json();
     const el = document.getElementById('slave-status');
     if (el) {
-      // Preserve whatever the user has selected in the encoder dropdown
       const encSel = document.getElementById(`enc-${port}`);
       const savedEnc = encSel ? encSel.value : null;
+      const cmdEl = document.getElementById(`ffcmd-${port}`);
+      const cmdOpen = cmdEl ? cmdEl.style.display !== 'none' : false;
       el.innerHTML = _slaveStatusHtml(data.status, host, port);
       if (savedEnc) {
         const newSel = document.getElementById(`enc-${port}`);
         if (newSel) newSel.value = savedEnc;
+      }
+      if (cmdOpen) {
+        const newCmd = document.getElementById(`ffcmd-${port}`);
+        if (newCmd) newCmd.style.display = 'block';
       }
     }
     // Refresh the file table if the list has changed
@@ -380,13 +399,14 @@ async function _refreshSlaveStatus(host, port) {
 }
 
 // ── Modal state ───────────────────────────────────────────────────────────
-let _ctx          = null;  // { type:'master', status } | { type:'slave', host, port, name }
-let _allFiles     = [];    // full fetched list
-let _cols         = [];    // column definitions for current table
-let _page         = 1;
-let _query        = '';
-let _statusFilter = null;  // null = all, or a status string (slave modal only)
-const _PER_PAGE   = 50;
+let _ctx           = null;  // { type:'master', status } | { type:'slave', host, port, name }
+let _allFiles      = [];    // full fetched list
+let _cols          = [];    // column definitions for current table
+let _page          = 1;
+let _query         = '';
+let _statusFilter  = null;  // null = all, or a status string (slave modal only)
+let _encoderFilter = null;  // null = all, or an encoder string
+const _PER_PAGE    = 50;
 
 // ── Modal open/close ──────────────────────────────────────────────────────
 function _setModal(title, html) {
@@ -449,6 +469,27 @@ function _setStatusFilter(s) {
   _renderTable();
 }
 
+function _setEncoderFilter(e) {
+  _encoderFilter = (e === _encoderFilter) ? null : e;
+  _page = 1;
+  _renderTable();
+}
+
+function _encoderFilterHtml() {
+  const encoders = [...new Set(_allFiles.map(f => f.encoder).filter(Boolean))].sort();
+  if (!encoders.length) return '';
+  const base   = 'border:none;border-radius:3px;font-size:.68rem;font-weight:700;cursor:pointer;font-family:inherit;padding:.18rem .52rem;';
+  const shadow = 'box-shadow:inset 0 0 0 1.5px currentColor;';
+  let h = '<div style="display:flex;gap:.3rem;flex-wrap:wrap;margin:.2rem 0 .35rem">';
+  for (const enc of encoders) {
+    const c = _ENC_COLORS[enc] || { bg:'#f5f5f5', color:'#666' };
+    const active = _encoderFilter === enc;
+    h += `<button onclick="_setEncoderFilter('${_esc(enc)}')" style="${base}background:${c.bg};color:${c.color};${active?shadow:''}">${_esc(enc)}</button>`;
+  }
+  h += '</div>';
+  return h;
+}
+
 function _statusFilterHtml() {
   const base = 'border:none;border-radius:3px;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;font-family:inherit;padding:.18rem .52rem;';
   const shadow = 'box-shadow:inset 0 0 0 1.5px currentColor;';
@@ -466,7 +507,8 @@ function _statusFilterHtml() {
 // ── Search & pagination ───────────────────────────────────────────────────
 function _filtered() {
   let result = _allFiles;
-  if (_statusFilter) result = result.filter(f => f.status === _statusFilter);
+  if (_statusFilter)  result = result.filter(f => f.status === _statusFilter);
+  if (_encoderFilter) result = result.filter(f => f.encoder === _encoderFilter);
   if (_query) {
     const q = _query.toLowerCase();
     result = result.filter(f =>
@@ -517,7 +559,11 @@ function _renderTable() {
 
   document.getElementById('tbl').innerHTML = h;
   const filtersEl = document.getElementById('status-filters');
-  if (filtersEl) filtersEl.innerHTML = (_ctx && _ctx.type === 'slave') ? _statusFilterHtml() : '';
+  if (filtersEl) {
+    const statusHtml  = (_ctx && _ctx.type === 'slave') ? _statusFilterHtml() : '';
+    const encoderHtml = _encoderFilterHtml();
+    filtersEl.innerHTML = statusHtml + encoderHtml;
+  }
   _updateSel();
 }
 
@@ -586,7 +632,7 @@ function _shell() {
 // ── Master files modal ────────────────────────────────────────────────────
 async function showFiles(status) {
   _ctx = { type:'master', status };
-  _page = 1; _query = ''; _allFiles = [];
+  _page = 1; _query = ''; _allFiles = []; _statusFilter = null; _encoderFilter = null;
   _cols = fileColumns(status);
   _setModal(cap(status) + ' files',
     _shell() + '<p class="modal-note" style="margin-top:.5rem">Loading…</p>');
@@ -617,13 +663,15 @@ function fileColumns(status) {
   const finished = { label:'Finished', cell: f => fmtDate(f.finished_at) };
   const duration = { label:'Duration', cell: f => fmtDuration(f.started_at, f.finished_at) };
   const output   = { label:'Output',   cell: f => fmtBytes(f.output_size) };
+  const encoder  = { label:'Encoder',  cell: f => _encBadge(f.encoder) };
   switch (status) {
     case 'pending':    return [id, name, path, added];
     case 'assigned':   return [id, name, slave, path, {label:'Claimed', cell: f => fmtDate(f.updated_at)}];
-    case 'processing': return [id, name, slave, path, started];
-    case 'complete':   return [id, name, slave, output, duration, finished];
-    case 'discarded':  return [id, name, slave, output, duration, finished];
-    case 'error':      return [id, name, slave, path, started, finished];
+    case 'processing': return [id, name, slave, encoder, path, started];
+    case 'complete':   return [id, name, slave, encoder, output, duration, finished];
+    case 'discarded':  return [id, name, slave, finished];
+    case 'cancelled':  return [id, name, slave, encoder, output, duration, finished];
+    case 'error':      return [id, name, slave, encoder, path, started, finished];
     default:           return [id, name, path, added];
   }
 }
@@ -631,11 +679,12 @@ function fileColumns(status) {
 // ── Slave detail modal ────────────────────────────────────────────────────
 async function showSlave(host, port, name) {
   _ctx = { type:'slave', host, port, name };
-  _page = 1; _query = ''; _allFiles = []; _statusFilter = null;
+  _page = 1; _query = ''; _allFiles = []; _statusFilter = null; _encoderFilter = null;
   _cols = [
     { label:'ID',       cell: f => f.id },
     { label:'Filename', cell: f => `<span class="modal-fname">${f.file_name}</span>` },
     { label:'Status',   cell: f => stBadge(f.status, f) },
+    { label:'Encoder',  cell: f => _encBadge(f.encoder) },
     { label:'Source',   cell: f => fmtBytes(f.file_size) },
     { label:'Output',   cell: f => fmtBytes(f.output_size) },
     { label:'Duration', cell: f => fmtDuration(f.started_at, f.finished_at) },
@@ -741,6 +790,16 @@ function _slaveStatusHtml(st, host, port) {
   h += `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.8rem;font-size:.8rem;color:var(--text-dim)">
     <span>Encoder</span>${_encoderSelect(st.encoder || 'libx265', host, port, st.unconfigured, st.available_encoders, st.encoder_labels)}
   </div>`;
+
+  if (st.state === 'processing') {
+    const cmdId = `ffcmd-${port}`;
+    const cmdBtn = st.current_cmd
+      ? ` <button onclick="document.getElementById('${cmdId}').style.display=document.getElementById('${cmdId}').style.display==='none'?'block':'none'"
+             style="border:none;background:none;color:var(--text-dim);font-size:.7rem;cursor:pointer;padding:.1rem .3rem;text-decoration:underline">cmd</button>
+           <pre id="${cmdId}" style="display:none;font-size:.7rem;white-space:pre-wrap;word-break:break-all;background:var(--surface-2);border:1px solid var(--border-2);border-radius:4px;padding:.5rem;margin:.4rem 0 0;color:var(--text)">${_esc(st.current_cmd)}</pre>`
+      : '';
+    h += `<div style="font-size:.8rem;color:var(--text-dim);margin-bottom:.6rem">Active: ${_encBadge(st.encoder)}${cmdBtn}</div>`;
+  }
 
   if (st.state === 'processing' && st.progress) {
     const p = st.progress;

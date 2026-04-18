@@ -174,6 +174,7 @@ async def _report_result_to_master(
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
     cancel_reason: str | None = None,
+    encoder: str | None = None,
 ) -> None:
     if not worker_state.master_url:
         return
@@ -189,6 +190,8 @@ async def _report_result_to_master(
         body["finished_at"] = finished_at.isoformat()
     if cancel_reason is not None:
         body["cancel_reason"] = cancel_reason
+    if encoder is not None:
+        body["encoder"] = encoder
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.patch(url, json=body)
@@ -241,7 +244,8 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
 
         cmd = _build_cmd(ffmpeg_bin, job.file_path, output_path, extra_args,
                          worker_state.encoder, worker_state.presets)
-        print(f"[worker] record {job.record_id} encoder={worker_state.encoder!r} → {' '.join(cmd)}")
+        worker_state.current_cmd = ' '.join(cmd)
+        print(f"[worker] record {job.record_id} encoder={worker_state.encoder!r} → {worker_state.current_cmd}")
 
         started_at = _utcnow()
         proc = await asyncio.create_subprocess_exec(
@@ -256,6 +260,7 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
         if record:
             record.pid = proc.pid
             record.status = FileStatus.PROCESSING
+            record.encoder = worker_state.encoder
             record.started_at = started_at
             db.commit()
         print(f"[worker] record {job.record_id} pid={proc.pid}  duration={duration_s}s  source={source_size}B")
@@ -280,12 +285,13 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                     pid=proc.pid, output_size=None,
                     started_at=started_at, finished_at=finished_at,
                     cancel_reason=cancel_reason,
+                    encoder=worker_state.encoder,
                 )
                 print(f"[worker] record {job.record_id} cancelled ({cancel_reason})")
                 await _report_result_to_master(
                     job.record_id, FileStatus.CANCELLED,
                     pid=proc.pid, started_at=started_at, finished_at=finished_at,
-                    cancel_reason=cancel_reason,
+                    cancel_reason=cancel_reason, encoder=worker_state.encoder,
                 )
             else:
                 update_conversion_result(
@@ -293,6 +299,7 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                     status=FileStatus.ERROR,
                     pid=proc.pid, output_size=None,
                     started_at=started_at, finished_at=finished_at,
+                    encoder=worker_state.encoder,
                 )
                 print(f"[worker] record {job.record_id} error (exit {proc.returncode}):")
                 for line in stderr_output.splitlines():
@@ -300,6 +307,7 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                 await _report_result_to_master(
                     job.record_id, FileStatus.ERROR,
                     pid=proc.pid, started_at=started_at, finished_at=finished_at,
+                    encoder=worker_state.encoder,
                 )
             return
 
@@ -313,6 +321,7 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                 pid=proc.pid, output_size=output_size,
                 started_at=started_at, finished_at=finished_at,
                 cancel_reason="auto",
+                encoder=worker_state.encoder,
             )
             print(
                 f"[worker] record {job.record_id} cancelled — "
@@ -322,7 +331,7 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                 job.record_id, FileStatus.CANCELLED,
                 pid=proc.pid, output_size=output_size,
                 started_at=started_at, finished_at=finished_at,
-                cancel_reason="auto",
+                cancel_reason="auto", encoder=worker_state.encoder,
             )
         else:
             update_conversion_result(
@@ -330,6 +339,7 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                 status=FileStatus.COMPLETE,
                 pid=proc.pid, output_size=output_size,
                 started_at=started_at, finished_at=finished_at,
+                encoder=worker_state.encoder,
             )
             print(
                 f"[worker] record {job.record_id} complete — "
@@ -340,6 +350,7 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                 job.record_id, FileStatus.COMPLETE,
                 pid=proc.pid, output_size=output_size,
                 started_at=started_at, finished_at=finished_at,
+                encoder=worker_state.encoder,
             )
 
     except Exception as exc:

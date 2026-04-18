@@ -30,16 +30,17 @@ output_dir = "/mnt/output"
 # extra_args = ""
 # encoders   = ["libx265", "nvenc"]   # restrict dashboard dropdown
 
-# Override built-in encoder args or add custom encoders:
-# [slave.ffmpeg.encoder.vaapi]
-# video_args = "-init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va -vf format=nv12,hwupload -c:v hevc_vaapi -rc_mode ICQ -global_quality 23"
+[slave.ffmpeg.encoder.libx265]
+display_name = "Software"
+video_args   = "-c:v libx265"
 
 # [slave.ffmpeg.encoder.videotoolbox]
-# video_args = "-c:v hevc_videotoolbox -q:v 65"
+# display_name = "Apple"
+# video_args   = "-c:v hevc_videotoolbox -q:v 65"
 
 # [slave.ffmpeg.encoder.nvenc_hq]
-# description = "NVIDIA high quality"
-# video_args  = "-c:v hevc_nvenc -preset p7 -cq 18"
+# display_name = "NVIDIA HQ"
+# video_args   = "-c:v hevc_nvenc -preset p7 -cq 18"
 
 [slave.worker]
 batch_size    = 1

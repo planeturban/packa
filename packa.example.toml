@@ -66,8 +66,7 @@ id = "storage-01"
 prefix = "/mnt/files/"
 
 [slave.ffmpeg]
-# Env: PACKA_SLAVE_FFMPEG_BIN, PACKA_SLAVE_FFMPEG_OUTPUT_DIR, PACKA_SLAVE_FFMPEG_EXTRA_ARGS,
-#      PACKA_SLAVE_FFMPEG_ENCODER, PACKA_SLAVE_FFMPEG_VAAPI_DEVICE
+# Env: PACKA_SLAVE_FFMPEG_BIN, PACKA_SLAVE_FFMPEG_OUTPUT_DIR, PACKA_SLAVE_FFMPEG_EXTRA_ARGS
 
 bin        = "ffmpeg"
 output_dir = "/mnt/output"
@@ -78,35 +77,37 @@ output_dir = "/mnt/output"
 # extra_args = ""
 
 # Restrict which encoders appear in the dashboard dropdown.
-# Defaults to all defined encoders. Useful when only certain hardware is available.
+# Defaults to all defined encoders.
 # encoders = ["libx265", "nvenc"]
 
-# ── Per-encoder overrides ─────────────────────────────────────────────────────
-# Four encoders are built-in with sensible defaults. Define a section only to
-# override video_args / description, or to add a custom encoder.
+# ── Encoder definitions ───────────────────────────────────────────────────────
+# Each [slave.ffmpeg.encoder.<key>] section defines one encoder.
+# Only the encoders you define here will appear in the dashboard dropdown.
+# If no encoders are defined, libx265 is used as a bare fallback.
 #
-# description — label shown in the dashboard dropdown (falls back to the key name)
-# video_args  — replaces the built-in codec flags entirely
-#
-# VAAPI device can be overridden via PACKA_SLAVE_FFMPEG_VAAPI_DEVICE (default: /dev/dri/renderD128)
-# or by setting video_args manually in [slave.ffmpeg.encoder.vaapi].
+# display_name — optional human-readable label; shown as "display_name (key)" in the dropdown
+# video_args   — ffmpeg video codec arguments
 
-# [slave.ffmpeg.encoder.libx265]
-# video_args = "-c:v libx265"
+[slave.ffmpeg.encoder.libx265]
+display_name = "Software"
+video_args   = "-c:v libx265"
 
-# [slave.ffmpeg.encoder.nvenc]
-# video_args = "-c:v hevc_nvenc -preset p5 -cq 24"
+[slave.ffmpeg.encoder.nvenc]
+display_name = "NVIDIA"
+video_args   = "-c:v hevc_nvenc -preset p5 -cq 24"
 
-# [slave.ffmpeg.encoder.vaapi]
-# video_args = "-init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va -vf format=nv12,hwupload -c:v hevc_vaapi -rc_mode ICQ -global_quality 23"
+[slave.ffmpeg.encoder.vaapi]
+display_name = "Intel/AMD"
+video_args   = "-init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va -vf format=nv12,hwupload -c:v hevc_vaapi -rc_mode ICQ -global_quality 23"
 
-# [slave.ffmpeg.encoder.videotoolbox]
-# video_args = "-c:v hevc_videotoolbox -q:v 65"
+[slave.ffmpeg.encoder.videotoolbox]
+display_name = "Apple"
+video_args   = "-c:v hevc_videotoolbox -q:v 65"
 
-# Custom encoder example — appears automatically in the dashboard dropdown:
+# Custom encoder example:
 # [slave.ffmpeg.encoder.nvenc_hq]
-# description = "NVIDIA high quality"
-# video_args  = "-c:v hevc_nvenc -preset p7 -cq 18"
+# display_name = "NVIDIA HQ"
+# video_args   = "-c:v hevc_nvenc -preset p7 -cq 18"
 
 [slave.worker]
 # Env: PACKA_SLAVE_BATCH_SIZE, PACKA_SLAVE_POLL_INTERVAL

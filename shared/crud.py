@@ -70,6 +70,7 @@ def update_conversion_result(
     started_at: datetime | None,
     finished_at: datetime | None,
     cancel_reason: str | None = None,
+    encoder: str | None = None,
 ) -> FileRecord | None:
     record = get_file_record(db, record_id)
     if record:
@@ -79,6 +80,8 @@ def update_conversion_result(
         record.started_at = started_at
         record.finished_at = finished_at
         record.cancel_reason = cancel_reason
+        if encoder is not None:
+            record.encoder = encoder
         db.commit()
         db.refresh(record)
     return record
