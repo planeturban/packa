@@ -58,6 +58,23 @@ pip install -r requirements.txt
 
 Requires Python 3.11+. ffmpeg and ffprobe must be installed on slave nodes.
 
+### Docker
+
+A single image covers all three services. Set `PACKA_ROLE` to select which one to run (defaults to `master`).
+
+```bash
+docker build -f Docker/Dockerfile -t packa .
+docker run -e PACKA_ROLE=slave -v /path/to/packa.toml:/data/packa.toml packa
+```
+
+Or use the provided compose file:
+
+```bash
+docker compose -f Docker/docker-compose.yml up
+```
+
+The compose file mounts `packa.toml` from the project root into each container and sets `PACKA_ROLE` per service.
+
 ---
 
 ## Configuration
@@ -119,12 +136,8 @@ prefix = "/mnt/files/"  # prepended to relative paths received from master
 [slave.ffmpeg]
 bin        = "ffmpeg"
 output_dir = "/mnt/output"   # directory for converted files; leave empty to disable ffmpeg
-extra_args = ""              # extra ffmpeg arguments (appended after video codec args)
-encoder    = "libx265"       # default encoder: libx265 | nvenc | vaapi | videotoolbox
-                             # can also be changed at runtime from the web dashboard
-# vaapi_device = "/dev/dri/renderD128"   # render device for vaapi encoder
-# encoders = ["libx265", "videotoolbox"] # encoders shown in the web dashboard dropdown
-                                         # defaults to all four if omitted
+# extra_args = ""            # extra ffmpeg arguments, appended after video codec args
+# encoders = ["libx265", "videotoolbox"]  # restrict the dashboard dropdown; defaults to all defined
 
 [slave.worker]
 batch_size    = 1   # number of jobs to claim from master per poll
@@ -133,29 +146,37 @@ poll_interval = 5   # seconds between poll attempts when queue is empty
 
 #### Per-encoder ffmpeg argument overrides
 
-Each encoder has built-in defaults. Add a `[slave.ffmpeg.<name>]` section to override for this machine only — omit any section to use the defaults.
+Four encoders are built-in with sensible defaults. Add a `[slave.ffmpeg.encoder.<name>]` section to override for this machine, or define entirely new encoders — they appear automatically in the dashboard dropdown.
+
+The active encoder at startup is the first entry in `available_encoders` (i.e. the first defined encoder). It can be changed at runtime from the web dashboard; the choice is persisted to `slave.db`.
 
 | Key | Description |
 |-----|-------------|
-| `pre_input` | Arguments inserted before `-i` (e.g. hardware device init) |
-| `video_args` | Video codec arguments replacing the encoder's default flags |
+| `description` | Label shown in the dashboard dropdown (falls back to the key name) |
+| `video_args` | Video codec arguments, replacing the encoder's built-in defaults |
 
 ```toml
 # Built-in defaults — shown here so you can copy and adjust:
 
-[slave.ffmpeg.libx265]
+[slave.ffmpeg.encoder.libx265]
 video_args = "-c:v libx265"
 
-[slave.ffmpeg.nvenc]
+[slave.ffmpeg.encoder.nvenc]
 video_args = "-c:v hevc_nvenc -preset p5 -cq 24"
 
-[slave.ffmpeg.vaapi]
-pre_input  = "-vaapi_device /dev/dri/renderD128"
-video_args = "-vf format=nv12,hwupload -c:v hevc_vaapi -rc_mode ICQ -global_quality 23"
+[slave.ffmpeg.encoder.vaapi]
+video_args = "-init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va -vf format=nv12,hwupload -c:v hevc_vaapi -rc_mode ICQ -global_quality 23"
 
-[slave.ffmpeg.videotoolbox]
+[slave.ffmpeg.encoder.videotoolbox]
 video_args = "-c:v hevc_videotoolbox -q:v 65"
+
+# Custom encoder — appears in the dropdown automatically:
+[slave.ffmpeg.encoder.nvenc_hq]
+description = "NVIDIA high quality"
+video_args  = "-c:v hevc_nvenc -preset p7 -cq 18"
 ```
+
+The VAAPI render device can be changed via the `PACKA_SLAVE_FFMPEG_VAAPI_DEVICE` environment variable (default: `/dev/dri/renderD128`), or by setting `video_args` directly in `[slave.ffmpeg.encoder.vaapi]`.
 
 #### Slave environment variables
 
@@ -171,8 +192,7 @@ video_args = "-c:v hevc_videotoolbox -q:v 65"
 | `PACKA_SLAVE_FFMPEG_BIN` | `slave.ffmpeg.bin` |
 | `PACKA_SLAVE_FFMPEG_OUTPUT_DIR` | `slave.ffmpeg.output_dir` |
 | `PACKA_SLAVE_FFMPEG_EXTRA_ARGS` | `slave.ffmpeg.extra_args` |
-| `PACKA_SLAVE_FFMPEG_ENCODER` | `slave.ffmpeg.encoder` |
-| `PACKA_SLAVE_FFMPEG_VAAPI_DEVICE` | `slave.ffmpeg.vaapi_device` |
+| `PACKA_SLAVE_FFMPEG_VAAPI_DEVICE` | VAAPI render device used in the built-in `vaapi` preset |
 | `PACKA_SLAVE_BATCH_SIZE` | `slave.worker.batch_size` |
 | `PACKA_SLAVE_POLL_INTERVAL` | `slave.worker.poll_interval` |
 | `PACKA_SLAVE_TLS_CERT` | `slave.tls.cert` |
@@ -435,7 +455,13 @@ Response when idle:
   "sleeping": false,
   "unconfigured": false,
   "encoder": "libx265",
-  "available_encoders": ["libx265", "nvenc", "vaapi", "videotoolbox"]
+  "available_encoders": ["libx265", "nvenc", "vaapi", "videotoolbox"],
+  "encoder_labels": {
+    "libx265": "Software (libx265)",
+    "nvenc": "NVIDIA (NVENC)",
+    "vaapi": "Intel/AMD (VAAPI)",
+    "videotoolbox": "Apple Silicon (VideoToolbox)"
+  }
 }
 ```
 
@@ -451,6 +477,7 @@ Response while processing:
   "unconfigured": false,
   "encoder": "nvenc",
   "available_encoders": ["libx265", "nvenc"],
+  "encoder_labels": {"libx265": "Software (libx265)", "nvenc": "NVIDIA (NVENC)"},
   "progress": {
     "percent": 37.4,
     "speed": 1.82,
@@ -470,13 +497,13 @@ GET  /settings
 POST /settings
 ```
 
-`GET /settings` returns the current encoder and vaapi device.
+`GET /settings` returns the current encoder.
 
 `POST /settings` changes the encoder at runtime:
 ```json
 { "encoder": "nvenc" }
 ```
-Valid values: `libx265`, `nvenc`, `vaapi`, `videotoolbox`. The choice is persisted to the slave database and applied immediately. If the slave was in unconfigured state, this activates it and begins normal operation.
+Must be a key defined in the slave's encoder presets. The choice is persisted to the slave database and applied immediately. If the slave was in unconfigured state, this activates it and begins normal operation.
 
 #### Stop current conversion
 ```
@@ -559,10 +586,10 @@ The record ID is not included in the calculation.
 Slaves run ffmpeg using the configured encoder preset. The general form is:
 
 ```
-ffmpeg [pre_input] -i {file_path} -map 0 -c copy {video_args} [extra_args] -progress pipe:1 -nostats {output_path}
+ffmpeg -i {file_path} -map 0 -c copy {video_args} [extra_args] -progress pipe:1 -nostats {output_path}
 ```
 
-Where `pre_input` and `video_args` come from the active encoder preset (see [Per-encoder ffmpeg argument overrides](#per-encoder-ffmpeg-argument-overrides) above). `extra_args` is appended from `slave.ffmpeg.extra_args`.
+`video_args` comes from the active encoder preset (see [Per-encoder ffmpeg argument overrides](#per-encoder-ffmpeg-argument-overrides) above). `extra_args` is appended from `slave.ffmpeg.extra_args`.
 
 - `ffprobe` (derived from `ffmpeg.bin`) is run first to detect the video codec
 - If the file is already HEVC the record is immediately marked `discarded` — ffmpeg is never started
