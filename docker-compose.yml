@@ -1,6 +1,6 @@
 services:
   master:
-    image: planeturban/packa
+    image: ghcr.io/planeturban/packa
     ports:
       - "9000:9000"
     volumes:
@@ -10,7 +10,7 @@ services:
     restart: unless-stopped
 
   slave:
-    image: planeturban/packa
+    image: ghcr.io/planeturban/packa
     environment:
       PACKA_ROLE: slave
       PACKA_SLAVE_MASTER_HOST: master
@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
 
   web:
-    image: planeturban/packa
+    image: ghcr.io/planeturban/packa
     environment:
       PACKA_ROLE: web
       PACKA_WEB_MASTER_HOST: master
