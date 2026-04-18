@@ -10,8 +10,10 @@ enqueued for the worker.
 import asyncio
 
 import httpx
+from sqlalchemy.exc import IntegrityError
 
 from shared import crud
+from shared.models import FileStatus
 from shared.schemas import FileRecordCreate
 
 from .database import SessionLocal
@@ -58,17 +60,30 @@ async def _claim_and_enqueue(
     try:
         for job_data in jobs:
             full_path = path_prefix + job_data["file_path"] if path_prefix else job_data["file_path"]
-            record = crud.create_file_record(db, FileRecordCreate(
-                id=job_data["id"],
-                slave_id=slave_config_id,
-                file_name=job_data["file_name"],
-                file_path=full_path,
-                file_size=job_data.get("file_size"),
-                c_time=job_data["c_time"],
-                m_time=job_data["m_time"],
-                checksum=job_data["checksum"],
-            ))
-            if output_dir:
+            record = None
+            try:
+                record = crud.create_file_record(db, FileRecordCreate(
+                    id=job_data["id"],
+                    slave_id=slave_config_id,
+                    file_name=job_data["file_name"],
+                    file_path=full_path,
+                    file_size=job_data.get("file_size"),
+                    c_time=job_data["c_time"],
+                    m_time=job_data["m_time"],
+                    checksum=job_data["checksum"],
+                ))
+            except IntegrityError:
+                db.rollback()
+                record = crud.get_file_record(db, job_data["id"])
+                if record:
+                    record.status = FileStatus.PENDING
+                    record.pid = None
+                    record.started_at = None
+                    record.finished_at = None
+                    record.cancel_reason = None
+                    db.commit()
+                    print(f"[poller] re-claimed existing record {record.id} '{record.file_name}' — reset to pending")
+            if record and output_dir:
                 worker_state.enqueue(Job(record_id=record.id, file_path=record.file_path))
                 print(f"[poller] claimed record {record.id} '{record.file_name}'")
     finally:
