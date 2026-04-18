@@ -1,0 +1,57 @@
+# Packa — copy to packa.toml and adjust.
+
+[master]
+bind     = "localhost"   # "any" for 0.0.0.0
+api_port = 9000
+
+[master.paths]
+prefix = "/mnt/data/"   # stripped from paths before sending to slaves
+
+[master.scan]
+extensions = [".mkv", ".mp4", ".avi", ".mov"]
+# min_size = 0
+# max_size = 0
+
+# ---------------------------------------------------------------------------
+
+[slave]
+bind        = "localhost"
+api_port    = 8000
+master_host = "localhost"
+master_port = 9000
+id          = "storage-01"   # omit to auto-generate and persist a UUID
+
+[slave.paths]
+prefix = "/mnt/files/"   # prepended to paths from master; omit to reuse master prefix
+
+[slave.ffmpeg]
+bin        = "ffmpeg"
+output_dir = "/mnt/output"
+# extra_args = ""
+# encoders   = ["libx265", "nvenc"]   # restrict dashboard dropdown
+
+# Override built-in encoder args or add custom encoders:
+# [slave.ffmpeg.encoder.vaapi]
+# video_args = "-init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va -vf format=nv12,hwupload -c:v hevc_vaapi -rc_mode ICQ -global_quality 23"
+
+# [slave.ffmpeg.encoder.videotoolbox]
+# video_args = "-c:v hevc_videotoolbox -q:v 65"
+
+# [slave.ffmpeg.encoder.nvenc_hq]
+# description = "NVIDIA high quality"
+# video_args  = "-c:v hevc_nvenc -preset p7 -cq 18"
+
+[slave.worker]
+batch_size    = 1
+poll_interval = 5
+
+# ---------------------------------------------------------------------------
+
+[web]
+bind        = "localhost"
+port        = 8080
+master_host = "localhost"
+master_port = 9000
+username    = "admin"
+password    = "change-me"
+secret_key  = "change-me-use-a-long-random-string"

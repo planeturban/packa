@@ -1,7 +1,7 @@
 services:
   master:
     build: .
-    # Uses the default CMD from the Dockerfile — no override needed here.
+    # PACKA_ROLE defaults to master — no override needed.
     ports:
       - "9000:9000"
     volumes:
@@ -12,7 +12,8 @@ services:
 
   slave:
     build: .
-    command: python -m slave.main --config /data/packa.toml --bind any
+    environment:
+      PACKA_ROLE: slave
     ports:
       - "8000:8000"
     volumes:
@@ -28,7 +29,8 @@ services:
 
   web:
     build: .
-    command: python -m web.main --config /data/packa.toml --bind any
+    environment:
+      PACKA_ROLE: web
     ports:
       - "8080:8080"
     volumes:
