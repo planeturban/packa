@@ -44,6 +44,18 @@ class WorkerState:
         self.presets: dict[str, EncoderPreset] = {}
         self.available_encoders: list[str] = ["libx265", "nvenc", "vaapi", "videotoolbox"]
 
+        self._skip_ids: set[int] = set()
+
+    def cancel_queued(self, record_id: int) -> None:
+        """Mark a queued (not yet active) job to be skipped by the worker."""
+        self._skip_ids.add(record_id)
+
+    def should_skip(self, record_id: int) -> bool:
+        return record_id in self._skip_ids
+
+    def clear_skip(self, record_id: int) -> None:
+        self._skip_ids.discard(record_id)
+
     def start(self, record_id: int) -> None:
         self.active = True
         self.record_id = record_id

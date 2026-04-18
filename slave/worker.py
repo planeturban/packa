@@ -221,6 +221,13 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
     output_path = str(Path(output_dir) / Path(job.file_path).name)
     db = SessionLocal()
     try:
+        if worker_state.should_skip(job.record_id):
+            worker_state.clear_skip(job.record_id)
+            print(f"[worker] record {job.record_id} was cancelled while queued — skipping")
+            return
+        if not get_file_record(db, job.record_id):
+            print(f"[worker] record {job.record_id} no longer exists — skipping")
+            return
         source_size = Path(job.file_path).stat().st_size
 
         ffprobe = _ffprobe_bin(ffmpeg_bin)

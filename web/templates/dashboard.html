@@ -110,7 +110,7 @@
     {% elif slave.paused %}
       <span class="badge badge-paused">Paused</span>
     {% elif slave.state == "processing" %}
-      <span class="badge badge-processing">{% if slave.drain %}Finishing{% else %}Converting{% endif %}</span>
+      <span class="badge badge-processing">{% if slave.drain %}Draining{% else %}Converting{% endif %}</span>
     {% elif slave.drain %}
       <span class="badge badge-drain">Draining</span>
     {% else %}
