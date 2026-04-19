@@ -30,6 +30,8 @@ class FileRecordOut(BaseModel):
     pid: int | None
     output_size: int | None
     encoder: str | None
+    avg_fps: float | None
+    avg_speed: float | None
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime

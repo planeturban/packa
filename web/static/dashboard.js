@@ -356,11 +356,150 @@ function _esc(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// ── Statistics ────────────────────────────────────────────────────────────
+function _fmtRatio(r) {
+  return (r != null && r > 0) ? (r * 100).toFixed(1) + '%' : '—';
+}
+
+function _statsSummaryHtml(o) {
+  return `<div style="display:flex;gap:2.5rem;flex-wrap:wrap;margin-bottom:1.2rem">
+    ${[
+      [o.jobs,                                          'Converted'],
+      [fmtBytes(o.total_saved_bytes),                   'Saved'],
+      [_fmtRatio(o.avg_compression_ratio),              'Avg size ratio'],
+      [fmtEta(Math.round(o.avg_duration_seconds || 0)), 'Avg duration'],
+    ].map(([v, lbl]) => `<div>
+      <div style="font-size:1.4rem;font-weight:700;color:var(--text)">${v}</div>
+      <div style="font-size:.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">${lbl}</div>
+    </div>`).join('')}
+  </div>`;
+}
+
+function _fmtRange(lo, hi, fmt) {
+  if (lo == null && hi == null) return '—';
+  if (lo == null || hi == null) return fmt(lo ?? hi);
+  if (Math.abs(lo - hi) < 0.01) return fmt(lo);
+  return `${fmt(lo)} – ${fmt(hi)}`;
+}
+
+function _statsEncoderTableHtml(by_encoder) {
+  const encoders = Object.entries(by_encoder || {}).sort((a, b) => b[1].jobs - a[1].jobs);
+  if (!encoders.length) return '';
+  const hasFps   = encoders.some(([, e]) => e.min_fps   != null);
+  const hasSpeed = encoders.some(([, e]) => e.min_speed != null);
+  let h = `<table class="modal-table" style="margin-bottom:1.2rem"><thead><tr>
+    <th>Encoder</th><th>Jobs</th>
+    <th>Min dur</th><th>Max dur</th>
+    ${hasFps   ? '<th>Min fps</th><th>Max fps</th>'     : ''}
+    ${hasSpeed ? '<th>Min speed</th><th>Max speed</th>' : ''}
+    <th>Min ratio</th><th>Max ratio</th>
+    <th>Total saved</th>
+  </tr></thead><tbody>`;
+  for (const [enc, e] of encoders) {
+    const fmtDur = s => s != null ? fmtEta(Math.round(s)) : '—';
+    const fmtFps = v => v != null ? v.toFixed(1) : '—';
+    const fmtSpd = v => v != null ? v.toFixed(1) + '×' : '—';
+    const fmtRat = v => v != null ? _fmtRatio(v) : '—';
+    h += `<tr>
+      <td>${_encBadge(enc)}</td>
+      <td>${e.jobs}</td>
+      <td>${fmtDur(e.min_duration_seconds)}</td>
+      <td>${fmtDur(e.max_duration_seconds)}</td>
+      ${hasFps   ? `<td>${fmtFps(e.min_fps)}</td><td>${fmtFps(e.max_fps)}</td>`     : ''}
+      ${hasSpeed ? `<td>${fmtSpd(e.min_speed)}</td><td>${fmtSpd(e.max_speed)}</td>` : ''}
+      <td>${fmtRat(e.min_size_ratio)}</td>
+      <td>${fmtRat(e.max_size_ratio)}</td>
+      <td>${fmtBytes(e.total_saved_bytes)}</td>
+    </tr>`;
+  }
+  return h + '</tbody></table>';
+}
+
+function _statsDayChartHtml(by_day) {
+  const days = (by_day || []).slice(-60);
+  if (days.length < 2) return '';
+  const maxJobs = Math.max(...days.map(d => d.jobs), 1);
+  let h = `<div style="margin-top:.4rem">
+    <div style="font-size:.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.35rem">Jobs per day</div>
+    <div style="display:flex;align-items:flex-end;gap:2px;height:56px">`;
+  for (const d of days) {
+    const pct = Math.max(Math.round((d.jobs / maxJobs) * 100), 2);
+    h += `<div title="${d.date}: ${d.jobs} job${d.jobs !== 1 ? 's' : ''}, ${fmtBytes(d.saved_bytes)} saved"
+      style="flex:1;min-width:3px;height:${pct}%;background:#1976d2;opacity:.55;border-radius:2px 2px 0 0"></div>`;
+  }
+  return h + '</div></div>';
+}
+
+function _renderStats(data) {
+  const el = document.getElementById('stats-content');
+  if (!el) return;
+  if (!data || data.error) { el.innerHTML = '<p style="color:#aaa;font-size:.9rem">Could not load statistics.</p>'; return; }
+  const o = data.overall || {};
+  if (!o.jobs) { el.innerHTML = '<p style="color:#aaa;font-size:.9rem">No completed conversions yet.</p>'; return; }
+
+  let h = _statsSummaryHtml(o);
+
+  // Slave table (clickable rows)
+  const slaves = (data.by_slave || []).sort((a, b) => b.jobs - a.jobs);
+  if (slaves.length) {
+    h += `<table class="modal-table" style="margin-bottom:1.2rem">
+      <thead><tr><th>Slave</th><th>Jobs</th><th>Total saved</th><th>Avg size ratio</th><th>Avg duration</th></tr></thead>
+      <tbody>`;
+    for (const s of slaves) {
+      h += `<tr style="cursor:pointer" onclick="showSlaveStats('${_esc(s.slave_id)}')" title="Click for details">
+        <td>${_esc(s.slave_id)}</td>
+        <td>${s.jobs}</td>
+        <td>${fmtBytes(s.total_saved_bytes)}</td>
+        <td>${_fmtRatio(s.avg_compression_ratio ?? null)}</td>
+        <td>${fmtEta(Math.round(s.avg_duration_seconds || 0))}</td>
+      </tr>`;
+    }
+    h += '</tbody></table>';
+  }
+
+  h += _statsDayChartHtml(data.by_day);
+  el.innerHTML = h;
+}
+
+async function showSlaveStats(slaveId) {
+  _ctx = { type: 'slavestats', slave_id: slaveId };
+  _stopSlavePoll();
+  _setModal(slaveId + ' — Statistics', '<p class="modal-note">Loading…</p>');
+  try {
+    const r = await fetch(`/data/stats/slave?slave_id=${encodeURIComponent(slaveId)}`);
+    const data = await r.json();
+    if (!data || data.error) {
+      document.getElementById('modal-body').innerHTML = '<p class="modal-err">Failed to load.</p>';
+      return;
+    }
+    const o = data.overall || {};
+    if (!o.jobs) {
+      document.getElementById('modal-body').innerHTML = '<p style="color:#aaa;font-size:.9rem">No completed conversions for this slave.</p>';
+      return;
+    }
+    document.getElementById('modal-body').innerHTML =
+      _statsSummaryHtml(o) +
+      _statsEncoderTableHtml(data.by_encoder) +
+      _statsDayChartHtml(data.by_day);
+  } catch(e) {
+    document.getElementById('modal-body').innerHTML = '<p class="modal-err">Failed to load.</p>';
+  }
+}
+
+async function _fetchStats() {
+  try {
+    const r = await fetch('/data/stats');
+    if (r.ok) _renderStats(await r.json());
+  } catch(e) {}
+  setTimeout(_fetchStats, 30000);
+}
+
 // Seed file table from server-rendered data on first load
 _dashFiles = JSON.parse(document.getElementById('init-files').textContent).sort((a, b) => b.id - a.id);
 _renderDashFiles();
 
 _resumeRefresh();
+_fetchStats();
 
 // ── Slave status polling (500ms when slave modal is open) ─────────────────
 let _slaveStatusTimer = null;

@@ -419,6 +419,32 @@ async def data_slave_cancel(request: Request, host: str = Query(), port: int = Q
     return JSONResponse({"ok": True})
 
 
+@app.get("/data/stats")
+async def data_stats(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            r = await client.get(f"{_master_url()}/stats")
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+@app.get("/data/stats/slave")
+async def data_stats_slave(request: Request, slave_id: str = Query()):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            r = await client.get(f"{_master_url()}/stats/slave/{slave_id}")
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
 @app.post("/data/slave/encoder")
 async def data_slave_encoder(request: Request):
     if not _logged_in(request):

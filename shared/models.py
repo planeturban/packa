@@ -41,6 +41,8 @@ class FileRecord(Base):
     pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     encoder: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    avg_fps: Mapped[float | None] = mapped_column(Float, nullable=True)
+    avg_speed: Mapped[float | None] = mapped_column(Float, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

@@ -278,6 +278,8 @@ class FileResultUpdate(BaseModel):
     finished_at: datetime | None = None
     cancel_reason: str | None = None
     encoder: str | None = None
+    avg_fps: float | None = None
+    avg_speed: float | None = None
 
 
 class ScanStatus(BaseModel):
@@ -386,11 +388,23 @@ def update_file_result(record_id: int, body: FileResultUpdate, db: Session = Dep
         finished_at=body.finished_at,
         cancel_reason=body.cancel_reason,
         encoder=body.encoder,
+        avg_fps=body.avg_fps,
+        avg_speed=body.avg_speed,
     )
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
     print(f"[master] record {record_id} → {body.status.value}")
     return record
+
+
+@app.get("/stats")
+def get_stats(db: Session = Depends(get_db)):
+    return crud.get_stats(db)
+
+
+@app.get("/stats/slave/{slave_id}")
+def get_slave_stats(slave_id: str, db: Session = Depends(get_db)):
+    return crud.get_slave_stats(db, slave_id)
 
 
 @app.get("/files", response_model=list[FileRecordOut])
