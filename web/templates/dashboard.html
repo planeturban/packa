@@ -37,7 +37,7 @@
 
     {# Scan status + controls (dynamic part) + settings form (static) #}
     <div>
-      <div id="scan-live">
+      <div id="scan-live" style="min-height:5rem">
         {% if data.scan and data.scan.running %}
           <span class="badge badge-scanning">Scanning</span>
           <div class="scan-stats">

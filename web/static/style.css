@@ -175,7 +175,7 @@ nav {
 .theme-btn:hover { background: rgba(255,255,255,.1); color: rgba(255,255,255,.9); }
 .theme-btn.active { background: rgba(255,255,255,.18); color: #fff; font-weight: 600; }
 
-main { max-width: 1100px; margin: 2rem auto; padding: 0 1.5rem 3rem; }
+main { max-width: 1400px; margin: 2rem auto; padding: 0 1.5rem 3rem; }
 
 .card {
   background: var(--surface);

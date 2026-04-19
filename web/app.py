@@ -346,6 +346,47 @@ async def data_slave_delete(request: Request, host: str = Query(), port: int = Q
     return JSONResponse({"ok": True})
 
 
+@app.post("/data/files/cancel")
+async def data_files_cancel(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    ids: list[int] = body.get("ids", [])
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            slaves_r = await client.get(f"{_master_url()}/slaves")
+            slaves_map = {s["config_id"]: s for s in slaves_r.json()}
+        except Exception:
+            slaves_map = {}
+
+        master_results = await asyncio.gather(
+            *[client.patch(f"{_master_url()}/files/{i}/status", json={"status": "cancelled"}) for i in ids],
+            return_exceptions=True,
+        )
+
+        slave_patches = []
+        for i, result in zip(ids, master_results):
+            if isinstance(result, Exception):
+                continue
+            try:
+                rec = result.json()
+                slave_cfg = rec.get("slave_id")
+                if slave_cfg and slave_cfg in slaves_map:
+                    s = slaves_map[slave_cfg]
+                    slave_patches.append(
+                        client.patch(
+                            f"{_slave_url(s['host'], s['api_port'])}/files/{i}/status",
+                            json={"status": "cancelled"},
+                        )
+                    )
+            except Exception:
+                pass
+        if slave_patches:
+            await asyncio.gather(*slave_patches, return_exceptions=True)
+
+    return JSONResponse({"ok": True})
+
+
 @app.post("/data/slave/pending")
 async def data_slave_pending(request: Request, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
@@ -357,6 +398,22 @@ async def data_slave_pending(request: Request, host: str = Query(), port: int = 
         await asyncio.gather(
             *[client.patch(f"{base}/files/{i}/status", json={"status": "pending"}) for i in ids],
             *[client.patch(f"{_master_url()}/files/{i}/status", json={"status": "pending"}) for i in ids],
+            return_exceptions=True,
+        )
+    return JSONResponse({"ok": True})
+
+
+@app.post("/data/slave/cancel")
+async def data_slave_cancel(request: Request, host: str = Query(), port: int = Query()):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    ids: list[int] = body.get("ids", [])
+    base = _slave_url(host, port)
+    async with httpx.AsyncClient(timeout=10) as client:
+        await asyncio.gather(
+            *[client.patch(f"{base}/files/{i}/status", json={"status": "cancelled"}) for i in ids],
+            *[client.patch(f"{_master_url()}/files/{i}/status", json={"status": "cancelled"}) for i in ids],
             return_exceptions=True,
         )
     return JSONResponse({"ok": True})

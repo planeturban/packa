@@ -89,6 +89,18 @@ async function bulkDashPending() {
   if (r.ok) _applyDashboard(await r.json());
 }
 
+async function bulkDashCancel() {
+  const ids = _dashSelectedIds();
+  if (!ids.length) return;
+  await fetch('/data/files/cancel', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ids}),
+  });
+  const r = await fetch('/data/dashboard');
+  if (r.ok) _applyDashboard(await r.json());
+}
+
 function _renderDashFiles() {
   const filtered = _dashFiltered();
   const total    = filtered.length;
@@ -123,6 +135,7 @@ function _renderDashFiles() {
       <span class="sel-count" id="dash-sel-count"></span>
       <div class="modal-bar-right">
         <button class="btn-act dash-bulk-btn" disabled onclick="bulkDashPending()">Set to pending</button>
+        <button class="btn-act dash-bulk-btn" disabled onclick="bulkDashCancel()">Set to cancelled</button>
         <button class="btn-act danger dash-bulk-btn" disabled onclick="bulkDashDelete()">Delete selected</button>
       </div>
     </div>`;
@@ -630,6 +643,15 @@ async function bulkPending() {
   await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids})});
   _ctxReload();
 }
+async function bulkCancel() {
+  const ids = _selectedIds();
+  if (!ids.length) return;
+  const url = _ctx.type === 'master'
+    ? '/data/files/cancel'
+    : `/data/slave/cancel?host=${encodeURIComponent(_ctx.host)}&port=${_ctx.port}`;
+  await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids})});
+  _ctxReload();
+}
 function _ctxReload() {
   if (_ctx.type === 'master') showFiles(_ctx.status);
   else showSlave(_ctx.host, _ctx.port, _ctx.name);
@@ -644,6 +666,7 @@ function _shell() {
       <span class="sel-count" id="sel-count"></span>
       <div class="modal-bar-right">
         <button class="btn-act bulk-btn" disabled onclick="bulkPending()">Set to pending</button>
+        <button class="btn-act bulk-btn" disabled onclick="bulkCancel()">Set to cancelled</button>
         <button class="btn-act danger bulk-btn" disabled onclick="bulkDelete()">Delete selected</button>
       </div>
     </div>

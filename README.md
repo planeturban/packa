@@ -1,6 +1,6 @@
 # Packa
 
-> **Note:** This project is 100% AI-generated using [Claude](https://claude.ai) by Anthropic.
+> **Note:** This project is 100% AI-generated using [Claude](https://claude.ai) by Anthropic. Do with this information as you please.
 
 Distributed video conversion system. A master node accepts file paths via API or directory scan and distributes work to one or more slave nodes. Slaves pull jobs from the master, run ffmpeg, and report results back. A web frontend provides a browser dashboard.
 
