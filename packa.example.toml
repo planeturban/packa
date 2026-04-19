@@ -104,6 +104,10 @@ video_args   = "-init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device v
 display_name = "Apple"
 video_args   = "-c:v hevc_videotoolbox -q:v 65"
 
+[slave.ffmpeg.encoder.rkmpp]
+display_name = "Rockchip"
+video_args   = "-c:v hevc_rkmpp -rc_mode CQP -qp_init 28"
+
 # Custom encoder example:
 # [slave.ffmpeg.encoder.nvenc_hq]
 # display_name = "NVIDIA HQ"
