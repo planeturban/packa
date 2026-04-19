@@ -26,7 +26,7 @@ prefix = "/mnt/data/"   # stripped before sending paths to slaves; used as scan 
 
 [master.scan]
 extensions = [".mkv", ".mp4", ".avi", ".mov"]
-# min_size = 0   # bytes — 0 = no limit
+# min_size = 0   # MB — 0 = no limit
 # max_size = 0
 ```
 
@@ -36,8 +36,8 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 | `PACKA_MASTER_API_PORT` | `master.api_port` |
 | `PACKA_MASTER_PREFIX` | `master.paths.prefix` |
 | `PACKA_MASTER_EXTENSIONS` | `master.scan.extensions` (comma-separated) |
-| `PACKA_MASTER_MIN_SIZE` | `master.scan.min_size` |
-| `PACKA_MASTER_MAX_SIZE` | `master.scan.max_size` |
+| `PACKA_MASTER_MIN_SIZE` | `master.scan.min_size` (MB) |
+| `PACKA_MASTER_MAX_SIZE` | `master.scan.max_size` (MB) |
 
 ---
 

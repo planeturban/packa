@@ -25,8 +25,8 @@ class ScanConfig:
     extensions: list[str] = field(
         default_factory=lambda: [".mkv", ".mp4", ".avi", ".mov"]
     )
-    min_size: int = 0   # bytes — 0 = no limit
-    max_size: int = 0   # bytes — 0 = no limit
+    min_size: int = 0   # bytes (converted from MB at load time) — 0 = no limit
+    max_size: int = 0   # bytes (converted from MB at load time) — 0 = no limit
 
 
 @dataclass
@@ -109,8 +109,8 @@ def load_master(config_path: str | None) -> Config:
         path_prefix=_env("PACKA_MASTER_PREFIX", paths.get("prefix", "")),
         scan=ScanConfig(
             extensions=extensions,
-            min_size=_env_int("PACKA_MASTER_MIN_SIZE", scan_data.get("min_size", 0)),
-            max_size=_env_int("PACKA_MASTER_MAX_SIZE", scan_data.get("max_size", 0)),
+            min_size=_env_int("PACKA_MASTER_MIN_SIZE", scan_data.get("min_size", 0)) * 1024 * 1024,
+            max_size=_env_int("PACKA_MASTER_MAX_SIZE", scan_data.get("max_size", 0)) * 1024 * 1024,
         ),
     )
 

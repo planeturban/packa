@@ -28,7 +28,7 @@ prefix = "/mnt/data/"
 # Env: PACKA_MASTER_EXTENSIONS  (comma-separated, e.g. ".mkv,.mp4")
 extensions = [".mkv", ".mp4", ".avi", ".mov"]
 
-# File size limits in bytes. 0 = no limit (default).
+# File size limits in megabytes. 0 = no limit (default).
 # Files outside this range are counted as skipped during a scan.
 # Env: PACKA_MASTER_MIN_SIZE, PACKA_MASTER_MAX_SIZE
 # min_size = 0
