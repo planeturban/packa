@@ -32,11 +32,11 @@ function _dashFiltered() {
   let result = _dashFiles;
   if (_dashFilter) result = result.filter(f => f.status === _dashFilter);
   if (_dashQuery) {
-    const q = _dashQuery.toLowerCase();
+    const q = _norm(_dashQuery);
     result = result.filter(f =>
-      (f.file_name || '').toLowerCase().includes(q) ||
-      (f.file_path || '').toLowerCase().includes(q) ||
-      (f.slave_id  || '').toLowerCase().includes(q)
+      _norm(f.file_name).includes(q) ||
+      _norm(f.file_path).includes(q) ||
+      _norm(f.slave_id).includes(q)
     );
   }
   return result;
@@ -361,6 +361,10 @@ function _showCopied(anchor) {
   t.style.cssText = 'position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:#323232;color:#fff;font-size:.8rem;padding:.45rem 1rem;border-radius:6px;pointer-events:none;opacity:1;transition:opacity .4s;z-index:9999;white-space:nowrap';
   document.body.appendChild(t);
   setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 400); }, 1800);
+}
+
+function _norm(s) {
+  return String(s).toLowerCase().replace(/[^\p{L}\p{N} ]/gu, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function _esc(str) {
@@ -693,11 +697,11 @@ function _filtered() {
   if (_statusFilter)  result = result.filter(f => f.status === _statusFilter);
   if (_encoderFilter) result = result.filter(f => f.encoder === _encoderFilter);
   if (_query) {
-    const q = _query.toLowerCase();
+    const q = _norm(_query);
     result = result.filter(f =>
-      (f.file_name || '').toLowerCase().includes(q) ||
-      (f.file_path || '').toLowerCase().includes(q) ||
-      (f.slave_id  || '').toLowerCase().includes(q)
+      _norm(f.file_name).includes(q) ||
+      _norm(f.file_path).includes(q) ||
+      _norm(f.slave_id).includes(q)
     );
   }
   return result;
