@@ -419,6 +419,39 @@ async def data_slave_cancel(request: Request, host: str = Query(), port: int = Q
     return JSONResponse({"ok": True})
 
 
+@app.post("/data/files/assign")
+async def data_files_assign(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    ids: list[int] = body.get("ids", [])
+    slave_config_id: str = body.get("slave_config_id", "")
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            slaves_r = await client.get(f"{_master_url()}/slaves")
+            slave_info = next((s for s in slaves_r.json() if s["config_id"] == slave_config_id), None)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+        if not slave_info:
+            return JSONResponse({"error": "slave not found"}, status_code=404)
+        try:
+            r = await client.post(f"{_master_url()}/jobs/assign",
+                                  json={"ids": ids, "slave_id": slave_config_id})
+            r.raise_for_status()
+            jobs = r.json()
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+        if jobs:
+            try:
+                await client.post(
+                    f"{_slave_url(slave_info['host'], slave_info['api_port'])}/jobs/push",
+                    json=jobs,
+                )
+            except Exception:
+                pass
+    return JSONResponse({"ok": True, "assigned": len(jobs)})
+
+
 @app.get("/data/stats")
 async def data_stats(request: Request):
     if not _logged_in(request):

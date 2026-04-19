@@ -19,6 +19,8 @@ Slave REST API.
 
 import asyncio
 import signal
+
+from sqlalchemy.exc import IntegrityError
 from contextlib import asynccontextmanager
 
 import httpx
@@ -247,6 +249,31 @@ def update_status(record_id: int, body: StatusUpdate, db: Session = Depends(get_
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
     return record
+
+
+@app.post("/jobs/push", status_code=202)
+def push_jobs(jobs: list[FileRecordCreate], db: Session = Depends(get_db)):
+    queued = 0
+    for job in jobs:
+        full_path = (_config.path_prefix + job.file_path) if _config.path_prefix else job.file_path
+        record = None
+        try:
+            record = crud.create_file_record(db, job.model_copy(update={"file_path": full_path, "slave_id": _slave_config_id}))
+        except IntegrityError:
+            db.rollback()
+            record = crud.get_file_record(db, job.id)
+            if record:
+                record.status = FileStatus.PENDING
+                record.pid = None
+                record.started_at = None
+                record.finished_at = None
+                record.cancel_reason = None
+                db.commit()
+        if record and _config.ffmpeg.output_dir:
+            worker_state.enqueue(Job(record_id=record.id, file_path=record.file_path))
+            queued += 1
+    print(f"[api] pushed {queued} job(s) to queue")
+    return {"queued": queued}
 
 
 @app.post("/conversion/stop")

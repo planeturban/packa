@@ -23,6 +23,7 @@ const _ST_COLORS = {
 
 // ── Dashboard file table ──────────────────────────────────────────────────
 let _dashFiles  = [];
+let _dashSlaves = [];
 let _dashFilter = null;
 let _dashPage   = 1;
 let _dashQuery  = '';
@@ -53,6 +54,8 @@ function _dashUpdateSel() {
   const el = document.getElementById('dash-sel-count');
   if (el) el.textContent = n ? `${n} selected` : '';
   document.querySelectorAll('.dash-bulk-btn').forEach(b => b.disabled = n === 0);
+  const sel = document.getElementById('dash-assign-sel');
+  if (sel) sel.disabled = n === 0;
 }
 
 function _dashToggleAll(src) {
@@ -84,6 +87,18 @@ async function bulkDashPending() {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ids}),
+  });
+  const r = await fetch('/data/dashboard');
+  if (r.ok) _applyDashboard(await r.json());
+}
+
+async function bulkDashAssign(slaveConfigId) {
+  const ids = _dashSelectedIds();
+  if (!ids.length) return;
+  await fetch('/data/files/assign', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ids, slave_config_id: slaveConfigId}),
   });
   const r = await fetch('/data/dashboard');
   if (r.ok) _applyDashboard(await r.json());
@@ -137,6 +152,7 @@ function _renderDashFiles() {
         <button class="btn-act dash-bulk-btn" disabled onclick="bulkDashPending()">Set to pending</button>
         <button class="btn-act dash-bulk-btn" disabled onclick="bulkDashCancel()">Set to cancelled</button>
         <button class="btn-act danger dash-bulk-btn" disabled onclick="bulkDashDelete()">Delete selected</button>
+        ${(() => { const assignable = _dashSlaves.filter(s => s.state !== 'unreachable' && !s.unconfigured); return assignable.length ? `<select id="dash-assign-sel" disabled onchange="if(this.value){bulkDashAssign(this.value);this.value=''}" style="padding:.22rem .4rem;border:1px solid var(--border-input);border-radius:4px;font-size:.78rem;font-family:inherit;background:var(--surface);color:var(--text);cursor:pointer"><option value="">Assign to slave…</option>${assignable.map(s=>`<option value="${_esc(s.config_id)}">${_esc(s.config_id)}</option>`).join('')}</select>` : ''; })()}
       </div>
     </div>`;
 
@@ -243,6 +259,7 @@ function _applyDashboard(data) {
   const cntEl = document.getElementById('slave-count');
   const secEl = document.getElementById('slave-section');
   const slaves = data.slaves || [];
+  _dashSlaves = slaves;
   if (cntEl) cntEl.textContent = slaves.length;
   if (secEl) {
     // Lock current height before updating so the section can only grow, never shrink.

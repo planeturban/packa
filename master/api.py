@@ -343,6 +343,39 @@ def transfer_file(body: TransferRequest, db: Session = Depends(get_db)):
 # Job claim route
 # ---------------------------------------------------------------------------
 
+class AssignRequest(BaseModel):
+    ids: list[int]
+    slave_id: str
+
+
+@app.post("/jobs/assign", response_model=list[ClaimOut])
+def assign_jobs(body: AssignRequest, db: Session = Depends(get_db)):
+    records = (
+        db.query(FileRecord)
+        .filter(FileRecord.id.in_(body.ids), FileRecord.status == FileStatus.PENDING)
+        .all()
+    )
+    result = []
+    for record in records:
+        record.status = FileStatus.ASSIGNED
+        record.slave_id = body.slave_id
+        relative_path = record.file_path
+        if _config.path_prefix and relative_path.startswith(_config.path_prefix):
+            relative_path = relative_path[len(_config.path_prefix):]
+        result.append(ClaimOut(
+            id=record.id,
+            file_name=record.file_name,
+            file_path=relative_path,
+            file_size=record.file_size,
+            c_time=record.c_time,
+            m_time=record.m_time,
+            checksum=record.checksum,
+        ))
+    db.commit()
+    print(f"[master] assigned {len(result)} job(s) to slave '{body.slave_id}'")
+    return result
+
+
 @app.post("/jobs/claim", response_model=list[ClaimOut])
 def claim_jobs(body: ClaimRequest, db: Session = Depends(get_db)):
     records = (
