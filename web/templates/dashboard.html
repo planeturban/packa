@@ -12,7 +12,10 @@
 
 {# ── Master ─────────────────────────────────────────────────────────────── #}
 <div class="card">
-  <div class="section-label">Master</div>
+  <div style="display:flex;justify-content:space-between;align-items:baseline">
+    <div class="section-label" style="margin-bottom:0">Master</div>
+    <span style="font-size:.68rem;color:var(--text-muted)">{{ version }} &middot; {{ commit }}</span>
+  </div>
 
   <div id="master-error" class="{% if not data.master_error %}hidden{% endif %}">
     <p style="color:#c62828;font-size:.9rem">Cannot reach master: <span id="master-error-msg">{{ data.master_error or '' }}</span></p>

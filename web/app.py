@@ -9,6 +9,7 @@ Routes:
 """
 
 import asyncio
+import os
 import secrets
 from pathlib import Path
 
@@ -24,6 +25,8 @@ from shared.config import WebConfig
 from .client import fetch_dashboard
 
 _config: WebConfig = WebConfig()
+_VERSION = os.environ.get("PACKA_VERSION", "dev")
+_COMMIT  = os.environ.get("PACKA_COMMIT", "local")[:7]
 
 
 def set_config(config: WebConfig) -> None:
@@ -406,5 +409,5 @@ async def dashboard(request: Request):
     data = await fetch_dashboard(_master_url())
     return _templates.TemplateResponse(
         request, "dashboard.html",
-        {"data": data, "auth_enabled": _auth_enabled()},
+        {"data": data, "auth_enabled": _auth_enabled(), "version": _VERSION, "commit": _COMMIT},
     )

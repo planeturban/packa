@@ -1,5 +1,10 @@
 FROM linuxserver/ffmpeg:latest
 
+ARG PACKA_VERSION=dev
+ARG PACKA_COMMIT=local
+ENV PACKA_VERSION=$PACKA_VERSION
+ENV PACKA_COMMIT=$PACKA_COMMIT
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends python3 python3-pip && \
     rm -rf /var/lib/apt/lists/*
