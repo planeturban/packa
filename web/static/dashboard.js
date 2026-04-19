@@ -365,6 +365,7 @@ function _statsSummaryHtml(o) {
   return `<div style="display:flex;gap:2.5rem;flex-wrap:wrap;margin-bottom:1.2rem">
     ${[
       [o.jobs,                                          'Converted'],
+      [fmtBytes(o.total_input_bytes),                   'Original size'],
       [fmtBytes(o.total_saved_bytes),                   'Saved'],
       [_fmtRatio(o.avg_compression_ratio),              'Avg size ratio'],
       [fmtEta(Math.round(o.avg_duration_seconds || 0)), 'Avg duration'],
