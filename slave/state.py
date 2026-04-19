@@ -43,8 +43,7 @@ class WorkerState:
         self.batch_size: int = 1
         self.current_cmd: str = ""
         self.replace_original: bool = False
-        self.cancel_projected_ratio: float = 1.0
-        self.cancel_min_progress: float = 10.0
+        self.cancel_thresholds: list[tuple[float, float]] = []
         self.presets: dict[str, EncoderPreset] = {}
         self.available_encoders: list[str] = ["libx265", "nvenc", "vaapi", "videotoolbox"]
 

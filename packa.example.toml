@@ -125,12 +125,11 @@ video_args   = "-c:v hevc_rkmpp -rc_mode CQP -qp_init 28"
 # Seconds between poll attempts when the job queue is empty.
 poll_interval = 5
 
-# Cancel early if the projected output size exceeds this ratio of the source size,
-# once at least cancel_min_progress % of the file has been processed.
-# Example: ratio=1.0 cancels if projected >= source size; ratio=1.1 allows up to 10% larger.
-# Set either to 0 to disable. Env: PACKA_SLAVE_CANCEL_PROJECTED_RATIO, PACKA_SLAVE_CANCEL_MIN_PROGRESS
-# cancel_projected_ratio = 1.0
-# cancel_min_progress    = 10.0
+# Stepped early-cancellation thresholds: [[progress%, ratio], ...]
+# At each progress point, cancel if projected output > source * ratio.
+# The tightest reached threshold applies. Remove this line to disable early cancellation entirely.
+# Env: PACKA_SLAVE_CANCEL_THRESHOLDS  (format: "10.0:1.10,25.0:1.05,50.0:1.0")
+# cancel_thresholds = [[10.0, 1.10], [25.0, 1.05], [50.0, 1.0]]
 
 # ---------------------------------------------------------------------------
 # Web frontend

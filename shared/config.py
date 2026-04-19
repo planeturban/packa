@@ -53,12 +53,21 @@ class FfmpegConfig:
     )
 
 
+def _parse_cancel_thresholds(s: str) -> list[tuple[float, float]]:
+    result = []
+    for pair in s.split(","):
+        pair = pair.strip()
+        if ":" in pair:
+            p, r = pair.split(":", 1)
+            result.append((float(p.strip()), float(r.strip())))
+    return sorted(result)
+
+
 @dataclass
 class WorkerConfig:
     batch_size: int = 1
     poll_interval: int = 5
-    cancel_projected_ratio: float = 1.0   # cancel if projected_size > source * ratio; 0 = disabled
-    cancel_min_progress: float = 10.0     # minimum % progress before projected-size check kicks in
+    cancel_thresholds: list[tuple[float, float]] = field(default_factory=list)
 
 
 @dataclass
@@ -162,6 +171,14 @@ def load_slave(config_path: str | None) -> Config:
     else:
         available_encoders = list(presets.keys())
 
+    _ct_env = os.environ.get("PACKA_SLAVE_CANCEL_THRESHOLDS")
+    if _ct_env:
+        _cancel_thresholds = _parse_cancel_thresholds(_ct_env)
+    elif "cancel_thresholds" in worker_data:
+        _cancel_thresholds = sorted((float(p), float(r)) for p, r in worker_data["cancel_thresholds"])
+    else:
+        _cancel_thresholds = []
+
     return Config(
         bind=_env("PACKA_SLAVE_BIND", slave.get("bind", "localhost")),
         api_port=_env_int("PACKA_SLAVE_API_PORT", slave.get("api_port", 8000)),
@@ -180,8 +197,7 @@ def load_slave(config_path: str | None) -> Config:
         worker=WorkerConfig(
             batch_size=_env_int("PACKA_SLAVE_BATCH_SIZE", worker_data.get("batch_size", 1)),
             poll_interval=_env_int("PACKA_SLAVE_POLL_INTERVAL", worker_data.get("poll_interval", 5)),
-            cancel_projected_ratio=_env_float("PACKA_SLAVE_CANCEL_PROJECTED_RATIO", worker_data.get("cancel_projected_ratio", 1.0)),
-            cancel_min_progress=_env_float("PACKA_SLAVE_CANCEL_MIN_PROGRESS", worker_data.get("cancel_min_progress", 10.0)),
+            cancel_thresholds=_cancel_thresholds,
         ),
     )
 

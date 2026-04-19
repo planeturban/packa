@@ -83,7 +83,7 @@ ffmpeg -i {file} -map 0 -c copy {video_args} [extra_args] -progress pipe:1 -nost
 - All streams (audio, subtitles, attachments) are copied; only the video stream is re-encoded.
 - `ffprobe` checks the video codec before starting. If already HEVC the record is immediately set to `discarded`.
 - Output size is monitored every 5 seconds. If the actual output grows larger than the source, ffmpeg is terminated and the record is set to `cancelled`.
-- The projected output size (estimated from progress and current bitrate) is also checked per progress frame. If the projection exceeds `source_size × cancel_projected_ratio` after at least `cancel_min_progress` % completion, ffmpeg is terminated early. Both thresholds are configurable.
+- The projected output size (estimated from progress and current bitrate) is also checked per progress frame against a set of stepped thresholds (`cancel_thresholds`). Each threshold is a `[progress%, ratio]` pair. Once that progress percentage is reached, ffmpeg is terminated early if the projection exceeds `source_size × ratio`. The tightest (highest progress) reached threshold applies. An empty list disables the check.
 - When `replace_original` is enabled (set per slave in the dashboard), the output file is moved back to the original source path on success. If the move fails the record is set to `error` and the output file remains in `output_dir`.
 - On restart, any partial output files from interrupted jobs are deleted and those records are re-queued as `pending`.
 

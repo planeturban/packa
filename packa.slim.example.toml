@@ -43,9 +43,8 @@ video_args   = "-c:v libx265"
 # video_args   = "-c:v hevc_nvenc -preset p7 -cq 18"
 
 [slave.worker]
-poll_interval          = 5
-cancel_projected_ratio = 1.0   # cancel if projected output > source; 0 = disabled
-cancel_min_progress    = 10.0  # minimum % progress before check kicks in
+poll_interval     = 5
+# cancel_thresholds = [[10.0, 1.10], [25.0, 1.05], [50.0, 1.0]]   # remove to disable early cancellation
 
 # ---------------------------------------------------------------------------
 
