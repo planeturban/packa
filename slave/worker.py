@@ -14,6 +14,7 @@ Progress is read from ffmpeg's -progress pipe:1 output.
 
 import asyncio
 import shlex
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -87,6 +88,16 @@ async def _get_video_codec(ffprobe: str, file_path: str) -> str | None:
         return stdout.decode().strip() or None
     except Exception:
         return None
+
+
+_MIN_FREE_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB
+
+
+def _has_disk_space(path: str) -> bool:
+    try:
+        return shutil.disk_usage(path).free >= _MIN_FREE_BYTES
+    except OSError:
+        return True
 
 
 def _safe_int(val: str | None) -> int:
@@ -201,9 +212,17 @@ async def _report_result_to_master(
         print(f"[worker] failed to update master for record {record_id}: {exc}")
 
 
-async def _monitor_output_size(output_path: str, source_size: int, proc: asyncio.subprocess.Process) -> None:
+async def _monitor_output_size(output_path: str, source_size: int, proc: asyncio.subprocess.Process, output_dir: str) -> None:
     while proc.returncode is None:
         await asyncio.sleep(5)
+        if not _has_disk_space(output_dir):
+            print(f"[worker] disk full in {output_dir!r} — terminating ffmpeg")
+            worker_state.disk_full = True
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
+            break
         try:
             if Path(output_path).stat().st_size >= source_size:
                 print(f"[worker] output already larger than source ({source_size} B) — terminating")
@@ -229,6 +248,13 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
             print(f"[worker] record {job.record_id} no longer exists — skipping")
             return
         source_size = Path(job.file_path).stat().st_size
+
+        if not _has_disk_space(output_dir):
+            print(f"[worker] disk full in {output_dir!r} — sleeping")
+            worker_state.disk_full = True
+            worker_state.sleeping = True
+            await _update_master_status(job.record_id, "pending")
+            return
 
         ffprobe = _ffprobe_bin(ffmpeg_bin)
         duration_s, video_codec = await asyncio.gather(
@@ -276,7 +302,7 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
         results = await asyncio.gather(
             _stream_progress(proc.stdout, duration_s),
             _collect_stderr(proc.stderr),
-            _monitor_output_size(output_path, source_size, proc),
+            _monitor_output_size(output_path, source_size, proc, output_dir),
         )
         stderr_output: str = results[1]
         await proc.wait()
@@ -284,6 +310,12 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
 
         if proc.returncode != 0:
             Path(output_path).unlink(missing_ok=True)
+            if worker_state.disk_full:
+                update_status(db, job.record_id, FileStatus.PENDING)
+                await _update_master_status(job.record_id, "pending")
+                worker_state.sleeping = True
+                print(f"[worker] record {job.record_id} reset to pending — disk full")
+                return
             cancel_reason = worker_state.cancel_reason
             if cancel_reason:
                 update_conversion_result(

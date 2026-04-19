@@ -271,6 +271,7 @@ function _slaveCardHtml(s) {
   const badge = s.state === 'unreachable'
     ? '<span class="badge badge-unreachable">Unreachable</span>'
     : s.unconfigured ? '<span class="badge badge-unconfigured">Unconfigured</span>'
+    : s.disk_full ? '<span class="badge badge-disk-full">Disk full</span>'
     : s.sleeping ? '<span class="badge badge-sleeping">Sleeping</span>'
     : s.paused   ? '<span class="badge badge-paused">Paused</span>'
     : s.state === 'processing' ? `<span class="badge badge-processing">${s.drain ? 'Draining' : 'Converting'}</span>`
@@ -781,9 +782,11 @@ function _slaveStatusHtml(st, host, port) {
   if (!st) return h + '<p class="modal-err" style="margin-bottom:.8rem">Unreachable.</p>';
 
   const label = st.unconfigured ? 'Unconfigured'
+              : st.disk_full ? 'Disk full'
               : st.sleeping ? 'Sleeping' : st.paused ? 'Paused' : st.drain ? 'Draining'
               : st.state === 'processing' ? 'Converting' : 'Idle';
   const cls   = st.unconfigured ? 'badge-unconfigured'
+              : st.disk_full ? 'badge-disk-full'
               : st.sleeping ? 'badge-sleeping' : st.paused ? 'badge-paused' : st.drain ? 'badge-drain'
               : st.state === 'processing' ? 'badge-processing' : 'badge-idle';
   const slaveActions = st.sleeping

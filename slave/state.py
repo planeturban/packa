@@ -37,6 +37,7 @@ class WorkerState:
         self.drain: bool = False
         self.sleeping: bool = False
         self.unconfigured: bool = False
+        self.disk_full: bool = False
         self.cancel_reason: str | None = None
         self.encoder: str = "libx265"
         self.batch_size: int = 1

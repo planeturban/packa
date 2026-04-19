@@ -153,6 +153,7 @@ class SlaveStatus(BaseModel):
     paused: bool
     drain: bool
     sleeping: bool
+    disk_full: bool
     unconfigured: bool
     encoder: str
     available_encoders: list[str]
@@ -180,6 +181,7 @@ def get_status():
         paused=worker_state.paused,
         drain=worker_state.drain,
         sleeping=worker_state.sleeping,
+        disk_full=worker_state.disk_full,
         unconfigured=worker_state.unconfigured,
         encoder=worker_state.encoder,
         available_encoders=worker_state.available_encoders,
@@ -291,6 +293,7 @@ def sleep_conversion():
 @app.post("/conversion/wake")
 def wake_conversion():
     worker_state.sleeping = False
+    worker_state.disk_full = False
 
 
 # ---------------------------------------------------------------------------

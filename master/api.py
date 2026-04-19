@@ -67,6 +67,42 @@ def _recover() -> None:
         db.close()
 
 
+async def _hevc_check_loop() -> None:
+    """Periodically probe PENDING records and discard any that are already HEVC."""
+    await asyncio.sleep(15)
+    while True:
+        db = SessionLocal()
+        try:
+            records = (
+                db.query(FileRecord)
+                .filter(FileRecord.status == FileStatus.PENDING)
+                .limit(5)
+                .all()
+            )
+            for record in records:
+                await asyncio.sleep(0)
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "ffprobe", "-v", "quiet",
+                        "-select_streams", "v:0",
+                        "-show_entries", "stream=codec_name",
+                        "-of", "csv=p=0",
+                        record.file_path,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    stdout, _ = await proc.communicate()
+                    if stdout.decode().strip().lower() == "hevc":
+                        record.status = FileStatus.DISCARDED
+                        db.commit()
+                        print(f"[master] record {record.id} discarded — already HEVC ({record.file_name!r})")
+                except Exception:
+                    pass
+        finally:
+            db.close()
+        await asyncio.sleep(30)
+
+
 async def _periodic_scan_loop() -> None:
     global _last_periodic_start
     while True:
@@ -95,13 +131,17 @@ async def _periodic_scan_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _recover()
-    task = asyncio.create_task(_periodic_scan_loop())
+    tasks = [
+        asyncio.create_task(_periodic_scan_loop()),
+        asyncio.create_task(_hevc_check_loop()),
+    ]
     yield
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    for task in tasks:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(title="Packa Master API", lifespan=lifespan)
