@@ -502,6 +502,8 @@ async def data_slave_encoder(request: Request):
     payload: dict = {"encoder": encoder}
     if body.get("batch_size") is not None:
         payload["batch_size"] = max(1, int(body["batch_size"]))
+    if body.get("replace_original") is not None:
+        payload["replace_original"] = bool(body["replace_original"])
     async with httpx.AsyncClient(timeout=5) as client:
         try:
             r = await client.post(f"{_slave_url(host, port)}/settings", json=payload)

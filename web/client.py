@@ -76,6 +76,7 @@ async def fetch_dashboard(master_url: str) -> dict:
             "available_encoders": (st or {}).get("available_encoders", ["libx265", "nvenc", "vaapi", "videotoolbox"]),
             "encoder_labels": (st or {}).get("encoder_labels", {}),
             "batch_size": (st or {}).get("batch_size", 1),
+            "replace_original": (st or {}).get("replace_original", False),
         })
 
     return {

@@ -979,18 +979,20 @@ async function showSlave(host, port, name) {
 async function saveSlaveSettings(host, port) {
   const sel = document.getElementById(`enc-${port}`);
   const inp = document.getElementById(`batch-${port}`);
+  const chk = document.getElementById(`replace-${port}`);
   if (!sel) return;
   const encoder = sel.value;
   if (!encoder) return;
   const batch_size = Math.max(1, parseInt(inp?.value) || 1);
   if (inp) inp.value = batch_size;
+  const replace_original = chk ? chk.checked : false;
   const btn = document.getElementById(`settings-save-${port}`);
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
     const r = await fetch('/data/slave/encoder', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({host, port, encoder, batch_size}),
+      body: JSON.stringify({host, port, encoder, batch_size, replace_original}),
     });
     if (!r.ok) throw new Error('failed');
     if (btn) { btn.textContent = 'Saved'; setTimeout(() => { if (btn) btn.textContent = 'Save'; }, 1500); }
@@ -1061,6 +1063,8 @@ function _slaveStatusHtml(st, host, port) {
     <span style="margin-left:.25rem">Queue size</span>
     <input id="batch-${port}" type="number" min="1" value="${st.batch_size || 1}"
       style="width:4rem;padding:.25rem .45rem;border:1px solid var(--border-input);border-radius:4px;font-size:.8rem;font-family:inherit;background:var(--surface);color:var(--text)">
+    <label style="display:flex;align-items:center;gap:.3rem;cursor:pointer;white-space:nowrap">
+      <input id="replace-${port}" type="checkbox" ${st.replace_original ? 'checked' : ''}>Replace original</label>
     <button id="settings-save-${port}" class="btn-act" type="button" onclick="saveSlaveSettings('${_esc(host)}',${port})" style="margin-left:auto">Save</button>
   </div>`;
 

@@ -42,6 +42,7 @@ class WorkerState:
         self.encoder: str = "libx265"
         self.batch_size: int = 1
         self.current_cmd: str = ""
+        self.replace_original: bool = False
         self.presets: dict[str, EncoderPreset] = {}
         self.available_encoders: list[str] = ["libx265", "nvenc", "vaapi", "videotoolbox"]
 
