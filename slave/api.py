@@ -98,6 +98,8 @@ async def lifespan(app: FastAPI):
     worker_state.presets = _config.ffmpeg.presets
     worker_state.available_encoders = _config.ffmpeg.available_encoders
     worker_state.replace_original = get_setting("replace_original") == "true"
+    worker_state.cancel_projected_ratio = _config.worker.cancel_projected_ratio
+    worker_state.cancel_min_progress = _config.worker.cancel_min_progress
 
     _default_encoder = worker_state.available_encoders[0] if worker_state.available_encoders else "libx265"
     stored_batch = get_setting("batch_size")

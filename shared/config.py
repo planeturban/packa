@@ -16,6 +16,11 @@ def _env_int(key: str, default: int) -> int:
     return int(val) if val is not None else default
 
 
+def _env_float(key: str, default: float) -> float:
+    val = os.environ.get(key)
+    return float(val) if val is not None else default
+
+
 # ---------------------------------------------------------------------------
 # Config dataclasses
 # ---------------------------------------------------------------------------
@@ -52,6 +57,8 @@ class FfmpegConfig:
 class WorkerConfig:
     batch_size: int = 1
     poll_interval: int = 5
+    cancel_projected_ratio: float = 1.0   # cancel if projected_size > source * ratio; 0 = disabled
+    cancel_min_progress: float = 10.0     # minimum % progress before projected-size check kicks in
 
 
 @dataclass
@@ -173,6 +180,8 @@ def load_slave(config_path: str | None) -> Config:
         worker=WorkerConfig(
             batch_size=_env_int("PACKA_SLAVE_BATCH_SIZE", worker_data.get("batch_size", 1)),
             poll_interval=_env_int("PACKA_SLAVE_POLL_INTERVAL", worker_data.get("poll_interval", 5)),
+            cancel_projected_ratio=_env_float("PACKA_SLAVE_CANCEL_PROJECTED_RATIO", worker_data.get("cancel_projected_ratio", 1.0)),
+            cancel_min_progress=_env_float("PACKA_SLAVE_CANCEL_MIN_PROGRESS", worker_data.get("cancel_min_progress", 10.0)),
         ),
     )
 

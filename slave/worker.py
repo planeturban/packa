@@ -147,11 +147,16 @@ def _parse_progress(frame: dict[str, str], duration_s: float | None) -> FfmpegPr
 
 
 async def _stream_progress(
-    stdout: asyncio.StreamReader, duration_s: float | None
+    stdout: asyncio.StreamReader,
+    duration_s: float | None,
+    source_size: int,
+    proc: asyncio.subprocess.Process,
 ) -> tuple[float | None, float | None]:
     frame: dict[str, str] = {}
     fps_samples: list[float] = []
     speed_samples: list[float] = []
+    ratio = worker_state.cancel_projected_ratio
+    min_pct = worker_state.cancel_min_progress
     async for raw in stdout:
         line = raw.decode(errors="replace").strip()
         if "=" not in line:
@@ -166,6 +171,19 @@ async def _stream_progress(
             if p.speed:
                 speed_samples.append(p.speed)
             frame = {}
+            if (ratio > 0 and min_pct > 0 and source_size > 0
+                    and p.percent is not None and p.percent >= min_pct
+                    and p.projected_size_bytes is not None
+                    and p.projected_size_bytes > source_size * ratio):
+                print(
+                    f"[worker] projected size {p.projected_size_bytes} B "
+                    f"> {ratio}x source ({source_size} B) at {p.percent:.1f}% — terminating early"
+                )
+                worker_state.cancel_reason = "auto"
+                try:
+                    proc.terminate()
+                except ProcessLookupError:
+                    pass
     avg_fps = sum(fps_samples) / len(fps_samples) if fps_samples else None
     avg_speed = sum(speed_samples) / len(speed_samples) if speed_samples else None
     return avg_fps, avg_speed
@@ -318,7 +336,7 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
         await _update_master_status(job.record_id, "processing")
 
         results = await asyncio.gather(
-            _stream_progress(proc.stdout, duration_s),
+            _stream_progress(proc.stdout, duration_s, source_size, proc),
             _collect_stderr(proc.stderr),
             _monitor_output_size(output_path, source_size, proc, output_dir),
         )
