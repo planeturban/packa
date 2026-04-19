@@ -27,7 +27,7 @@ let _dashSlaves = [];
 let _dashFilter = new Set();
 let _dashPage   = 1;
 let _dashQuery  = '';
-const _DASH_PER_PAGE = 50;
+let _dashPerPage = parseInt(localStorage.getItem('dashPerPage') || '50', 10);
 
 function _dashFiltered() {
   let result = _dashFiles;
@@ -125,9 +125,9 @@ async function bulkDashCancel() {
 function _renderDashFiles() {
   const filtered = _dashFiltered();
   const total    = filtered.length;
-  const pages    = Math.max(1, Math.ceil(total / _DASH_PER_PAGE));
+  const pages    = Math.max(1, Math.ceil(total / _dashPerPage));
   if (_dashPage > pages) _dashPage = pages;
-  const slice = filtered.slice((_dashPage - 1) * _DASH_PER_PAGE, _dashPage * _DASH_PER_PAGE);
+  const slice = filtered.slice((_dashPage - 1) * _dashPerPage, _dashPage * _dashPerPage);
 
   // File count
   const cntEl = document.getElementById('dash-file-count');
@@ -153,6 +153,10 @@ function _renderDashFiles() {
   let h = `<input type="text" class="modal-search" id="dash-search" placeholder="Filter by filename, path or slave…"
               value="${_esc(_dashQuery)}" oninput="_dashQuery=this.value;_dashPage=1;_renderDashFiles()">
     <div class="modal-bar">
+      <select onchange="_dashPerPage=+this.value;localStorage.setItem('dashPerPage',this.value);_dashPage=1;_renderDashFiles()"
+        style="padding:.22rem .4rem;border:1px solid var(--border-input);border-radius:4px;font-size:.78rem;font-family:inherit;background:var(--surface);color:var(--text)">
+        ${[25,50,100,250].map(n=>`<option value="${n}"${n===_dashPerPage?' selected':''}>${n} per page</option>`).join('')}
+      </select>
       <span class="sel-count" id="dash-sel-count"></span>
       <div class="modal-bar-right">
         <button class="btn-act dash-bulk-btn" disabled onclick="bulkDashPending()">Set to pending</button>
