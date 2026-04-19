@@ -1062,9 +1062,12 @@ function _slaveStatusHtml(st, host, port) {
     <span>Encoder</span>${_encoderSelect(st.encoder || 'libx265', host, port, st.unconfigured, st.available_encoders, st.encoder_labels)}
     <span style="margin-left:.25rem">Queue size</span>
     <input id="batch-${port}" type="number" min="1" value="${st.batch_size || 1}"
+      onfocus="_stopSlavePoll()"
+      onblur="_scheduleSlavePoll('${_esc(host)}',${port},3000)"
       style="width:4rem;padding:.25rem .45rem;border:1px solid var(--border-input);border-radius:4px;font-size:.8rem;font-family:inherit;background:var(--surface);color:var(--text)">
     <label style="display:flex;align-items:center;gap:.3rem;cursor:pointer;white-space:nowrap">
-      <input id="replace-${port}" type="checkbox" ${st.replace_original ? 'checked' : ''}>Replace original</label>
+      <input id="replace-${port}" type="checkbox" ${st.replace_original ? 'checked' : ''}
+        onclick="_stopSlavePoll(); _scheduleSlavePoll('${_esc(host)}',${port},3000)">Replace original</label>
     <button id="settings-save-${port}" class="btn-act" type="button" onclick="saveSlaveSettings('${_esc(host)}',${port})" style="margin-left:auto">Save</button>
   </div>`;
 
