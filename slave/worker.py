@@ -155,8 +155,7 @@ async def _stream_progress(
     frame: dict[str, str] = {}
     fps_samples: list[float] = []
     speed_samples: list[float] = []
-    ratio = worker_state.cancel_projected_ratio
-    min_pct = worker_state.cancel_min_progress
+    thresholds = sorted(worker_state.cancel_thresholds)
     async for raw in stdout:
         line = raw.decode(errors="replace").strip()
         if "=" not in line:
@@ -171,19 +170,22 @@ async def _stream_progress(
             if p.speed:
                 speed_samples.append(p.speed)
             frame = {}
-            if (ratio > 0 and min_pct > 0 and source_size > 0
-                    and p.percent is not None and p.percent >= min_pct
-                    and p.projected_size_bytes is not None
-                    and p.projected_size_bytes > source_size * ratio):
-                print(
-                    f"[worker] projected size {p.projected_size_bytes} B "
-                    f"> {ratio}x source ({source_size} B) at {p.percent:.1f}% — terminating early"
-                )
-                worker_state.cancel_reason = "auto"
-                try:
-                    proc.terminate()
-                except ProcessLookupError:
-                    pass
+            if (thresholds and source_size > 0
+                    and p.percent is not None and p.projected_size_bytes is not None):
+                ratio = None
+                for min_pct, r in thresholds:
+                    if p.percent >= min_pct:
+                        ratio = r
+                if ratio is not None and p.projected_size_bytes > source_size * ratio:
+                    print(
+                        f"[worker] projected size {p.projected_size_bytes} B "
+                        f"> {ratio}x source ({source_size} B) at {p.percent:.1f}% — terminating early"
+                    )
+                    worker_state.cancel_reason = "auto"
+                    try:
+                        proc.terminate()
+                    except ProcessLookupError:
+                        pass
     avg_fps = sum(fps_samples) / len(fps_samples) if fps_samples else None
     avg_speed = sum(speed_samples) / len(speed_samples) if speed_samples else None
     return avg_fps, avg_speed

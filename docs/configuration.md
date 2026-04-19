@@ -62,10 +62,11 @@ output_dir = "/mnt/output"
 # extra_args = ""
 
 [slave.worker]
-poll_interval = 5   # seconds between polls when queue is empty
-# cancel_projected_ratio = 1.0    # cancel if projected output size > source * ratio; 0 = disabled
-# cancel_min_progress    = 10.0   # minimum % progress before projected-size check kicks in
+poll_interval     = 5   # seconds between polls when queue is empty
+cancel_thresholds = [[10.0, 1.10], [25.0, 1.05], [50.0, 1.0]]
 ```
+
+`cancel_thresholds` is a list of `[progress%, ratio]` pairs. Once the given progress percentage is reached, ffmpeg is terminated early if the projected output size exceeds `source_size × ratio`. The tightest (highest progress) reached threshold applies. Set to `[]` to disable. As an environment variable: `PACKA_SLAVE_CANCEL_THRESHOLDS=10.0:1.10,25.0:1.05,50.0:1.0`.
 
 | Environment variable | Config key |
 |----------------------|------------|
@@ -80,8 +81,7 @@ poll_interval = 5   # seconds between polls when queue is empty
 | `PACKA_SLAVE_FFMPEG_OUTPUT_DIR` | `slave.ffmpeg.output_dir` |
 | `PACKA_SLAVE_FFMPEG_EXTRA_ARGS` | `slave.ffmpeg.extra_args` |
 | `PACKA_SLAVE_POLL_INTERVAL` | `slave.worker.poll_interval` |
-| `PACKA_SLAVE_CANCEL_PROJECTED_RATIO` | `slave.worker.cancel_projected_ratio` |
-| `PACKA_SLAVE_CANCEL_MIN_PROGRESS` | `slave.worker.cancel_min_progress` |
+| `PACKA_SLAVE_CANCEL_THRESHOLDS` | `slave.worker.cancel_thresholds` (format: `"10.0:1.10,25.0:1.05"`) |
 
 ### Encoder presets
 
