@@ -19,6 +19,7 @@ const _ST_COLORS = {
   discarded:  { bg:'#f5f5f5', color:'#aaa' },
   cancelled:  { bg:'#fbe9e7', color:'#bf360c' },
   error:      { bg:'#ffebee', color:'#c62828' },
+  duplicate:  { bg:'#ede7f6', color:'#4527a0' },
 };
 
 // ── Dashboard file table ──────────────────────────────────────────────────
@@ -862,6 +863,7 @@ function _shell() {
 
 // ── Master files modal ────────────────────────────────────────────────────
 async function showFiles(status) {
+  if (status === 'duplicate') { showDuplicates(); return; }
   _ctx = { type:'master', status };
   _page = 1; _query = ''; _allFiles = []; _statusFilter = null; _encoderFilter = null;
   _cols = fileColumns(status);
@@ -874,6 +876,40 @@ async function showFiles(status) {
     _renderTable();
   } catch(e) {
     document.getElementById('tbl').innerHTML = '<p class="modal-err">Failed to load.</p>';
+  }
+}
+
+async function showDuplicates() {
+  _setModal('Duplicate files', '<p class="modal-note">Loading…</p>');
+  try {
+    const r = await fetch('/data/files/duplicate-pairs');
+    const pairs = await r.json();
+    if (!pairs.length) {
+      document.getElementById('modal-body').innerHTML = '<p class="modal-note">No duplicates found.</p>';
+      return;
+    }
+    const rows = pairs.map(p => `
+      <tr>
+        <td style="padding:.3rem .5rem;color:#888;font-size:.8rem">${p.id}</td>
+        <td style="padding:.3rem .5rem;font-size:.85rem;word-break:break-all">${_esc(p.file_path)}</td>
+        <td style="padding:.3rem .5rem;color:#888;font-size:.75rem;white-space:nowrap">→ #${p.duplicate_of_id}</td>
+        <td style="padding:.3rem .5rem;font-size:.85rem;word-break:break-all">${p.original_file_path ? _esc(p.original_file_path) : '<span style="color:#aaa">—</span>'}</td>
+      </tr>`).join('');
+    document.getElementById('modal-body').innerHTML = `
+      <p class="modal-note" style="margin-bottom:.5rem">${pairs.length} duplicate${pairs.length===1?'':'s'} found</p>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="border-bottom:1px solid var(--border)">
+            <th style="padding:.3rem .5rem;text-align:left;font-size:.75rem;color:#888">ID</th>
+            <th style="padding:.3rem .5rem;text-align:left;font-size:.75rem;color:#888">Duplicate path</th>
+            <th style="padding:.3rem .5rem;text-align:left;font-size:.75rem;color:#888"></th>
+            <th style="padding:.3rem .5rem;text-align:left;font-size:.75rem;color:#888">Original path</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  } catch(e) {
+    document.getElementById('modal-body').innerHTML = '<p class="modal-err">Failed to load.</p>';
   }
 }
 

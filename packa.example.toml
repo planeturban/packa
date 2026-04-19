@@ -34,6 +34,12 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 # min_size = 0
 # max_size = 0
 
+# Bytes read from the middle of each file to compute a content-based checksum
+# for duplicate detection. Default is 4 MB. Larger values reduce false positives
+# at the cost of slower scanning.
+# Env: PACKA_MASTER_CHECKSUM_BYTES
+# checksum_bytes = 4194304
+
 # ---------------------------------------------------------------------------
 # Slave
 # ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ class FileStatus(str, enum.Enum):
     DISCARDED = "discarded"   # Already HEVC — skipped by slave
     CANCELLED = "cancelled"   # Terminated mid-conversion (user or auto size limit)
     ERROR = "error"
+    DUPLICATE = "duplicate"   # Same content already exists under a different path
 
 
 def _utcnow() -> datetime:
@@ -43,6 +44,7 @@ class FileRecord(Base):
     encoder: Mapped[str | None] = mapped_column(String(64), nullable=True)
     avg_fps: Mapped[float | None] = mapped_column(Float, nullable=True)
     avg_speed: Mapped[float | None] = mapped_column(Float, nullable=True)
+    duplicate_of_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

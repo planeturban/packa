@@ -452,6 +452,19 @@ async def data_files_assign(request: Request):
     return JSONResponse({"ok": True, "assigned": len(jobs)})
 
 
+@app.get("/data/files/duplicate-pairs")
+async def data_duplicate_pairs(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            r = await client.get(f"{_master_url()}/files/duplicate-pairs")
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
 @app.get("/data/stats")
 async def data_stats(request: Request):
     if not _logged_in(request):

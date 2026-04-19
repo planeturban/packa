@@ -14,6 +14,7 @@ def create_file_record(db: Session, record: FileRecordCreate) -> FileRecord:
         c_time=record.c_time,
         m_time=record.m_time,
         checksum=record.checksum,
+        status=record.status,
     )
     if record.id is not None:
         kwargs["id"] = record.id
@@ -21,6 +22,8 @@ def create_file_record(db: Session, record: FileRecordCreate) -> FileRecord:
         kwargs["slave_id"] = record.slave_id
     if record.file_size is not None:
         kwargs["file_size"] = record.file_size
+    if record.duplicate_of_id is not None:
+        kwargs["duplicate_of_id"] = record.duplicate_of_id
 
     db_record = FileRecord(**kwargs)
     db.add(db_record)
@@ -35,6 +38,15 @@ def get_file_record(db: Session, record_id: int) -> FileRecord | None:
 
 def get_record_by_path(db: Session, file_path: str) -> FileRecord | None:
     return db.query(FileRecord).filter(FileRecord.file_path == file_path).first()
+
+
+def get_record_by_checksum(db: Session, checksum: str) -> FileRecord | None:
+    """Return an existing non-duplicate record with the given checksum, if any."""
+    return (
+        db.query(FileRecord)
+        .filter(FileRecord.checksum == checksum, FileRecord.status != FileStatus.DUPLICATE)
+        .first()
+    )
 
 
 def get_all_records(db: Session, status: FileStatus | None = None) -> list[FileRecord]:

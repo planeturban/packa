@@ -14,6 +14,8 @@ class FileRecordCreate(BaseModel):
     c_time: float
     m_time: float
     checksum: str
+    status: FileStatus = FileStatus.PENDING
+    duplicate_of_id: int | None = None
 
 
 class FileRecordOut(BaseModel):
@@ -32,6 +34,7 @@ class FileRecordOut(BaseModel):
     encoder: str | None
     avg_fps: float | None
     avg_speed: float | None
+    duplicate_of_id: int | None
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime
