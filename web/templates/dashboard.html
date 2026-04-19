@@ -25,9 +25,9 @@
 
     {# File counts — each is clickable #}
     <div class="counts">
-      {% for st in ["pending","assigned","processing","complete","discarded","cancelled","error"] %}
+      {% for st in ["pending","assigned","processing","complete","discarded","cancelled","error","duplicate"] %}
       <div class="count"
-           title="{% if st == 'discarded' %}Show discarded files — already HEVC, no conversion needed{% else %}Show {{ st }} files{% endif %}"
+           title="{% if st == 'discarded' %}Show discarded files — already HEVC, no conversion needed{% elif st == 'duplicate' %}Show duplicate files — same content exists at another path{% else %}Show {{ st }} files{% endif %}"
            onclick="showFiles('{{ st }}')">
         <div class="count-val c-{{ st }}" id="cnt-{{ st }}">{{ data.file_counts[st] }}</div>
         <div class="count-label">{{ st }}</div>

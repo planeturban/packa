@@ -212,7 +212,10 @@ async def _scan_task(scan_dir: str, extensions: set[str], min_size: int, max_siz
                 _scan.skipped += 1
                 continue
             try:
-                video = collect(str(path))
+                video = collect(str(path), _config.scan.checksum_bytes)
+                existing = crud.get_record_by_checksum(db, video.checksum)
+                status = FileStatus.DUPLICATE if existing else FileStatus.PENDING
+                duplicate_of_id = existing.id if existing else None
                 crud.create_file_record(db, FileRecordCreate(
                     file_name=video.file_name,
                     file_path=video.file_path,
@@ -220,6 +223,8 @@ async def _scan_task(scan_dir: str, extensions: set[str], min_size: int, max_siz
                     c_time=video.c_time,
                     m_time=video.m_time,
                     checksum=video.checksum,
+                    status=status,
+                    duplicate_of_id=duplicate_of_id,
                 ))
                 _scan.found += 1
             except Exception as exc:
@@ -324,9 +329,12 @@ def remove_slave(slave_id: int):
 @app.post("/transfer", response_model=FileRecordOut, status_code=201)
 def transfer_file(body: TransferRequest, db: Session = Depends(get_db)):
     try:
-        video = collect(body.file_path)
+        video = collect(body.file_path, _config.scan.checksum_bytes)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    existing = crud.get_record_by_checksum(db, video.checksum)
+    status = FileStatus.DUPLICATE if existing else FileStatus.PENDING
+    duplicate_of_id = existing.id if existing else None
     record = crud.create_file_record(db, FileRecordCreate(
         file_name=video.file_name,
         file_path=video.file_path,
@@ -334,8 +342,13 @@ def transfer_file(body: TransferRequest, db: Session = Depends(get_db)):
         c_time=video.c_time,
         m_time=video.m_time,
         checksum=video.checksum,
+        status=status,
+        duplicate_of_id=duplicate_of_id,
     ))
-    print(f"[master] queued '{video.file_name}'  record={record.id}")
+    if existing:
+        print(f"[master] duplicate '{video.file_name}' — same content as record {existing.id}")
+    else:
+        print(f"[master] queued '{video.file_name}'  record={record.id}")
     return record
 
 
@@ -438,6 +451,30 @@ def get_stats(db: Session = Depends(get_db)):
 @app.get("/stats/slave/{slave_id}")
 def get_slave_stats(slave_id: str, db: Session = Depends(get_db)):
     return crud.get_slave_stats(db, slave_id)
+
+
+@app.get("/files/duplicate-pairs")
+def list_duplicate_pairs(db: Session = Depends(get_db)):
+    dupes = (
+        db.query(FileRecord)
+        .filter(FileRecord.status == FileStatus.DUPLICATE)
+        .all()
+    )
+    prefix = _config.path_prefix
+    result = []
+    for d in dupes:
+        orig = crud.get_file_record(db, d.duplicate_of_id) if d.duplicate_of_id else None
+        dup_path = d.file_path[len(prefix):] if prefix and d.file_path.startswith(prefix) else d.file_path
+        orig_path = None
+        if orig:
+            orig_path = orig.file_path[len(prefix):] if prefix and orig.file_path.startswith(prefix) else orig.file_path
+        result.append({
+            "id": d.id,
+            "file_path": dup_path,
+            "duplicate_of_id": d.duplicate_of_id,
+            "original_file_path": orig_path,
+        })
+    return result
 
 
 @app.get("/files", response_model=list[FileRecordOut])

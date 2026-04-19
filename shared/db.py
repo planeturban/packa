@@ -15,6 +15,7 @@ _MIGRATE_COLS = [
     ("encoder", "VARCHAR(64)"),
     ("avg_fps", "FLOAT"),
     ("avg_speed", "FLOAT"),
+    ("duplicate_of_id", "INTEGER"),
 ]
 
 

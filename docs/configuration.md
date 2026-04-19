@@ -38,6 +38,7 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 | `PACKA_MASTER_EXTENSIONS` | `master.scan.extensions` (comma-separated) |
 | `PACKA_MASTER_MIN_SIZE` | `master.scan.min_size` (MB) |
 | `PACKA_MASTER_MAX_SIZE` | `master.scan.max_size` (MB) |
+| `PACKA_MASTER_CHECKSUM_BYTES` | `master.scan.checksum_bytes` |
 
 ---
 
