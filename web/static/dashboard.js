@@ -570,6 +570,8 @@ async function _doSlavePoll(host, port) {
       const savedEnc = encSel ? encSel.value : null;
       const batchInp = document.getElementById(`batch-${port}`);
       const savedBatch = batchInp ? batchInp.value : null;
+      const replaceChk = document.getElementById(`replace-${port}`);
+      const savedReplace = replaceChk ? replaceChk.checked : null;
       const cmdEl = document.getElementById(`ffcmd-${port}`);
       const cmdOpen = cmdEl ? cmdEl.style.display === 'block' : false;
       const focusedId = document.activeElement?.id || null;
@@ -581,6 +583,10 @@ async function _doSlavePoll(host, port) {
       if (savedBatch) {
         const newInp = document.getElementById(`batch-${port}`);
         if (newInp) newInp.value = savedBatch;
+      }
+      if (savedReplace !== null) {
+        const newChk = document.getElementById(`replace-${port}`);
+        if (newChk) newChk.checked = savedReplace;
       }
       if (focusedId) {
         const refEl = document.getElementById(focusedId);
