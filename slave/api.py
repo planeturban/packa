@@ -97,6 +97,7 @@ async def lifespan(app: FastAPI):
     tasks: list[asyncio.Task] = []
     worker_state.presets = _config.ffmpeg.presets
     worker_state.available_encoders = _config.ffmpeg.available_encoders
+    worker_state.replace_original = get_setting("replace_original") == "true"
 
     _default_encoder = worker_state.available_encoders[0] if worker_state.available_encoders else "libx265"
     stored_batch = get_setting("batch_size")
@@ -162,11 +163,13 @@ class SlaveStatus(BaseModel):
     encoder_labels: dict[str, str]
     current_cmd: str | None
     batch_size: int
+    replace_original: bool
 
 
 class EncoderUpdate(BaseModel):
     encoder: str
     batch_size: int | None = None
+    replace_original: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +193,7 @@ def get_status():
         encoder_labels={k: (f"{v.display_name} ({k})" if v.display_name else k) for k, v in worker_state.presets.items()},
         current_cmd=worker_state.current_cmd or None,
         batch_size=worker_state.batch_size,
+        replace_original=worker_state.replace_original,
         progress=ProgressOut(
             percent=p.percent,
             speed=p.speed,
@@ -329,7 +333,7 @@ def wake_conversion():
 
 @app.get("/settings")
 def get_settings():
-    return {"encoder": worker_state.encoder, "batch_size": worker_state.batch_size}
+    return {"encoder": worker_state.encoder, "batch_size": worker_state.batch_size, "replace_original": worker_state.replace_original}
 
 
 @app.post("/settings")
@@ -346,6 +350,9 @@ def update_settings(body: EncoderUpdate):
     if body.batch_size is not None:
         worker_state.batch_size = max(1, body.batch_size)
         set_setting("batch_size", str(worker_state.batch_size))
+    if body.replace_original is not None:
+        worker_state.replace_original = body.replace_original
+        set_setting("replace_original", "true" if body.replace_original else "false")
     if worker_state.unconfigured:
         worker_state.unconfigured = False
         worker_state.sleeping = False

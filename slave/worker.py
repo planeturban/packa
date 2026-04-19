@@ -398,6 +398,29 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                 avg_fps=avg_fps, avg_speed=avg_speed,
             )
         else:
+            if worker_state.replace_original:
+                try:
+                    shutil.move(output_path, job.file_path)
+                    print(f"[worker] record {job.record_id} moved output → {job.file_path}")
+                except Exception as exc:
+                    print(f"[worker] record {job.record_id} failed to replace original: {exc}")
+                    update_conversion_result(
+                        db, job.record_id,
+                        status=FileStatus.ERROR,
+                        pid=proc.pid, output_size=output_size,
+                        started_at=started_at, finished_at=finished_at,
+                        encoder=worker_state.encoder,
+                        avg_fps=avg_fps, avg_speed=avg_speed,
+                    )
+                    await _report_result_to_master(
+                        job.record_id, FileStatus.ERROR,
+                        pid=proc.pid, output_size=output_size,
+                        started_at=started_at, finished_at=finished_at,
+                        encoder=worker_state.encoder,
+                        avg_fps=avg_fps, avg_speed=avg_speed,
+                    )
+                    return
+
             update_conversion_result(
                 db, job.record_id,
                 status=FileStatus.COMPLETE,
