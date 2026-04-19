@@ -90,7 +90,8 @@ Each `[slave.ffmpeg.encoder.<key>]` section defines one encoder. Only the encode
 | Field | Description |
 |-------|-------------|
 | `display_name` | Optional human-readable label shown in the dropdown |
-| `video_args` | ffmpeg video codec arguments |
+| `video_args` | ffmpeg video codec arguments, placed after `-i` |
+| `input_args` | Optional ffmpeg input options placed **before** `-i` (e.g. `-hwaccel vaapi`) |
 
 The active encoder defaults to the first defined encoder and can be changed at runtime from the dashboard; the choice is persisted in `slave.db`.
 

@@ -104,7 +104,8 @@ video_args   = "-c:v hevc_nvenc -preset p5 -cq 24"
 
 [slave.ffmpeg.encoder.vaapi]
 display_name = "Intel/AMD"
-video_args   = "-init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va -vf format=nv12,hwupload -c:v hevc_vaapi -rc_mode ICQ -global_quality 23"
+input_args   = "-init_hw_device vaapi=va:/dev/dri/renderD128 -hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi"
+video_args   = "-filter_hw_device va -c:v hevc_vaapi -rc_mode ICQ -global_quality 23"
 
 [slave.ffmpeg.encoder.videotoolbox]
 display_name = "Apple"

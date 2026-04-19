@@ -77,8 +77,10 @@ PENDING → ASSIGNED → DISCARDED   (already HEVC — skipped before ffmpeg run
 ## ffmpeg
 
 ```
-ffmpeg -i {file} -map 0 -c copy {video_args} [extra_args] -progress pipe:1 -nostats {output}
+ffmpeg [input_args] -i {file} -map 0 -c copy {video_args} [extra_args] -progress pipe:1 -nostats {output}
 ```
+
+`input_args` is only present when the encoder preset defines it — used for hardware decode options that must precede `-i` (e.g. `-hwaccel vaapi`).
 
 - All streams (audio, subtitles, attachments) are copied; only the video stream is re-encoded.
 - `ffprobe` checks the video codec before starting. If already HEVC the record is immediately set to `discarded`.

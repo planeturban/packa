@@ -39,7 +39,8 @@ class ScanConfig:
 class EncoderPreset:
     """FFmpeg arguments for one encoder preset."""
     display_name: str = ""  # human-readable label for the web dashboard dropdown
-    video_args: str = ""    # video codec args (e.g. "-c:v hevc_nvenc -preset p5 -cq 24")
+    video_args: str = ""    # video codec args, placed after -i
+    input_args: str = ""    # input options placed before -i (e.g. -hwaccel vaapi)
 
 
 @dataclass
@@ -159,6 +160,7 @@ def load_slave(config_path: str | None) -> Config:
             name: EncoderPreset(
                 display_name=values.get("display_name", ""),
                 video_args=values.get("video_args", ""),
+                input_args=values.get("input_args", ""),
             )
             for name, values in encoder_data.items()
         }

@@ -50,7 +50,8 @@ def _build_cmd(
         if preset and preset.video_args.strip()
         else ["-c:v", "libx265"]
     )
-    cmd = [ffmpeg_bin, "-i", file_path, "-map", "0", "-c", "copy"] + video_args
+    input_args = shlex.split(preset.input_args) if preset and preset.input_args.strip() else []
+    cmd = [ffmpeg_bin] + input_args + ["-i", file_path, "-map", "0", "-c", "copy"] + video_args
     if extra_args:
         cmd.extend(shlex.split(extra_args))
     cmd += ["-y", "-progress", "pipe:1", "-nostats", output_path]
