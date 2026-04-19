@@ -24,14 +24,14 @@ const _ST_COLORS = {
 // ── Dashboard file table ──────────────────────────────────────────────────
 let _dashFiles  = [];
 let _dashSlaves = [];
-let _dashFilter = null;
+let _dashFilter = new Set();
 let _dashPage   = 1;
 let _dashQuery  = '';
 const _DASH_PER_PAGE = 50;
 
 function _dashFiltered() {
   let result = _dashFiles;
-  if (_dashFilter) result = result.filter(f => f.status === _dashFilter);
+  if (_dashFilter.size) result = result.filter(f => _dashFilter.has(f.status));
   if (_dashQuery) {
     const q = _norm(_dashQuery);
     result = result.filter(f =>
@@ -44,7 +44,13 @@ function _dashFiltered() {
 }
 
 function _setDashFilter(s) {
-  _dashFilter = (s === _dashFilter) ? null : s;
+  if (s === null) {
+    _dashFilter.clear();
+  } else if (_dashFilter.has(s)) {
+    _dashFilter.delete(s);
+  } else {
+    _dashFilter.add(s);
+  }
   _dashPage = 1;
   _renderDashFiles();
 }
@@ -131,12 +137,12 @@ function _renderDashFiles() {
   const base   = 'border:none;border-radius:3px;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;font-family:inherit;padding:.18rem .52rem;';
   const shadow = 'box-shadow:inset 0 0 0 1.5px currentColor;';
   let filters  = '<div style="display:flex;gap:.3rem;flex-wrap:wrap;margin-bottom:.55rem">';
-  const allActive = _dashFilter === null;
+  const allActive = _dashFilter.size === 0;
   filters += `<button onclick="_setDashFilter(null)" style="${base}background:${allActive?'#e8eaf6':'#f0f0f0'};color:#3949ab;${allActive?shadow:''}">All</button>`;
   for (const [s, c] of Object.entries(_ST_COLORS)) {
     const n = _dashFiles.filter(f => f.status === s).length;
     if (!n) continue;
-    const active = _dashFilter === s;
+    const active = _dashFilter.has(s);
     filters += `<button onclick="_setDashFilter('${s}')" style="${base}background:${c.bg};color:${c.color};${active?shadow:''}">${s} (${n})</button>`;
   }
   filters += '</div>';
