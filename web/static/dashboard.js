@@ -352,6 +352,17 @@ function _slaveBtn(action, s, label, cls) {
   </form>`;
 }
 
+function _showCopied(anchor) {
+  const existing = document.getElementById('_copy-toast');
+  if (existing) existing.remove();
+  const t = document.createElement('div');
+  t.id = '_copy-toast';
+  t.textContent = 'Copied to clipboard';
+  t.style.cssText = 'position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:#323232;color:#fff;font-size:.8rem;padding:.45rem 1rem;border-radius:6px;pointer-events:none;opacity:1;transition:opacity .4s;z-index:9999;white-space:nowrap';
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 400); }, 1800);
+}
+
 function _esc(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
@@ -528,7 +539,7 @@ async function _doSlavePoll(host, port) {
       const batchInp = document.getElementById(`batch-${port}`);
       const savedBatch = batchInp ? batchInp.value : null;
       const cmdEl = document.getElementById(`ffcmd-${port}`);
-      const cmdOpen = cmdEl ? cmdEl.style.display !== 'none' : false;
+      const cmdOpen = cmdEl ? cmdEl.style.display === 'block' : false;
       const focusedId = document.activeElement?.id || null;
       el.innerHTML = _slaveStatusHtml(data.status, host, port);
       if (savedEnc) {
@@ -991,7 +1002,12 @@ function _slaveStatusHtml(st, host, port) {
     const cmdBtn = st.current_cmd
       ? ` <button onclick="document.getElementById('${cmdId}').style.display=document.getElementById('${cmdId}').style.display==='none'?'block':'none'"
              style="border:none;background:none;color:var(--text-dim);font-size:.7rem;cursor:pointer;padding:.1rem .3rem;text-decoration:underline">cmd</button>
-           <pre id="${cmdId}" style="display:none;font-size:.7rem;white-space:pre-wrap;word-break:break-all;background:var(--surface-2);border:1px solid var(--border-2);border-radius:4px;padding:.5rem;margin:.4rem 0 0;color:var(--text)">${_esc(st.current_cmd)}</pre>`
+           <div id="${cmdId}" data-cmd="${_esc(st.current_cmd)}" style="display:none;position:relative;margin:.4rem 0 0">
+             <button onclick="navigator.clipboard.writeText(this.parentElement.dataset.cmd).then(()=>_showCopied(this))"
+               title="Copy to clipboard"
+               style="position:absolute;top:.35rem;right:.35rem;border:none;background:none;color:var(--text-dim);cursor:pointer;font-size:.85rem;padding:.1rem .25rem;line-height:1">⎘</button>
+             <pre style="font-size:.7rem;white-space:pre-wrap;word-break:break-all;background:var(--surface-2);border:1px solid var(--border-2);border-radius:4px;padding:.5rem;color:var(--text);margin:0">${_esc(st.current_cmd)}</pre>
+           </div>`
       : '';
     h += `<div style="font-size:.8rem;color:var(--text-dim);margin-bottom:.6rem">Active: ${_encBadge(st.encoder)}${cmdBtn}</div>`;
   }
