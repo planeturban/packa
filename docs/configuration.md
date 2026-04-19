@@ -26,8 +26,9 @@ prefix = "/mnt/data/"   # stripped before sending paths to slaves; used as scan 
 
 [master.scan]
 extensions = [".mkv", ".mp4", ".avi", ".mov"]
-# min_size = 0   # MB — 0 = no limit
+# min_size = 0           # MB — 0 = no limit
 # max_size = 0
+# checksum_bytes = 4194304   # bytes read from middle of file for duplicate detection (default 4 MB)
 ```
 
 | Environment variable | Config key |
@@ -62,6 +63,8 @@ output_dir = "/mnt/output"
 
 [slave.worker]
 poll_interval = 5   # seconds between polls when queue is empty
+# cancel_projected_ratio = 1.0    # cancel if projected output size > source * ratio; 0 = disabled
+# cancel_min_progress    = 10.0   # minimum % progress before projected-size check kicks in
 ```
 
 | Environment variable | Config key |
@@ -77,6 +80,8 @@ poll_interval = 5   # seconds between polls when queue is empty
 | `PACKA_SLAVE_FFMPEG_OUTPUT_DIR` | `slave.ffmpeg.output_dir` |
 | `PACKA_SLAVE_FFMPEG_EXTRA_ARGS` | `slave.ffmpeg.extra_args` |
 | `PACKA_SLAVE_POLL_INTERVAL` | `slave.worker.poll_interval` |
+| `PACKA_SLAVE_CANCEL_PROJECTED_RATIO` | `slave.worker.cancel_projected_ratio` |
+| `PACKA_SLAVE_CANCEL_MIN_PROGRESS` | `slave.worker.cancel_min_progress` |
 
 ### Encoder presets
 
@@ -88,6 +93,8 @@ Each `[slave.ffmpeg.encoder.<key>]` section defines one encoder. Only the encode
 | `video_args` | ffmpeg video codec arguments |
 
 The active encoder defaults to the first defined encoder and can be changed at runtime from the dashboard; the choice is persisted in `slave.db`.
+
+The **Replace original** flag (also in the slave modal) moves the converted file back to the source path on success. If the move fails, the record is set to `error`. This setting is persisted in `slave.db` and is off by default.
 
 ```toml
 [slave.ffmpeg.encoder.libx265]

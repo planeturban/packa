@@ -13,6 +13,7 @@
 | `PATCH` | `/files/{id}/status` | Update record status |
 | `GET` | `/files` | List records, filterable by `?status=` |
 | `GET` | `/files/{id}` | Get a single record |
+| `GET` | `/files/duplicate-pairs` | List duplicate records with their original paths |
 | `DELETE` | `/files/{id}` | Delete a record |
 | `POST` | `/scan/start` | Start a background directory scan |
 | `POST` | `/scan/stop` | Cancel a running scan |
@@ -39,5 +40,6 @@
 | `POST` | `/conversion/drain` | Finish current job then enter sleep mode |
 | `POST` | `/conversion/sleep` | Enter sleep mode (no polling, no new jobs) |
 | `POST` | `/conversion/wake` | Leave sleep mode |
-| `GET` | `/settings` | Get current encoder and batch size |
-| `POST` | `/settings` | Update encoder and/or batch size |
+| `POST` | `/jobs/push` | Accept a list of pre-assigned jobs (called by master after `/jobs/assign`) |
+| `GET` | `/settings` | Get current encoder, batch size, and replace_original flag |
+| `POST` | `/settings` | Update encoder, batch size, and/or replace_original flag |
