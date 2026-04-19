@@ -177,6 +177,7 @@ function _renderDashFiles() {
   }
 
   const prevChecked = new Set(_dashSelectedIds());
+  const searchWasActive = document.activeElement?.id === 'dash-search';
   const tblEl = document.getElementById('dash-file-table');
   if (tblEl) tblEl.innerHTML = h;
   // Restore checked state
@@ -190,8 +191,7 @@ function _renderDashFiles() {
     dashAllChk.checked       = total > 0 && checked === total;
     dashAllChk.indeterminate = checked > 0 && checked < total;
   }
-  // Restore focus to search if it was active
-  if (document.activeElement && document.activeElement.id === 'dash-search') {
+  if (searchWasActive) {
     const el = document.getElementById('dash-search');
     if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
   }
@@ -389,6 +389,7 @@ async function _doSlavePoll(host, port) {
       const savedBatch = batchInp ? batchInp.value : null;
       const cmdEl = document.getElementById(`ffcmd-${port}`);
       const cmdOpen = cmdEl ? cmdEl.style.display !== 'none' : false;
+      const focusedId = document.activeElement?.id || null;
       el.innerHTML = _slaveStatusHtml(data.status, host, port);
       if (savedEnc) {
         const newSel = document.getElementById(`enc-${port}`);
@@ -397,6 +398,10 @@ async function _doSlavePoll(host, port) {
       if (savedBatch) {
         const newInp = document.getElementById(`batch-${port}`);
         if (newInp) newInp.value = savedBatch;
+      }
+      if (focusedId) {
+        const refEl = document.getElementById(focusedId);
+        if (refEl) refEl.focus();
       }
       if (cmdOpen) {
         const newCmd = document.getElementById(`ffcmd-${port}`);
