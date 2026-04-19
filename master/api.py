@@ -67,40 +67,57 @@ def _recover() -> None:
         db.close()
 
 
+_hevc_cursor: int = 0  # last record id checked; resets each full cycle
+
+
+async def _probe_codec(file_path: str) -> str:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe", "-v", "quiet",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name",
+            "-of", "csv=p=0",
+            file_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate()
+        return stdout.decode().strip().lower()
+    except Exception:
+        return ""
+
+
 async def _hevc_check_loop() -> None:
-    """Periodically probe PENDING records and discard any that are already HEVC."""
+    """Cursor-based loop: probe all PENDING records for HEVC, 20 at a time concurrently."""
+    global _hevc_cursor
     await asyncio.sleep(15)
     while True:
         db = SessionLocal()
         try:
             records = (
                 db.query(FileRecord)
-                .filter(FileRecord.status == FileStatus.PENDING)
-                .limit(5)
+                .filter(
+                    FileRecord.status == FileStatus.PENDING,
+                    FileRecord.id > _hevc_cursor,
+                )
+                .order_by(FileRecord.id)
+                .limit(20)
                 .all()
             )
-            for record in records:
-                await asyncio.sleep(0)
-                try:
-                    proc = await asyncio.create_subprocess_exec(
-                        "ffprobe", "-v", "quiet",
-                        "-select_streams", "v:0",
-                        "-show_entries", "stream=codec_name",
-                        "-of", "csv=p=0",
-                        record.file_path,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.DEVNULL,
-                    )
-                    stdout, _ = await proc.communicate()
-                    if stdout.decode().strip().lower() == "hevc":
-                        record.status = FileStatus.DISCARDED
-                        db.commit()
-                        print(f"[master] record {record.id} discarded — already HEVC ({record.file_name!r})")
-                except Exception:
-                    pass
+            if not records:
+                _hevc_cursor = 0
+                await asyncio.sleep(60)
+                continue
+            codecs = await asyncio.gather(*[_probe_codec(r.file_path) for r in records])
+            for record, codec in zip(records, codecs):
+                if codec == "hevc":
+                    record.status = FileStatus.DISCARDED
+                    print(f"[master] record {record.id} discarded — already HEVC ({record.file_name!r})")
+            db.commit()
+            _hevc_cursor = records[-1].id
         finally:
             db.close()
-        await asyncio.sleep(30)
+        await asyncio.sleep(0)
 
 
 async def _periodic_scan_loop() -> None:
