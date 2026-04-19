@@ -214,6 +214,7 @@ Served at port 8080. If `username` and `password` are both set, a login page is 
 - Scan controls and periodic scan toggle
 - Per-slave cards: status badge, queue depth, live ffmpeg progress (speed, FPS, ETA, sizes), encoder badge
 - Slave detail modal: live progress, encoder selector, full file history with encoder filter
+- Statistics section: overall totals (jobs converted, bytes saved, avg compression ratio, avg duration) and a per-slave table; clicking a slave row opens a breakdown by encoder with min/max duration, FPS, speed and size ratio, plus a daily bar chart
 
 **Encoder badges** are colour-coded and appear on slave cards, in the detail modal, and in file lists. File tables can be filtered by encoder.
 
@@ -223,9 +224,11 @@ Served at port 8080. If `username` and `password` are both set, a login page is 
 
 **Unconfigured state:** a slave with no prior configuration starts in an unconfigured state — it will not poll or process jobs until an encoder is selected from the dashboard.
 
+**Disk full:** if free space in the output directory drops below 1 GB before or during a conversion, ffmpeg is terminated, the record is reset to `pending`, and the slave enters sleep mode. A "Disk full" badge is shown on the slave card.
+
 **Controls per slave:** Pause, Resume, Finish current (drain — completes the active job then sleeps), Stop, Sleep, Wake.
 
-The page auto-refreshes every 3 seconds. The slave modal polls at 500 ms during conversion and 2 s when idle. Dark mode follows the system preference with a manual override in the nav bar.
+The page auto-refreshes every 3 seconds. The slave modal polls at 500 ms during conversion and 2 s when idle. Statistics refresh every 30 seconds. Dark mode follows the system preference with a manual override in the nav bar.
 
 ---
 
@@ -276,6 +279,8 @@ ffmpeg -i {file} -map 0 -c copy {video_args} [extra_args] -progress pipe:1 -nost
 | `POST` | `/scan/stop` | Cancel running scan |
 | `GET` | `/scan/status` | Scan progress |
 | `GET/POST` | `/scan/settings` | Periodic scan interval and enabled flag |
+| `GET` | `/stats` | Aggregated conversion statistics |
+| `GET` | `/stats/slave/{id}` | Per-encoder statistics for a specific slave |
 
 ### Slave (port 8000)
 
