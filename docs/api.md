@@ -4,42 +4,43 @@
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/slaves` | Register a slave |
-| `GET` | `/slaves` | List registered slaves |
-| `DELETE` | `/slaves/{id}` | Deregister a slave |
+| `POST` | `/workers` | Register a worker |
+| `GET` | `/workers` | List registered workers |
+| `DELETE` | `/workers/{id}` | Deregister a worker |
 | `POST` | `/transfer` | Add a single file `{"file_path": "..."}` |
-| `POST` | `/jobs/claim` | Claim pending jobs `{"slave_id": "...", "count": 1}` |
-| `PATCH` | `/files/{id}/result` | Slave reports conversion result |
+| `POST` | `/jobs/claim` | Worker claims pending jobs `{"worker_id": "...", "count": 1}` |
+| `POST` | `/jobs/assign` | Directly assign specific file IDs to a worker `{"worker_id": "...", "ids": [...]}` |
+| `PATCH` | `/files/{id}/result` | Worker reports conversion result |
 | `PATCH` | `/files/{id}/status` | Update record status |
 | `GET` | `/files` | List records, filterable by `?status=` |
 | `GET` | `/files/{id}` | Get a single record |
-| `GET` | `/files/duplicate-pairs` | List duplicate records with their original paths |
+| `GET` | `/files/duplicate-pairs` | List duplicate records alongside their original paths |
 | `DELETE` | `/files/{id}` | Delete a record |
 | `POST` | `/scan/start` | Start a background directory scan |
 | `POST` | `/scan/stop` | Cancel a running scan |
-| `GET` | `/scan/status` | Scan progress |
+| `GET` | `/scan/status` | Scan progress and current path |
 | `GET` | `/scan/settings` | Get periodic scan settings |
 | `POST` | `/scan/settings` | Update periodic scan settings |
-| `GET` | `/stats` | Aggregated conversion statistics |
-| `GET` | `/stats/slave/{id}` | Per-encoder statistics for a specific slave |
+| `GET` | `/stats` | Aggregated conversion statistics (overall + per-worker + per-day) |
+| `GET` | `/stats/worker/{id}` | Per-encoder statistics for a specific worker |
 
 ---
 
-## Slave (default port 8000)
+## Worker (default port 8000)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/status` | Worker state, queue depth, live ffmpeg progress |
+| `GET` | `/status` | Worker state, queue depth, live ffmpeg progress, encoder, batch size |
 | `GET` | `/files` | List records, filterable by `?status=` |
 | `GET` | `/files/{id}` | Get a single record |
-| `DELETE` | `/files/{id}` | Delete a record (stops ffmpeg if running) |
+| `DELETE` | `/files/{id}` | Delete a record (stops ffmpeg if currently processing this file) |
 | `PATCH` | `/files/{id}/status` | Update record status |
+| `POST` | `/jobs/push` | Accept a list of pre-assigned jobs (called by master after `/jobs/assign`) |
 | `POST` | `/conversion/stop` | Terminate ffmpeg (`cancel_reason = "user"`) |
 | `POST` | `/conversion/pause` | Suspend ffmpeg (SIGSTOP) |
-| `POST` | `/conversion/resume` | Resume paused ffmpeg |
+| `POST` | `/conversion/resume` | Resume paused ffmpeg (SIGCONT) |
 | `POST` | `/conversion/drain` | Finish current job then enter sleep mode |
 | `POST` | `/conversion/sleep` | Enter sleep mode (no polling, no new jobs) |
 | `POST` | `/conversion/wake` | Leave sleep mode |
-| `POST` | `/jobs/push` | Accept a list of pre-assigned jobs (called by master after `/jobs/assign`) |
 | `GET` | `/settings` | Get current encoder, batch size, and replace_original flag |
 | `POST` | `/settings` | Update encoder, batch size, and/or replace_original flag |

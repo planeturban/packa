@@ -22,7 +22,7 @@ bind     = "localhost"   # use "any" for 0.0.0.0
 api_port = 9000
 
 [master.paths]
-prefix = "/mnt/data/"   # stripped before sending paths to slaves; used as scan root
+prefix = "/mnt/data/"   # stripped before sending paths to workers; used as scan root
 
 [master.scan]
 extensions = [".mkv", ".mp4", ".avi", ".mov"]
@@ -43,49 +43,49 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 
 ---
 
-## Slave
+## Worker
 
 ```toml
-[slave]
+[worker]
 bind        = "localhost"
 api_port    = 8000
 master_host = "localhost"
 master_port = 9000
 id          = "storage-01"   # unique ID; omit to auto-generate and persist a UUID
 
-[slave.paths]
+[worker.paths]
 prefix = "/mnt/files/"   # prepended to paths from master; omit to reuse master prefix
 
-[slave.ffmpeg]
+[worker.ffmpeg]
 bin        = "ffmpeg"
 output_dir = "/mnt/output"
 # extra_args = ""
 
-[slave.worker]
+[worker.worker]
 poll_interval     = 5   # seconds between polls when queue is empty
 cancel_thresholds = [[10.0, 1.10], [25.0, 1.05], [50.0, 1.0]]
 ```
 
-`cancel_thresholds` is a list of `[progress%, ratio]` pairs. Once the given progress percentage is reached, ffmpeg is terminated early if the projected output size exceeds `source_size × ratio`. The tightest (highest progress) reached threshold applies. Set to `[]` to disable. As an environment variable: `PACKA_SLAVE_CANCEL_THRESHOLDS=10.0:1.10,25.0:1.05,50.0:1.0`.
+`cancel_thresholds` is a list of `[progress%, ratio]` pairs. Once the given progress percentage is reached, ffmpeg is terminated early if the projected output size exceeds `source_size × ratio`. The tightest (highest progress) reached threshold applies. Set to `[]` to disable. As an environment variable: `PACKA_WORKER_CANCEL_THRESHOLDS=10.0:1.10,25.0:1.05,50.0:1.0`.
 
 | Environment variable | Config key |
 |----------------------|------------|
-| `PACKA_SLAVE_BIND` | `slave.bind` |
-| `PACKA_SLAVE_API_PORT` | `slave.api_port` |
-| `PACKA_SLAVE_ID` | `slave.id` |
-| `PACKA_SLAVE_MASTER_HOST` | `slave.master_host` |
-| `PACKA_SLAVE_MASTER_PORT` | `slave.master_port` |
-| `PACKA_SLAVE_ADVERTISE_HOST` | `slave.advertise_host` |
-| `PACKA_SLAVE_PREFIX` | `slave.paths.prefix` |
-| `PACKA_SLAVE_FFMPEG_BIN` | `slave.ffmpeg.bin` |
-| `PACKA_SLAVE_FFMPEG_OUTPUT_DIR` | `slave.ffmpeg.output_dir` |
-| `PACKA_SLAVE_FFMPEG_EXTRA_ARGS` | `slave.ffmpeg.extra_args` |
-| `PACKA_SLAVE_POLL_INTERVAL` | `slave.worker.poll_interval` |
-| `PACKA_SLAVE_CANCEL_THRESHOLDS` | `slave.worker.cancel_thresholds` (format: `"10.0:1.10,25.0:1.05"`) |
+| `PACKA_WORKER_BIND` | `worker.bind` |
+| `PACKA_WORKER_API_PORT` | `worker.api_port` |
+| `PACKA_WORKER_ID` | `worker.id` |
+| `PACKA_WORKER_MASTER_HOST` | `worker.master_host` |
+| `PACKA_WORKER_MASTER_PORT` | `worker.master_port` |
+| `PACKA_WORKER_ADVERTISE_HOST` | `worker.advertise_host` |
+| `PACKA_WORKER_PREFIX` | `worker.paths.prefix` |
+| `PACKA_WORKER_FFMPEG_BIN` | `worker.ffmpeg.bin` |
+| `PACKA_WORKER_FFMPEG_OUTPUT_DIR` | `worker.ffmpeg.output_dir` |
+| `PACKA_WORKER_FFMPEG_EXTRA_ARGS` | `worker.ffmpeg.extra_args` |
+| `PACKA_WORKER_POLL_INTERVAL` | `worker.worker.poll_interval` |
+| `PACKA_WORKER_CANCEL_THRESHOLDS` | `worker.worker.cancel_thresholds` (format: `"10.0:1.10,25.0:1.05"`) |
 
 ### Encoder presets
 
-Each `[slave.ffmpeg.encoder.<key>]` section defines one encoder. Only the encoders you define appear in the dashboard dropdown. If none are defined, a bare `libx265` preset is used as a fallback.
+Each `[worker.ffmpeg.encoder.<key>]` section defines one encoder. Only the encoders you define appear in the dashboard dropdown. If none are defined, a bare `libx265` preset is used as a fallback.
 
 | Field | Description |
 |-------|-------------|
@@ -93,28 +93,28 @@ Each `[slave.ffmpeg.encoder.<key>]` section defines one encoder. Only the encode
 | `video_args` | ffmpeg video codec arguments, placed after `-i` |
 | `input_args` | Optional ffmpeg input options placed **before** `-i` (e.g. `-hwaccel vaapi`) |
 
-The active encoder defaults to the first defined encoder and can be changed at runtime from the dashboard; the choice is persisted in `slave.db`.
+The active encoder defaults to the first defined encoder and can be changed at runtime from the dashboard; the choice is persisted in `worker.db`.
 
-The **Replace original** flag (also in the slave modal) moves the converted file back to the source path on success. If the move fails, the record is set to `error`. This setting is persisted in `slave.db` and is off by default.
+The **Replace original** flag (also in the worker modal) moves the converted file back to the source path on success. If the move fails, the record is set to `error`. This setting is persisted in `worker.db` and is off by default.
 
 ```toml
-[slave.ffmpeg.encoder.libx265]
+[worker.ffmpeg.encoder.libx265]
 display_name = "Software"
 video_args   = "-c:v libx265"
 
-[slave.ffmpeg.encoder.nvenc]
+[worker.ffmpeg.encoder.nvenc]
 display_name = "NVIDIA"
 video_args   = "-c:v hevc_nvenc -preset p5 -cq 24"
 
-[slave.ffmpeg.encoder.vaapi]
+[worker.ffmpeg.encoder.vaapi]
 display_name = "Intel/AMD"
 video_args   = "-init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va -vf format=nv12,hwupload -c:v hevc_vaapi -rc_mode ICQ -global_quality 23"
 
-[slave.ffmpeg.encoder.videotoolbox]
+[worker.ffmpeg.encoder.videotoolbox]
 display_name = "Apple"
 video_args   = "-c:v hevc_videotoolbox -q:v 65"
 
-[slave.ffmpeg.encoder.rkmpp]
+[worker.ffmpeg.encoder.rkmpp]
 display_name = "Rockchip"
 video_args   = "-c:v hevc_rkmpp -rc_mode CQP -qp_init 28"
 ```

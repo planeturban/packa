@@ -90,7 +90,7 @@ def _master_url() -> str:
     return f"http://{_config.master_host}:{_config.master_port}"
 
 
-def _slave_url(host: str, api_port: int) -> str:
+def _worker_url(host: str, api_port: int) -> str:
     return f"http://{host}:{api_port}"
 
 
@@ -132,15 +132,15 @@ def logout(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# Action routes — proxy commands to master / slaves
+# Action routes — proxy commands to master / workers
 # ---------------------------------------------------------------------------
 
-async def _slave_action(request: Request, host: str, api_port: int, endpoint: str) -> RedirectResponse:
+async def _worker_action(request: Request, host: str, api_port: int, endpoint: str) -> RedirectResponse:
     if not _logged_in(request):
         return _redirect_login()
     async with httpx.AsyncClient(timeout=5) as client:
         try:
-            await client.post(f"{_slave_url(host, api_port)}/{endpoint}")
+            await client.post(f"{_worker_url(host, api_port)}/{endpoint}")
         except Exception:
             pass
     return RedirectResponse("/", status_code=303)
@@ -189,34 +189,34 @@ async def action_scan_stop(request: Request):
     return RedirectResponse("/", status_code=303)
 
 
-@app.post("/actions/slave/stop")
-async def action_slave_stop(request: Request, host: str = Form(), api_port: int = Form()):
-    return await _slave_action(request, host, api_port, "conversion/stop")
+@app.post("/actions/worker/stop")
+async def action_worker_stop(request: Request, host: str = Form(), api_port: int = Form()):
+    return await _worker_action(request, host, api_port, "conversion/stop")
 
 
-@app.post("/actions/slave/pause")
-async def action_slave_pause(request: Request, host: str = Form(), api_port: int = Form()):
-    return await _slave_action(request, host, api_port, "conversion/pause")
+@app.post("/actions/worker/pause")
+async def action_worker_pause(request: Request, host: str = Form(), api_port: int = Form()):
+    return await _worker_action(request, host, api_port, "conversion/pause")
 
 
-@app.post("/actions/slave/resume")
-async def action_slave_resume(request: Request, host: str = Form(), api_port: int = Form()):
-    return await _slave_action(request, host, api_port, "conversion/resume")
+@app.post("/actions/worker/resume")
+async def action_worker_resume(request: Request, host: str = Form(), api_port: int = Form()):
+    return await _worker_action(request, host, api_port, "conversion/resume")
 
 
-@app.post("/actions/slave/drain")
-async def action_slave_drain(request: Request, host: str = Form(), api_port: int = Form()):
-    return await _slave_action(request, host, api_port, "conversion/drain")
+@app.post("/actions/worker/drain")
+async def action_worker_drain(request: Request, host: str = Form(), api_port: int = Form()):
+    return await _worker_action(request, host, api_port, "conversion/drain")
 
 
-@app.post("/actions/slave/sleep")
-async def action_slave_sleep(request: Request, host: str = Form(), api_port: int = Form()):
-    return await _slave_action(request, host, api_port, "conversion/sleep")
+@app.post("/actions/worker/sleep")
+async def action_worker_sleep(request: Request, host: str = Form(), api_port: int = Form()):
+    return await _worker_action(request, host, api_port, "conversion/sleep")
 
 
-@app.post("/actions/slave/wake")
-async def action_slave_wake(request: Request, host: str = Form(), api_port: int = Form()):
-    return await _slave_action(request, host, api_port, "conversion/wake")
+@app.post("/actions/worker/wake")
+async def action_worker_wake(request: Request, host: str = Form(), api_port: int = Form()):
+    return await _worker_action(request, host, api_port, "conversion/wake")
 
 
 # ---------------------------------------------------------------------------
@@ -255,10 +255,10 @@ async def data_files_delete(request: Request):
     ids: list[int] = body.get("ids", [])
     async with httpx.AsyncClient(timeout=10) as client:
         try:
-            slaves_r = await client.get(f"{_master_url()}/slaves")
-            slaves_map = {s["config_id"]: s for s in slaves_r.json()}
+            workers_r = await client.get(f"{_master_url()}/workers")
+            workers_map = {s["config_id"]: s for s in workers_r.json()}
         except Exception:
-            slaves_map = {}
+            workers_map = {}
 
         file_results = await asyncio.gather(
             *[client.get(f"{_master_url()}/files/{i}") for i in ids],
@@ -269,22 +269,22 @@ async def data_files_delete(request: Request):
             return_exceptions=True,
         )
 
-        slave_deletes = []
+        worker_deletes = []
         for result in file_results:
             if isinstance(result, Exception):
                 continue
             try:
                 rec = result.json()
-                slave_cfg = rec.get("slave_id")
-                if slave_cfg and slave_cfg in slaves_map:
-                    s = slaves_map[slave_cfg]
-                    slave_deletes.append(
-                        client.delete(f"{_slave_url(s['host'], s['api_port'])}/files/{rec['id']}")
+                worker_cfg = rec.get("worker_id")
+                if worker_cfg and worker_cfg in workers_map:
+                    s = workers_map[worker_cfg]
+                    worker_deletes.append(
+                        client.delete(f"{_worker_url(s['host'], s['api_port'])}/files/{rec['id']}")
                     )
             except Exception:
                 pass
-        if slave_deletes:
-            await asyncio.gather(*slave_deletes, return_exceptions=True)
+        if worker_deletes:
+            await asyncio.gather(*worker_deletes, return_exceptions=True)
 
     return JSONResponse({"ok": True})
 
@@ -297,46 +297,46 @@ async def data_files_pending(request: Request):
     ids: list[int] = body.get("ids", [])
     async with httpx.AsyncClient(timeout=10) as client:
         try:
-            slaves_r = await client.get(f"{_master_url()}/slaves")
-            slaves_map = {s["config_id"]: s for s in slaves_r.json()}
+            workers_r = await client.get(f"{_master_url()}/workers")
+            workers_map = {s["config_id"]: s for s in workers_r.json()}
         except Exception:
-            slaves_map = {}
+            workers_map = {}
 
         master_results = await asyncio.gather(
             *[client.patch(f"{_master_url()}/files/{i}/status", json={"status": "pending"}) for i in ids],
             return_exceptions=True,
         )
 
-        slave_patches = []
+        worker_patches = []
         for i, result in zip(ids, master_results):
             if isinstance(result, Exception):
                 continue
             try:
                 rec = result.json()
-                slave_cfg = rec.get("slave_id")
-                if slave_cfg and slave_cfg in slaves_map:
-                    s = slaves_map[slave_cfg]
-                    slave_patches.append(
+                worker_cfg = rec.get("worker_id")
+                if worker_cfg and worker_cfg in workers_map:
+                    s = workers_map[worker_cfg]
+                    worker_patches.append(
                         client.patch(
-                            f"{_slave_url(s['host'], s['api_port'])}/files/{i}/status",
+                            f"{_worker_url(s['host'], s['api_port'])}/files/{i}/status",
                             json={"status": "pending"},
                         )
                     )
             except Exception:
                 pass
-        if slave_patches:
-            await asyncio.gather(*slave_patches, return_exceptions=True)
+        if worker_patches:
+            await asyncio.gather(*worker_patches, return_exceptions=True)
 
     return JSONResponse({"ok": True})
 
 
-@app.post("/data/slave/delete")
-async def data_slave_delete(request: Request, host: str = Query(), port: int = Query()):
+@app.post("/data/worker/delete")
+async def data_worker_delete(request: Request, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
     ids: list[int] = body.get("ids", [])
-    base = _slave_url(host, port)
+    base = _worker_url(host, port)
     async with httpx.AsyncClient(timeout=10) as client:
         await asyncio.gather(
             *[client.delete(f"{base}/files/{i}") for i in ids],
@@ -354,46 +354,46 @@ async def data_files_cancel(request: Request):
     ids: list[int] = body.get("ids", [])
     async with httpx.AsyncClient(timeout=10) as client:
         try:
-            slaves_r = await client.get(f"{_master_url()}/slaves")
-            slaves_map = {s["config_id"]: s for s in slaves_r.json()}
+            workers_r = await client.get(f"{_master_url()}/workers")
+            workers_map = {s["config_id"]: s for s in workers_r.json()}
         except Exception:
-            slaves_map = {}
+            workers_map = {}
 
         master_results = await asyncio.gather(
             *[client.patch(f"{_master_url()}/files/{i}/status", json={"status": "cancelled"}) for i in ids],
             return_exceptions=True,
         )
 
-        slave_patches = []
+        worker_patches = []
         for i, result in zip(ids, master_results):
             if isinstance(result, Exception):
                 continue
             try:
                 rec = result.json()
-                slave_cfg = rec.get("slave_id")
-                if slave_cfg and slave_cfg in slaves_map:
-                    s = slaves_map[slave_cfg]
-                    slave_patches.append(
+                worker_cfg = rec.get("worker_id")
+                if worker_cfg and worker_cfg in workers_map:
+                    s = workers_map[worker_cfg]
+                    worker_patches.append(
                         client.patch(
-                            f"{_slave_url(s['host'], s['api_port'])}/files/{i}/status",
+                            f"{_worker_url(s['host'], s['api_port'])}/files/{i}/status",
                             json={"status": "cancelled"},
                         )
                     )
             except Exception:
                 pass
-        if slave_patches:
-            await asyncio.gather(*slave_patches, return_exceptions=True)
+        if worker_patches:
+            await asyncio.gather(*worker_patches, return_exceptions=True)
 
     return JSONResponse({"ok": True})
 
 
-@app.post("/data/slave/pending")
-async def data_slave_pending(request: Request, host: str = Query(), port: int = Query()):
+@app.post("/data/worker/pending")
+async def data_worker_pending(request: Request, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
     ids: list[int] = body.get("ids", [])
-    base = _slave_url(host, port)
+    base = _worker_url(host, port)
     async with httpx.AsyncClient(timeout=10) as client:
         await asyncio.gather(
             *[client.patch(f"{base}/files/{i}/status", json={"status": "pending"}) for i in ids],
@@ -403,13 +403,13 @@ async def data_slave_pending(request: Request, host: str = Query(), port: int = 
     return JSONResponse({"ok": True})
 
 
-@app.post("/data/slave/cancel")
-async def data_slave_cancel(request: Request, host: str = Query(), port: int = Query()):
+@app.post("/data/worker/cancel")
+async def data_worker_cancel(request: Request, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
     ids: list[int] = body.get("ids", [])
-    base = _slave_url(host, port)
+    base = _worker_url(host, port)
     async with httpx.AsyncClient(timeout=10) as client:
         await asyncio.gather(
             *[client.patch(f"{base}/files/{i}/status", json={"status": "cancelled"}) for i in ids],
@@ -425,18 +425,18 @@ async def data_files_assign(request: Request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
     ids: list[int] = body.get("ids", [])
-    slave_config_id: str = body.get("slave_config_id", "")
+    worker_config_id: str = body.get("worker_config_id", "")
     async with httpx.AsyncClient(timeout=10) as client:
         try:
-            slaves_r = await client.get(f"{_master_url()}/slaves")
-            slave_info = next((s for s in slaves_r.json() if s["config_id"] == slave_config_id), None)
+            workers_r = await client.get(f"{_master_url()}/workers")
+            worker_info = next((s for s in workers_r.json() if s["config_id"] == worker_config_id), None)
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=502)
-        if not slave_info:
-            return JSONResponse({"error": "slave not found"}, status_code=404)
+        if not worker_info:
+            return JSONResponse({"error": "worker not found"}, status_code=404)
         try:
             r = await client.post(f"{_master_url()}/jobs/assign",
-                                  json={"ids": ids, "slave_id": slave_config_id})
+                                  json={"ids": ids, "worker_id": worker_config_id})
             r.raise_for_status()
             jobs = r.json()
         except Exception as exc:
@@ -444,7 +444,7 @@ async def data_files_assign(request: Request):
         if jobs:
             try:
                 await client.post(
-                    f"{_slave_url(slave_info['host'], slave_info['api_port'])}/jobs/push",
+                    f"{_worker_url(worker_info['host'], worker_info['api_port'])}/jobs/push",
                     json=jobs,
                 )
             except Exception:
@@ -465,6 +465,111 @@ async def data_duplicate_pairs(request: Request):
             return JSONResponse({"error": str(exc)}, status_code=502)
 
 
+@app.post("/data/scan/start")
+async def data_scan_start(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            r = await client.post(f"{_master_url()}/scan/start")
+            r.raise_for_status()
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/data/scan/stop")
+async def data_scan_stop(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            r = await client.post(f"{_master_url()}/scan/stop")
+            r.raise_for_status()
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/data/scan/settings")
+async def data_scan_settings_save(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    interval_minutes = max(1, int(body.get("interval_minutes", 1)))
+    enabled = bool(body.get("enabled", False))
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            r = await client.post(
+                f"{_master_url()}/scan/settings",
+                json={"interval": interval_minutes * 60, "enabled": enabled},
+            )
+            r.raise_for_status()
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/data/transfer")
+async def data_transfer(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            r = await client.post(f"{_master_url()}/transfer", json={"file_path": body["file_path"]})
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+@app.post("/data/workers/register")
+async def data_workers_register(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            r = await client.post(f"{_master_url()}/workers", json=body)
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+@app.delete("/data/workers/{worker_id}")
+async def data_workers_deregister(request: Request, worker_id: str):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            r = await client.delete(f"{_master_url()}/workers/{worker_id}")
+            r.raise_for_status()
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/data/worker/action")
+async def data_worker_action(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    host = body.get("host")
+    port = body.get("port")
+    action = body.get("action")
+    if action not in ("pause", "resume", "stop", "drain", "sleep", "wake"):
+        return JSONResponse({"error": "invalid action"}, status_code=400)
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            r = await client.post(f"{_worker_url(host, port)}/conversion/{action}")
+            r.raise_for_status()
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+    return JSONResponse({"ok": True})
+
+
 @app.get("/data/stats")
 async def data_stats(request: Request):
     if not _logged_in(request):
@@ -478,21 +583,21 @@ async def data_stats(request: Request):
             return JSONResponse({"error": str(exc)}, status_code=502)
 
 
-@app.get("/data/stats/slave")
-async def data_stats_slave(request: Request, slave_id: str = Query()):
+@app.get("/data/stats/worker")
+async def data_stats_worker(request: Request, worker_id: str = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     async with httpx.AsyncClient(timeout=10) as client:
         try:
-            r = await client.get(f"{_master_url()}/stats/slave/{slave_id}")
+            r = await client.get(f"{_master_url()}/stats/worker/{worker_id}")
             r.raise_for_status()
             return JSONResponse(r.json())
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=502)
 
 
-@app.post("/data/slave/encoder")
-async def data_slave_encoder(request: Request):
+@app.post("/data/worker/encoder")
+async def data_worker_encoder(request: Request):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
@@ -506,18 +611,18 @@ async def data_slave_encoder(request: Request):
         payload["replace_original"] = bool(body["replace_original"])
     async with httpx.AsyncClient(timeout=5) as client:
         try:
-            r = await client.post(f"{_slave_url(host, port)}/settings", json=payload)
+            r = await client.post(f"{_worker_url(host, port)}/settings", json=payload)
             r.raise_for_status()
             return JSONResponse(r.json())
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=502)
 
 
-@app.get("/data/slave")
-async def data_slave(request: Request, host: str = Query(), port: int = Query()):
+@app.get("/data/worker")
+async def data_worker(request: Request, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    base = _slave_url(host, port)
+    base = _worker_url(host, port)
     async with httpx.AsyncClient(timeout=5) as client:
         results = await asyncio.gather(
             client.get(f"{base}/status"),

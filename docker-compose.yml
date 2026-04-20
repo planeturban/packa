@@ -9,17 +9,17 @@ services:
 #      - /mnt/data:/mnt/data:ro # Path to data directory on host, read-only
     restart: unless-stopped
 
-  slave:
+  worker:
     image: ghcr.io/planeturban/packa
     environment:
-      PACKA_ROLE: slave
-      PACKA_SLAVE_MASTER_HOST: master
-      PACKA_SLAVE_ADVERTISE_HOST: slave
+      PACKA_ROLE: worker
+      PACKA_WORKER_MASTER_HOST: master
+      PACKA_WORKER_ADVERTISE_HOST: worker
     ports:
       - "8000:8000"
     volumes:
       - ./packa.toml:/data/packa.toml:ro
-      - slave-data:/data
+      - worker-data:/data
 #      - /mnt/data:/mnt/data # Path to data directory on host.
 #      - /mnt/output:/mnt/output # Path to output directory on host. Needed if you don't want to overwrite the source files.
     depends_on:
@@ -42,5 +42,5 @@ services:
 
 volumes:
   master-data:
-  slave-data:
+  worker-data:
   web-data:

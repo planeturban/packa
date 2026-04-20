@@ -1,5 +1,5 @@
 """
-Shared database helpers — used by master and slave to create their engines,
+Shared database helpers — used by master and worker to create their engines,
 session factories, and FastAPI dependency callables.
 """
 
@@ -7,6 +7,7 @@ from collections.abc import Generator
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 # Columns added after the initial schema — applied via ALTER TABLE on startup.
 _MIGRATE_COLS = [
@@ -20,7 +21,7 @@ _MIGRATE_COLS = [
 
 
 def make_engine(url: str):
-    return create_engine(url, connect_args={"check_same_thread": False})
+    return create_engine(url, connect_args={"check_same_thread": False}, poolclass=NullPool)
 
 
 def make_session_factory(engine) -> sessionmaker:
@@ -36,6 +37,13 @@ def migrate(engine) -> None:
                 conn.commit()
             except Exception:
                 pass  # column already exists
+
+        # Rename slave_id → worker_id (SQLite 3.25+)
+        try:
+            conn.execute(text("ALTER TABLE file_records RENAME COLUMN slave_id TO worker_id"))
+            conn.commit()
+        except Exception:
+            pass  # already renamed or column doesn't exist
 
 
 def make_get_db(session_factory: sessionmaker):
