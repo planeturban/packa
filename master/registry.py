@@ -47,6 +47,12 @@ class WorkerRegistry:
             return True
         return False
 
+    def remove_by_config_id(self, config_id: str) -> bool:
+        existing = self.get_by_config_id(config_id)
+        if existing:
+            return self.remove(existing.id)
+        return False
+
     def get(self, worker_id: int) -> WorkerInfo | None:
         return self._workers.get(worker_id)
 
