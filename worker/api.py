@@ -60,9 +60,11 @@ def set_registration_params(advertise_host: str, worker_config_id: str) -> None:
 
 
 async def _register_and_poll() -> None:
-    """Retry registration until master is reachable, then run the poller."""
-    url = f"http://{_config.master_host}:{_config.master_port}/workers"
+    """Retry registration until master is reachable, then keep registration fresh and run the poller."""
+    master_base = f"http://{_config.master_host}:{_config.master_port}"
+    url = f"{master_base}/workers"
     payload = {"config_id": _worker_config_id, "host": _advertise_host, "api_port": _config.api_port}
+
     attempt = 0
     while True:
         try:
@@ -72,7 +74,7 @@ async def _register_and_poll() -> None:
                 record = r.json()
             worker_state.worker_id = record["id"]
             worker_state.worker_config_id = _worker_config_id
-            worker_state.master_url = f"http://{_config.master_host}:{_config.master_port}"
+            worker_state.master_url = master_base
             print(f"[worker] registered as worker-{record['id']}")
             break
         except Exception as exc:
@@ -81,15 +83,32 @@ async def _register_and_poll() -> None:
             print(f"[worker] registration failed (attempt {attempt}): {exc} — retrying in {wait}s")
             await asyncio.sleep(wait)
 
+    async def _reregister_loop() -> None:
+        while True:
+            await asyncio.sleep(60)
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    r = await client.post(url, json=payload)
+                    r.raise_for_status()
+                    record = r.json()
+                worker_state.worker_id = record["id"]
+            except Exception as exc:
+                print(f"[worker] re-registration failed: {exc}")
+
     if _config.ffmpeg.output_dir:
-        await poller_loop(
-            master_url=worker_state.master_url,
-            worker_config_id=_worker_config_id,
-            path_prefix=_config.path_prefix,
-            batch_size=_config.worker.batch_size,
-            poll_interval=_config.worker.poll_interval,
-            output_dir=_config.ffmpeg.output_dir,
+        await asyncio.gather(
+            poller_loop(
+                master_url=worker_state.master_url,
+                worker_config_id=_worker_config_id,
+                path_prefix=_config.path_prefix,
+                batch_size=_config.worker.batch_size,
+                poll_interval=_config.worker.poll_interval,
+                output_dir=_config.ffmpeg.output_dir,
+            ),
+            _reregister_loop(),
         )
+    else:
+        await _reregister_loop()
 
 
 @asynccontextmanager
@@ -325,6 +344,7 @@ def sleep_conversion():
 @app.post("/conversion/wake")
 def wake_conversion():
     worker_state.sleeping = False
+    worker_state.drain = False
     worker_state.disk_full = False
 
 
