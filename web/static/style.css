@@ -228,6 +228,7 @@ body {
 .badge-cancelled  { background: var(--surface3);  color: var(--text-dim); }
 .badge-assigned   { background: var(--yellow-bg); color: var(--yellow); }
 .badge-sleeping   { background: var(--surface3);  color: var(--text-dim); }
+.badge-draining   { background: var(--yellow-bg); color: var(--yellow); }
 .badge-online     { background: var(--green-bg);  color: var(--green); }
 .badge-offline    { background: var(--red-bg);    color: var(--red); }
 

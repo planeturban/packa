@@ -24,7 +24,7 @@ function badge(status) {
     processing:'badge-processing', complete:'badge-done', done:'badge-done',
     discarded:'badge-discarded', cancelled:'badge-cancelled',
     error:'badge-error', duplicate:'badge-duplicate',
-    sleeping:'badge-sleeping', online:'badge-online', offline:'badge-offline',
+    sleeping:'badge-sleeping', draining:'badge-draining', online:'badge-online', offline:'badge-offline',
   };
   const cls = map[status] || 'badge-discarded';
   const label = status === 'complete' ? 'done' : status;
@@ -69,7 +69,8 @@ const ST = {
   modalSelected: new Set(),
   modalBulkOpen: false,
   // workers tab
-  workerSettingsOpen: {},  // worker id → bool
+  workerSettingsOpen: {},   // configId → bool
+  workerInlineEdit: {},     // configId → 'encoder' | 'batch' | null
   // scan tab
   scanEnabled: false,
   scanInterval: 60,
@@ -144,7 +145,8 @@ function isFocused() {
 function isEditing() {
   if (isFocused()) return true;
   if (ST.modalSelected.size > 0) return true;
-  return Object.values(ST.workerSettingsOpen).some(Boolean);
+  if (Object.values(ST.workerSettingsOpen).some(Boolean)) return true;
+  return Object.values(ST.workerInlineEdit).some(Boolean);
 }
 
 // ── Polling ──────────────────────────────────────────────────────────────────
@@ -302,13 +304,13 @@ function renderOverview() {
         const dotColor = s.state === 'processing' ? 'var(--blue)' : s.sleeping ? 'var(--text-faint)' : 'var(--green)';
         const p = s.progress;
         const pct = p ? Math.round(p.percent || 0) : 0;
-        const statusStr = s.sleeping ? 'sleeping' : s.state === 'processing' ? 'processing' : 'online';
+        const statusStr = s.sleeping ? 'sleeping' : s.drain ? 'draining' : s.state === 'processing' ? 'processing' : 'online';
         return `
         <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border-subtle)">
           <div style="width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0"></div>
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;font-weight:500">${esc(s.hostname)}</div>
-            <div style="font-size:11px;color:var(--text-faint);font-family:'IBM Plex Mono',monospace">${esc((s.encoder||'').toUpperCase())} · batch ${s.batch_size||1} · ${s.converted||0} converted</div>
+            <div style="font-size:11px;color:var(--text-faint);font-family:'IBM Plex Mono',monospace">${s.unconfigured ? 'UNCONFIGURED' : esc((s.encoder||'').toUpperCase())} · batch ${s.batch_size||1} · ${s.converted||0} converted</div>
           </div>
           ${s.state === 'processing' && p ? `
           <div style="width:120px;flex-shrink:0">
@@ -726,7 +728,7 @@ function renderStats() {
                   const savedPct = inp > 0 ? Math.round(saved/inp*100) : 0;
                   return `<tr>
                     <td style="font-weight:500">${esc(s.hostname)}</td>
-                    <td><span class="mono" style="color:var(--accent)">${esc((s.encoder||'').toUpperCase())}</span></td>
+                    <td><span class="mono" style="color:var(--accent)">${s.unconfigured ? 'UNCONFIGURED' : esc((s.encoder||'').toUpperCase())}</span></td>
                     <td><span class="mono">${(s.converted||0).toLocaleString()}</span></td>
                     <td><span class="mono" style="color:${(s.errors||0)>0?'var(--red)':'var(--text-faint)'}">${s.errors||0}</span></td>
                     <td><span class="mono">${fmtBytes(inp||null)}</span></td>
@@ -768,11 +770,12 @@ function renderWorkerCard(s) {
   const showSettings = !!ST.workerSettingsOpen[s.config_id];
   const p = s.progress;
   const pct = p ? Math.round(p.percent || 0) : 0;
-  const statusStr = isSleeping ? 'sleeping' : isProcessing ? (isPaused ? 'paused' : 'processing') : (s.state === 'unreachable' ? 'offline' : 'online');
+  const statusStr = isSleeping ? 'sleeping' : s.drain ? 'draining' : isProcessing ? (isPaused ? 'paused' : 'processing') : (s.state === 'unreachable' ? 'offline' : 'online');
 
   const encoders = s.available_encoders || ['libx265'];
   const labels = s.encoder_labels || {};
   const encOptions = encoders.map(e => `<option value="${esc(e)}" ${s.encoder===e?'selected':''}>${esc(labels[e]||e)}</option>`).join('');
+  const inlineEdit = ST.workerInlineEdit[s.config_id] || null;
 
   return `
   <div class="worker-card ${isProcessing?'active':''}">
@@ -813,13 +816,26 @@ function renderWorkerCard(s) {
         <div class="worker-stat-label">Errors</div>
         <div class="worker-stat-value" style="color:${(s.errors||0)>0?'var(--red)':'inherit'}">${s.errors||0}</div>
       </div>
-      <div class="worker-stat">
+      <div class="worker-stat" style="cursor:pointer" onclick="startInlineEdit('${esc(s.config_id)}','encoder')">
         <div class="worker-stat-label">Encoder</div>
-        <div class="worker-stat-value" style="font-size:12px">${esc((s.encoder||'').toUpperCase())}</div>
+        ${inlineEdit === 'encoder' ? `
+        <div style="display:flex;gap:4px;align-items:center" onclick="event.stopPropagation()">
+          <select class="select" style="font-size:11px;padding:2px 4px;height:24px" id="inline-enc-${esc(s.config_id)}"
+                  onkeydown="if(event.key==='Escape')cancelInlineEdit('${esc(s.config_id)}')">${encOptions}</select>
+          <button class="btn btn-primary btn-sm" onclick="saveInlineEdit('${esc(s.config_id)}','${esc(s.host)}',${s.api_port})">✓</button>
+          <button class="btn btn-sm" onclick="cancelInlineEdit('${esc(s.config_id)}')">✕</button>
+        </div>` : `<div class="worker-stat-value" style="font-size:12px">${s.unconfigured ? 'UNCONFIGURED' : esc((s.encoder||'').toUpperCase())}</div>`}
       </div>
-      <div class="worker-stat">
+      <div class="worker-stat" style="cursor:pointer" onclick="startInlineEdit('${esc(s.config_id)}','batch')">
         <div class="worker-stat-label">Batch</div>
-        <div class="worker-stat-value">${s.batch_size||1}</div>
+        ${inlineEdit === 'batch' ? `
+        <div style="display:flex;gap:4px;align-items:center" onclick="event.stopPropagation()">
+          <input class="input" type="number" min="1" max="16" value="${s.batch_size||1}" id="inline-batch-${esc(s.config_id)}"
+                 style="width:56px;font-size:11px;padding:2px 4px;height:24px"
+                 onkeydown="if(event.key==='Enter')saveInlineEdit('${esc(s.config_id)}','${esc(s.host)}',${s.api_port});if(event.key==='Escape')cancelInlineEdit('${esc(s.config_id)}')">
+          <button class="btn btn-primary btn-sm" onclick="saveInlineEdit('${esc(s.config_id)}','${esc(s.host)}',${s.api_port})">✓</button>
+          <button class="btn btn-sm" onclick="cancelInlineEdit('${esc(s.config_id)}')">✕</button>
+        </div>` : `<div class="worker-stat-value">${s.batch_size||1}</div>`}
       </div>
     </div>
 
@@ -842,21 +858,21 @@ function renderWorkerCard(s) {
 
     ${showSettings ? `
     <div class="worker-settings-panel">
-      <div class="form-group">
-        <label class="label">Encoder</label>
-        <select class="select" id="enc-${esc(s.config_id)}">${encOptions}</select>
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:8px">Running config</div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:11px;margin-bottom:12px;font-family:'IBM Plex Mono',monospace">
+        <span style="color:var(--text-faint)">Encoder</span><span>${esc(labels[s.encoder]||s.encoder||'—')}</span>
+        <span style="color:var(--text-faint)">Batch</span><span>${s.batch_size||1}</span>
+        <span style="color:var(--text-faint)">Replace orig.</span><span>${s.replace_original?'yes':'no'}</span>
+        <span style="color:var(--text-faint)">Queue</span><span>${s.queued||0}</span>
+        <span style="color:var(--text-faint)">Master</span><span>${esc(s.url||'—')}</span>
       </div>
-      <div class="form-group">
-        <label class="label">Batch size</label>
-        <input class="input" type="number" min="1" max="16" value="${s.batch_size||1}"
-               id="batch-${esc(s.config_id)}">
-      </div>
+      <div style="border-top:1px solid var(--border-subtle);margin:0 0 12px"></div>
       <div style="display:flex;align-items:center;justify-content:space-between">
         <label class="label">Replace original</label>
         <div class="toggle ${s.replace_original?'on':''}" id="repl-${esc(s.config_id)}"
              onclick="this.classList.toggle('on')"></div>
       </div>
-      <button class="btn btn-primary btn-sm"
+      <button class="btn btn-primary btn-sm" style="margin-top:8px"
               onclick="saveWorkerSettings('${esc(s.config_id)}','${esc(s.host)}',${s.api_port})">
         Save settings
       </button>
@@ -877,6 +893,42 @@ function toggleWorkerSettings(configId) {
   renderWorkers();
 }
 
+function startInlineEdit(configId, field) {
+  ST.workerInlineEdit[configId] = field;
+  renderWorkers();
+  const id = field === 'encoder' ? `inline-enc-${configId}` : `inline-batch-${configId}`;
+  const el = document.getElementById(id);
+  if (el) el.focus();
+}
+
+function cancelInlineEdit(configId) {
+  ST.workerInlineEdit[configId] = null;
+  renderWorkers();
+}
+
+async function saveInlineEdit(configId, host, port) {
+  const workers = (ST.data && ST.data.workers) || [];
+  const w = workers.find(x => x.config_id === configId);
+  if (!w) return;
+  const encEl = document.getElementById(`inline-enc-${configId}`);
+  const batchEl = document.getElementById(`inline-batch-${configId}`);
+  const encoder = encEl ? encEl.value : w.encoder;
+  const batch_size = batchEl ? parseInt(batchEl.value, 10) : (w.batch_size || 1);
+  const payload = { host, port, encoder, batch_size, replace_original: w.replace_original };
+  if (ST.demo) { toast('[Demo] Settings saved', 'info'); return; }
+  try {
+    const r = await fetch('/data/worker/encoder', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast('Saved', 'success');
+    ST.workerInlineEdit[configId] = null;
+    fetchAll();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
 async function workerAction(host, port, action) {
   if (ST.demo) { toast(`[Demo] ${action} → ${host}:${port}`, 'info'); return; }
   try {
@@ -892,15 +944,15 @@ async function workerAction(host, port, action) {
 }
 
 async function saveWorkerSettings(configId, host, port) {
-  const enc = document.getElementById(`enc-${configId}`);
-  const batch = document.getElementById(`batch-${configId}`);
   const repl = document.getElementById(`repl-${configId}`);
-  if (!enc) return;
+  const workers = (ST.data && ST.data.workers) || [];
+  const w = workers.find(x => x.config_id === configId);
+  if (!w) return;
   const payload = {
     host, port,
-    encoder: enc.value,
-    batch_size: parseInt(batch ? batch.value : '1', 10),
-    replace_original: repl ? repl.classList.contains('on') : false,
+    encoder: w.encoder,
+    batch_size: w.batch_size || 1,
+    replace_original: repl ? repl.classList.contains('on') : w.replace_original,
   };
   if (ST.demo) { toast('[Demo] Settings saved', 'info'); return; }
   try {
