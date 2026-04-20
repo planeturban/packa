@@ -1,6 +1,6 @@
 """
-In-memory registry of connected slaves.
-Round-robin distribution via next_slave().
+In-memory registry of connected workers.
+Round-robin distribution via next_worker().
 """
 
 from dataclasses import dataclass
@@ -9,61 +9,61 @@ from typing import Iterator
 
 
 @dataclass
-class SlaveInfo:
+class WorkerInfo:
     id: int
     config_id: str
     host: str
     api_port: int
 
     def __str__(self) -> str:
-        return f"slave-{self.id} '{self.config_id}' ({self.host}  api={self.api_port})"
+        return f"worker-{self.id} '{self.config_id}' ({self.host}  api={self.api_port})"
 
 
-class SlaveRegistry:
+class WorkerRegistry:
     def __init__(self) -> None:
-        self._slaves: dict[int, SlaveInfo] = {}
+        self._workers: dict[int, WorkerInfo] = {}
         self._next_id: int = 1
-        self._cycle: Iterator[SlaveInfo] | None = None
+        self._cycle: Iterator[WorkerInfo] | None = None
 
-    def register(self, config_id: str, host: str, api_port: int) -> SlaveInfo:
-        # If a slave with this config_id already exists, update it in place.
-        existing = next((s for s in self._slaves.values() if s.config_id == config_id), None)
+    def register(self, config_id: str, host: str, api_port: int) -> WorkerInfo:
+        # If a worker with this config_id already exists, update it in place.
+        existing = next((s for s in self._workers.values() if s.config_id == config_id), None)
         if existing:
             existing.host = host
             existing.api_port = api_port
             self._rebuild_cycle()
             return existing
 
-        slave = SlaveInfo(id=self._next_id, config_id=config_id, host=host, api_port=api_port)
-        self._slaves[self._next_id] = slave
+        worker = WorkerInfo(id=self._next_id, config_id=config_id, host=host, api_port=api_port)
+        self._workers[self._next_id] = worker
         self._next_id += 1
         self._rebuild_cycle()
-        return slave
+        return worker
 
-    def remove(self, slave_id: int) -> bool:
-        if slave_id in self._slaves:
-            del self._slaves[slave_id]
+    def remove(self, worker_id: int) -> bool:
+        if worker_id in self._workers:
+            del self._workers[worker_id]
             self._rebuild_cycle()
             return True
         return False
 
-    def get(self, slave_id: int) -> SlaveInfo | None:
-        return self._slaves.get(slave_id)
+    def get(self, worker_id: int) -> WorkerInfo | None:
+        return self._workers.get(worker_id)
 
-    def get_by_config_id(self, config_id: str) -> SlaveInfo | None:
-        return next((s for s in self._slaves.values() if s.config_id == config_id), None)
+    def get_by_config_id(self, config_id: str) -> WorkerInfo | None:
+        return next((s for s in self._workers.values() if s.config_id == config_id), None)
 
-    def all(self) -> list[SlaveInfo]:
-        return list(self._slaves.values())
+    def all(self) -> list[WorkerInfo]:
+        return list(self._workers.values())
 
-    def next_slave(self) -> SlaveInfo | None:
-        """Returns the next slave in round-robin order, or None if empty."""
-        if not self._slaves or self._cycle is None:
+    def next_worker(self) -> WorkerInfo | None:
+        """Returns the next worker in round-robin order, or None if empty."""
+        if not self._workers or self._cycle is None:
             return None
         return next(self._cycle)
 
     def _rebuild_cycle(self) -> None:
-        self._cycle = cycle(self._slaves.values()) if self._slaves else None
+        self._cycle = cycle(self._workers.values()) if self._workers else None
 
 
-registry = SlaveRegistry()
+registry = WorkerRegistry()

@@ -1,9 +1,9 @@
 """
-Background poller — slave pulls jobs from master.
+Background poller — worker pulls jobs from master.
 
 Runs as an asyncio task alongside worker_loop. When the job queue is empty
 the poller contacts master's POST /jobs/claim endpoint to fetch up to
-batch_size records. Each claimed record is inserted into the slave DB and
+batch_size records. Each claimed record is inserted into the worker DB and
 enqueued for the worker.
 """
 
@@ -22,7 +22,7 @@ from .state import Job, worker_state
 
 async def poller_loop(
     master_url: str,
-    slave_config_id: str,
+    worker_config_id: str,
     path_prefix: str,
     batch_size: int,
     poll_interval: int,
@@ -33,12 +33,12 @@ async def poller_loop(
         await asyncio.sleep(poll_interval)
         if worker_state.sleeping or worker_state.queued > 0 or worker_state.active or worker_state.drain:
             continue
-        await _claim_and_enqueue(master_url, slave_config_id, path_prefix, worker_state.batch_size, output_dir)
+        await _claim_and_enqueue(master_url, worker_config_id, path_prefix, worker_state.batch_size, output_dir)
 
 
 async def _claim_and_enqueue(
     master_url: str,
-    slave_config_id: str,
+    worker_config_id: str,
     path_prefix: str,
     batch_size: int,
     output_dir: str,
@@ -46,7 +46,7 @@ async def _claim_and_enqueue(
     url = f"{master_url}/jobs/claim"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.post(url, json={"slave_id": slave_config_id, "count": batch_size})
+            response = await client.post(url, json={"worker_id": worker_config_id, "count": batch_size})
             response.raise_for_status()
             jobs = response.json()
     except Exception as exc:
@@ -64,7 +64,7 @@ async def _claim_and_enqueue(
             try:
                 record = crud.create_file_record(db, FileRecordCreate(
                     id=job_data["id"],
-                    slave_id=slave_config_id,
+                    worker_id=worker_config_id,
                     file_name=job_data["file_name"],
                     file_path=full_path,
                     file_size=job_data.get("file_size"),

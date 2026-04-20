@@ -15,7 +15,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt --break-system-packages
 
 COPY master/       master/
-COPY slave/        slave/
+COPY worker/        worker/
 COPY web/          web/
 COPY shared/       shared/
 COPY entrypoint.sh entrypoint.sh

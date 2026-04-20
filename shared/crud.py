@@ -18,8 +18,8 @@ def create_file_record(db: Session, record: FileRecordCreate) -> FileRecord:
     )
     if record.id is not None:
         kwargs["id"] = record.id
-    if record.slave_id is not None:
-        kwargs["slave_id"] = record.slave_id
+    if record.worker_id is not None:
+        kwargs["worker_id"] = record.worker_id
     if record.file_size is not None:
         kwargs["file_size"] = record.file_size
     if record.duplicate_of_id is not None:
@@ -116,15 +116,17 @@ def get_stats(db: Session) -> dict:
             "avg_compression_ratio": round(out_b / in_b, 3) if in_b else 0.0,
         }
 
-    by_slave = []
+    by_worker = []
     for sid, j, in_b, out_b, dur in db.query(
-        FileRecord.slave_id, func.count(FileRecord.id),
+        FileRecord.worker_id, func.count(FileRecord.id),
         func.sum(FileRecord.file_size), func.sum(FileRecord.output_size), func.avg(_dur),
-    ).filter(*_f).group_by(FileRecord.slave_id).all():
+    ).filter(*_f).group_by(FileRecord.worker_id).all():
         in_b, out_b = in_b or 0, out_b or 0
-        by_slave.append({
-            "slave_id": sid or "unknown",
+        by_worker.append({
+            "worker_id": sid or "unknown",
             "jobs": j or 0,
+            "total_input_bytes": in_b,
+            "total_output_bytes": out_b,
             "total_saved_bytes": in_b - out_b,
             "avg_compression_ratio": round(out_b / in_b, 3) if in_b else 0.0,
             "avg_duration_seconds": round(dur or 0, 1),
@@ -144,14 +146,14 @@ def get_stats(db: Session) -> dict:
     ).filter(*_day_f).group_by('day').order_by('day').all():
         by_day.append({"date": day, "jobs": j or 0, "saved_bytes": saved or 0})
 
-    return {"overall": overall, "by_encoder": by_encoder, "by_slave": by_slave, "by_day": by_day}
+    return {"overall": overall, "by_encoder": by_encoder, "by_worker": by_worker, "by_day": by_day}
 
 
-def get_slave_stats(db: Session, slave_id: str) -> dict:
+def get_worker_stats(db: Session, worker_id: str) -> dict:
     _dur = (func.julianday(FileRecord.finished_at) - func.julianday(FileRecord.started_at)) * 86400
     _f = [
         FileRecord.status == FileStatus.COMPLETE,
-        FileRecord.slave_id == slave_id,
+        FileRecord.worker_id == worker_id,
         FileRecord.file_size.isnot(None),
         FileRecord.output_size.isnot(None),
         FileRecord.started_at.isnot(None),
@@ -203,7 +205,7 @@ def get_slave_stats(db: Session, slave_id: str) -> dict:
 
     _day_f = [
         FileRecord.status == FileStatus.COMPLETE,
-        FileRecord.slave_id == slave_id,
+        FileRecord.worker_id == worker_id,
         FileRecord.file_size.isnot(None),
         FileRecord.output_size.isnot(None),
         FileRecord.finished_at.isnot(None),
@@ -217,7 +219,7 @@ def get_slave_stats(db: Session, slave_id: str) -> dict:
         ).filter(*_day_f).group_by('day').order_by('day').all()
     ]
 
-    return {"slave_id": slave_id, "overall": overall, "by_encoder": by_encoder, "by_day": by_day}
+    return {"worker_id": worker_id, "overall": overall, "by_encoder": by_encoder, "by_day": by_day}
 
 
 def update_conversion_result(

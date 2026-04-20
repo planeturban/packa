@@ -1,16 +1,16 @@
 """
 Master REST API.
 
-  POST   /slaves               — slave registration
-  GET    /slaves               — list registered slaves
-  DELETE /slaves/{id}          — deregister a slave
+  POST   /workers               — worker registration
+  GET    /workers               — list registered workers
+  DELETE /workers/{id}          — deregister a worker
   POST   /transfer             — accept a file path, create a PENDING record
-  POST   /jobs/claim           — slave claims N pending jobs (pull model)
-  PATCH  /files/{id}/result    — slave pushes final conversion result
+  POST   /jobs/claim           — worker claims N pending jobs (pull model)
+  PATCH  /files/{id}/result    — worker pushes final conversion result
   PATCH  /files/{id}/status    — update a record's status
   GET    /files[?status=]      — list records, filterable by status
   GET    /files/{id}           — get a single record
-  DELETE /files/{id}           — delete a record (cascades to slave)
+  DELETE /files/{id}           — delete a record (cascades to worker)
   POST   /scan/start           — start background directory scan
   POST   /scan/stop            — cancel running scan
   GET    /scan/status          — scan progress
@@ -243,13 +243,13 @@ async def _scan_task(scan_dir: str, extensions: set[str], min_size: int, max_siz
 # Schemas
 # ---------------------------------------------------------------------------
 
-class SlaveRegister(BaseModel):
+class WorkerRegister(BaseModel):
     config_id: str
     host: str
     api_port: int
 
 
-class SlaveOut(BaseModel):
+class WorkerOut(BaseModel):
     id: int
     config_id: str
     host: str
@@ -261,7 +261,7 @@ class TransferRequest(BaseModel):
 
 
 class ClaimRequest(BaseModel):
-    slave_id: str
+    worker_id: str
     count: int = 1
 
 
@@ -301,25 +301,25 @@ class ScanSettings(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Slave routes
+# Worker routes
 # ---------------------------------------------------------------------------
 
-@app.post("/slaves", response_model=SlaveOut, status_code=201)
-def register_slave(body: SlaveRegister):
-    slave = registry.register(body.config_id, body.host, body.api_port)
-    print(f"[master] registered: {slave}")
-    return slave
+@app.post("/workers", response_model=WorkerOut, status_code=201)
+def register_worker(body: WorkerRegister):
+    worker = registry.register(body.config_id, body.host, body.api_port)
+    print(f"[master] registered: {worker}")
+    return worker
 
 
-@app.get("/slaves", response_model=list[SlaveOut])
-def list_slaves():
+@app.get("/workers", response_model=list[WorkerOut])
+def list_workers():
     return registry.all()
 
 
-@app.delete("/slaves/{slave_id}", status_code=204)
-def remove_slave(slave_id: int):
-    if not registry.remove(slave_id):
-        raise HTTPException(status_code=404, detail="Slave not found")
+@app.delete("/workers/{worker_id}", status_code=204)
+def remove_worker(worker_id: int):
+    if not registry.remove(worker_id):
+        raise HTTPException(status_code=404, detail="Worker not found")
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +358,7 @@ def transfer_file(body: TransferRequest, db: Session = Depends(get_db)):
 
 class AssignRequest(BaseModel):
     ids: list[int]
-    slave_id: str
+    worker_id: str
 
 
 @app.post("/jobs/assign", response_model=list[ClaimOut])
@@ -371,7 +371,7 @@ def assign_jobs(body: AssignRequest, db: Session = Depends(get_db)):
     result = []
     for record in records:
         record.status = FileStatus.ASSIGNED
-        record.slave_id = body.slave_id
+        record.worker_id = body.worker_id
         relative_path = record.file_path
         if _config.path_prefix and relative_path.startswith(_config.path_prefix):
             relative_path = relative_path[len(_config.path_prefix):]
@@ -385,7 +385,7 @@ def assign_jobs(body: AssignRequest, db: Session = Depends(get_db)):
             checksum=record.checksum,
         ))
     db.commit()
-    print(f"[master] assigned {len(result)} job(s) to slave '{body.slave_id}'")
+    print(f"[master] assigned {len(result)} job(s) to worker '{body.worker_id}'")
     return result
 
 
@@ -401,7 +401,7 @@ def claim_jobs(body: ClaimRequest, db: Session = Depends(get_db)):
     result = []
     for record in records:
         record.status = FileStatus.ASSIGNED
-        record.slave_id = body.slave_id
+        record.worker_id = body.worker_id
         relative_path = record.file_path
         if _config.path_prefix and relative_path.startswith(_config.path_prefix):
             relative_path = relative_path[len(_config.path_prefix):]
@@ -415,7 +415,7 @@ def claim_jobs(body: ClaimRequest, db: Session = Depends(get_db)):
             checksum=record.checksum,
         ))
     db.commit()
-    print(f"[master] slave '{body.slave_id}' claimed {len(result)} job(s)")
+    print(f"[master] worker '{body.worker_id}' claimed {len(result)} job(s)")
     return result
 
 
@@ -448,9 +448,9 @@ def get_stats(db: Session = Depends(get_db)):
     return crud.get_stats(db)
 
 
-@app.get("/stats/slave/{slave_id}")
-def get_slave_stats(slave_id: str, db: Session = Depends(get_db)):
-    return crud.get_slave_stats(db, slave_id)
+@app.get("/stats/worker/{worker_id}")
+def get_worker_stats(worker_id: str, db: Session = Depends(get_db)):
+    return crud.get_worker_stats(db, worker_id)
 
 
 @app.get("/files/duplicate-pairs")
@@ -503,10 +503,10 @@ async def delete_file(record_id: int, db: Session = Depends(get_db)):
     record = crud.get_file_record(db, record_id)
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
-    if record.slave_id:
-        slave = registry.get_by_config_id(record.slave_id)
-        if slave:
-            url = f"http://{slave.host}:{slave.api_port}/files/{record_id}"
+    if record.worker_id:
+        worker = registry.get_by_config_id(record.worker_id)
+        if worker:
+            url = f"http://{worker.host}:{worker.api_port}/files/{record_id}"
             try:
                 async with httpx.AsyncClient(timeout=5) as client:
                     await client.delete(url)

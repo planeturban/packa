@@ -29,8 +29,8 @@ class WorkerState:
         self.queue: asyncio.Queue[Job] = asyncio.Queue()
         self.progress: FfmpegProgress | None = None
         self.proc: asyncio.subprocess.Process | None = None
-        self.slave_id: int | None = None
-        self.slave_config_id: str | None = None
+        self.worker_id: int | None = None
+        self.worker_config_id: str | None = None
         self.master_url: str | None = None
 
         self.paused: bool = False

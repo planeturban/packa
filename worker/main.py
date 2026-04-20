@@ -1,21 +1,21 @@
 """
-Slave entry point.
+Worker entry point.
 
 Configuration priority: config file < environment variables < CLI flags.
 
 Environment variables:
-  PACKA_SLAVE_BIND            Bind address
-  PACKA_SLAVE_API_PORT        API port
-  PACKA_SLAVE_ID              Slave ID (falls back to slave.db if unset)
-  PACKA_SLAVE_PREFIX          Path prefix for incoming file paths
-  PACKA_SLAVE_MASTER_HOST     Master hostname/IP
-  PACKA_SLAVE_MASTER_PORT     Master API port
-  PACKA_SLAVE_ADVERTISE_HOST  IP/hostname advertised to master
-  PACKA_SLAVE_FFMPEG_BIN      Path to ffmpeg binary
-  PACKA_SLAVE_FFMPEG_OUTPUT_DIR  Directory for converted files
-  PACKA_SLAVE_FFMPEG_EXTRA_ARGS  Extra ffmpeg arguments
-  PACKA_SLAVE_BATCH_SIZE      Jobs to claim per poll
-  PACKA_SLAVE_POLL_INTERVAL   Seconds between poll attempts
+  PACKA_WORKER_BIND            Bind address
+  PACKA_WORKER_API_PORT        API port
+  PACKA_WORKER_ID              Worker ID (falls back to worker.db if unset)
+  PACKA_WORKER_PREFIX          Path prefix for incoming file paths
+  PACKA_WORKER_MASTER_HOST     Master hostname/IP
+  PACKA_WORKER_MASTER_PORT     Master API port
+  PACKA_WORKER_ADVERTISE_HOST  IP/hostname advertised to master
+  PACKA_WORKER_FFMPEG_BIN      Path to ffmpeg binary
+  PACKA_WORKER_FFMPEG_OUTPUT_DIR  Directory for converted files
+  PACKA_WORKER_FFMPEG_EXTRA_ARGS  Extra ffmpeg arguments
+  PACKA_WORKER_BATCH_SIZE      Jobs to claim per poll
+  PACKA_WORKER_POLL_INTERVAL   Seconds between poll attempts
 
 Flags:
   --bind            Address to bind the server ("any" → 0.0.0.0)
@@ -26,7 +26,7 @@ Flags:
   --config          Path to TOML config file
 
 Usage:
-  python -m slave.main --config packa.toml
+  python -m worker.main --config packa.toml
 """
 
 import argparse
@@ -42,11 +42,11 @@ builtins.print = _ts_print
 
 import uvicorn
 
-from shared.config import load_slave
+from shared.config import load_worker
 from shared.log import UVICORN_LOG_CONFIG
 
 from .api import app, set_config, set_registration_params
-from .store import get_or_create_slave_id, get_stored_slave_id, set_setting
+from .store import get_or_create_worker_id, get_stored_worker_id, set_setting
 
 
 def _detect_host() -> str:
@@ -58,16 +58,16 @@ def _detect_host() -> str:
         return socket.gethostbyname(socket.gethostname())
 
 
-async def _main(bind: str, api_port: int, advertise_host: str | None, slave_id: str) -> None:
+async def _main(bind: str, api_port: int, advertise_host: str | None, worker_id: str) -> None:
     effective_host = advertise_host or _detect_host()
-    set_registration_params(effective_host, slave_id)
+    set_registration_params(effective_host, worker_id)
     uvi_config = uvicorn.Config(app, host=bind, port=api_port, log_level="info",
                                 log_config=UVICORN_LOG_CONFIG)
     await uvicorn.Server(uvi_config).serve()
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Packa slave")
+    parser = argparse.ArgumentParser(description="Packa worker")
     parser.add_argument("--bind", default=None,
                         help='Address to bind the server ("any" → 0.0.0.0)')
     parser.add_argument("--api-port", type=int, default=None, help="Metadata API port")
@@ -78,7 +78,7 @@ def main() -> None:
     parser.add_argument("--config", help="Path to TOML config file")
     args = parser.parse_args()
 
-    config = load_slave(args.config)
+    config = load_worker(args.config)
 
     bind_raw = args.bind if args.bind is not None else config.bind
     bind = "0.0.0.0" if bind_raw == "any" else bind_raw
@@ -94,32 +94,32 @@ def main() -> None:
 
     set_config(config)
 
-    db_id = get_stored_slave_id()
+    db_id = get_stored_worker_id()
     is_new = db_id is None
 
-    if config.slave_id:
-        if db_id and db_id != config.slave_id:
-            print(f"[slave] id from config: {config.slave_id!r} (db has a different id: {db_id!r})")
+    if config.worker_id:
+        if db_id and db_id != config.worker_id:
+            print(f"[worker] id from config: {config.worker_id!r} (db has a different id: {db_id!r})")
         elif db_id:
-            print(f"[slave] id from config: {config.slave_id!r} (matches db)")
-        slave_id = config.slave_id
+            print(f"[worker] id from config: {config.worker_id!r} (matches db)")
+        worker_id = config.worker_id
     else:
-        slave_id = get_or_create_slave_id()
+        worker_id = get_or_create_worker_id()
         source = "db" if db_id else "generated"
-        print(f"[slave] id {source}: {slave_id!r}")
+        print(f"[worker] id {source}: {worker_id!r}")
 
-    set_setting("slave_id", slave_id)
+    set_setting("worker_id", worker_id)
     if is_new:
         set_setting("first_run", "true")
 
-    print(f"[slave] bind: {bind}:{api_port}")
-    print(f"[slave] path_prefix: {config.path_prefix!r}")
+    print(f"[worker] bind: {bind}:{api_port}")
+    print(f"[worker] path_prefix: {config.path_prefix!r}")
 
     asyncio.run(_main(
         bind=bind,
         api_port=api_port,
         advertise_host=advertise_host,
-        slave_id=slave_id,
+        worker_id=worker_id,
     ))
 
 

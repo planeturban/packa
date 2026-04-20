@@ -1,7 +1,7 @@
 # Packa — configuration
 # Copy to packa.toml and adjust values, then start with:
 #   python -m master.master --config packa.toml
-#   python -m slave.main   --config packa.toml
+#   python -m worker.main   --config packa.toml
 #   python -m web.main     --config packa.toml
 #
 # Configuration priority: config file < environment variables < CLI flags.
@@ -18,7 +18,7 @@ api_port = 9000
 
 [master.paths]
 # Root path for the master node.
-# - Stripped from file paths before sending to slaves (e.g. /mnt/data/shows/ep1.mkv → shows/ep1.mkv)
+# - Stripped from file paths before sending to workers (e.g. /mnt/data/shows/ep1.mkv → shows/ep1.mkv)
 # - Used as the root directory for POST /scan/start
 # Env: PACKA_MASTER_PREFIX
 prefix = "/mnt/data/"
@@ -41,12 +41,12 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 # checksum_bytes = 4194304
 
 # ---------------------------------------------------------------------------
-# Slave
+# Worker
 # ---------------------------------------------------------------------------
-# Env: PACKA_SLAVE_BIND, PACKA_SLAVE_API_PORT,
-#      PACKA_SLAVE_MASTER_HOST, PACKA_SLAVE_MASTER_PORT, PACKA_SLAVE_ADVERTISE_HOST
+# Env: PACKA_WORKER_BIND, PACKA_WORKER_API_PORT,
+#      PACKA_WORKER_MASTER_HOST, PACKA_WORKER_MASTER_PORT, PACKA_WORKER_ADVERTISE_HOST
 
-[slave]
+[worker]
 bind     = "localhost"   # use "any" for 0.0.0.0
 api_port = 8000
 
@@ -55,31 +55,31 @@ master_host    = "localhost"
 master_port    = 9000
 # advertise_host = ""   # auto-detected if omitted
 
-# Unique identifier for this slave. Used by master to track which slave
-# holds which file. Must be unique across all slaves.
-# Env: PACKA_SLAVE_ID
+# Unique identifier for this worker. Used by master to track which worker
+# holds which file. Must be unique across all workers.
+# Env: PACKA_WORKER_ID
 #
-# If omitted, the slave looks for a previously generated ID in its local
-# database (slave.db). If none exists, a UUID is generated and stored there
+# If omitted, the worker looks for a previously generated ID in its local
+# database (worker.db). If none exists, a UUID is generated and stored there
 # so the same ID is reused on subsequent restarts.
 id = "storage-01"
 
-[slave.paths]
+[worker.paths]
 # Prefix prepended to relative paths received from master.
 # Example: shows/ep1.mkv → /mnt/files/shows/ep1.mkv
 # If omitted, master.paths.prefix is used instead.
-# Env: PACKA_SLAVE_PREFIX
+# Env: PACKA_WORKER_PREFIX
 prefix = "/mnt/files/"
 
-[slave.ffmpeg]
-# Env: PACKA_SLAVE_FFMPEG_BIN, PACKA_SLAVE_FFMPEG_OUTPUT_DIR, PACKA_SLAVE_FFMPEG_EXTRA_ARGS
+[worker.ffmpeg]
+# Env: PACKA_WORKER_FFMPEG_BIN, PACKA_WORKER_FFMPEG_OUTPUT_DIR, PACKA_WORKER_FFMPEG_EXTRA_ARGS
 
 bin        = "ffmpeg"
 output_dir = "/mnt/output"
 
 # Optional extra arguments appended to every ffmpeg call (single string).
 # Example: extra_args = "-metadata comment='packa'"
-# Env: PACKA_SLAVE_FFMPEG_EXTRA_ARGS
+# Env: PACKA_WORKER_FFMPEG_EXTRA_ARGS
 # extra_args = ""
 
 # Restrict which encoders appear in the dashboard dropdown.
@@ -87,41 +87,41 @@ output_dir = "/mnt/output"
 # encoders = ["libx265", "nvenc"]
 
 # ── Encoder definitions ───────────────────────────────────────────────────────
-# Each [slave.ffmpeg.encoder.<key>] section defines one encoder.
+# Each [worker.ffmpeg.encoder.<key>] section defines one encoder.
 # Only the encoders you define here will appear in the dashboard dropdown.
 # If no encoders are defined, libx265 is used as a bare fallback.
 #
 # display_name — optional human-readable label; shown as "display_name (key)" in the dropdown
 # video_args   — ffmpeg video codec arguments
 
-[slave.ffmpeg.encoder.libx265]
+[worker.ffmpeg.encoder.libx265]
 display_name = "Software"
 video_args   = "-c:v libx265"
 
-[slave.ffmpeg.encoder.nvenc]
+[worker.ffmpeg.encoder.nvenc]
 display_name = "NVIDIA"
 video_args   = "-c:v hevc_nvenc -preset p5 -cq 24"
 
-[slave.ffmpeg.encoder.vaapi]
+[worker.ffmpeg.encoder.vaapi]
 display_name = "Intel/AMD"
 input_args   = "-init_hw_device vaapi=va:/dev/dri/renderD128 -hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi"
 video_args   = "-filter_hw_device va -c:v hevc_vaapi -rc_mode ICQ -global_quality 23"
 
-[slave.ffmpeg.encoder.videotoolbox]
+[worker.ffmpeg.encoder.videotoolbox]
 display_name = "Apple"
 video_args   = "-c:v hevc_videotoolbox -q:v 65"
 
-[slave.ffmpeg.encoder.rkmpp]
+[worker.ffmpeg.encoder.rkmpp]
 display_name = "Rockchip"
 video_args   = "-c:v hevc_rkmpp -rc_mode CQP -qp_init 28"
 
 # Custom encoder example:
-# [slave.ffmpeg.encoder.nvenc_hq]
+# [worker.ffmpeg.encoder.nvenc_hq]
 # display_name = "NVIDIA HQ"
 # video_args   = "-c:v hevc_nvenc -preset p7 -cq 18"
 
-[slave.worker]
-# Env: PACKA_SLAVE_POLL_INTERVAL
+[worker.worker]
+# Env: PACKA_WORKER_POLL_INTERVAL
 
 # Seconds between poll attempts when the job queue is empty.
 poll_interval = 5
@@ -129,7 +129,7 @@ poll_interval = 5
 # Stepped early-cancellation thresholds: [[progress%, ratio], ...]
 # At each progress point, cancel if projected output > source * ratio.
 # The tightest reached threshold applies. Remove this line to disable early cancellation entirely.
-# Env: PACKA_SLAVE_CANCEL_THRESHOLDS  (format: "10.0:1.10,25.0:1.05,50.0:1.0")
+# Env: PACKA_WORKER_CANCEL_THRESHOLDS  (format: "10.0:1.10,25.0:1.05,50.0:1.0")
 # cancel_thresholds = [[10.0, 1.10], [25.0, 1.05], [50.0, 1.0]]
 
 # ---------------------------------------------------------------------------

@@ -1,1111 +1,1274 @@
-// ── Shared constants ──────────────────────────────────────────────────────
-const _ENC_COLORS = {
-  libx265:      { bg:'#e3f2fd', color:'#1565c0' },
-  nvenc:        { bg:'#e8f5e9', color:'#2e7d32' },
-  vaapi:        { bg:'#fff3e0', color:'#e65100' },
-  videotoolbox: { bg:'#f3e5f5', color:'#6a1b9a' },
-};
-function _encBadge(enc) {
-  if (!enc) return '<span style="color:#aaa">—</span>';
-  const c = _ENC_COLORS[enc] || { bg:'#f5f5f5', color:'#666' };
-  return `<span style="background:${c.bg};color:${c.color};padding:.1rem .35rem;border-radius:3px;font-size:.7rem;font-weight:700;white-space:nowrap">${_esc(enc)}</span>`;
-}
-
-const _ST_COLORS = {
-  pending:    { bg:'#f5f5f5', color:'#666' },
-  assigned:   { bg:'#fff3e0', color:'#e65100' },
-  processing: { bg:'#e3f2fd', color:'#1565c0' },
-  complete:   { bg:'#e8f5e9', color:'#2e7d32' },
-  discarded:  { bg:'#f5f5f5', color:'#aaa' },
-  cancelled:  { bg:'#fbe9e7', color:'#bf360c' },
-  error:      { bg:'#ffebee', color:'#c62828' },
-  duplicate:  { bg:'#ede7f6', color:'#4527a0' },
-};
-
-// ── Dashboard file table ──────────────────────────────────────────────────
-let _dashFiles  = [];
-let _dashSlaves = [];
-let _dashFilter = new Set();
-let _dashPage   = 1;
-let _dashQuery  = '';
-let _dashPerPage = parseInt(localStorage.getItem('dashPerPage') || '50', 10);
-
-function _dashFiltered() {
-  let result = _dashFiles;
-  if (_dashFilter.size) result = result.filter(f => _dashFilter.has(f.status));
-  if (_dashQuery) {
-    const q = _norm(_dashQuery);
-    result = result.filter(f =>
-      _norm(f.file_name).includes(q) ||
-      _norm(f.file_path).includes(q) ||
-      _norm(f.slave_id).includes(q)
-    );
-  }
-  return result;
-}
-
-function _setDashFilter(s) {
-  if (s === null) {
-    _dashFilter.clear();
-  } else if (_dashFilter.has(s)) {
-    _dashFilter.delete(s);
-  } else {
-    _dashFilter.add(s);
-  }
-  _dashPage = 1;
-  _renderDashFiles();
-}
-
-function _dashUpdateSel() {
-  const n = document.querySelectorAll('.dash-row-chk:checked').length;
-  const el = document.getElementById('dash-sel-count');
-  if (el) el.textContent = n ? `${n} selected` : '';
-  document.querySelectorAll('.dash-bulk-btn').forEach(b => b.disabled = n === 0);
-  const sel = document.getElementById('dash-assign-sel');
-  if (sel) sel.disabled = n === 0;
-}
-
-function _dashToggleAll(src) {
-  document.querySelectorAll('.dash-row-chk').forEach(c => c.checked = src.checked);
-  _dashUpdateSel();
-}
-
-function _dashSelectedIds() {
-  return [...document.querySelectorAll('.dash-row-chk:checked')].map(el => +el.value);
-}
-
-async function bulkDashDelete() {
-  const ids = _dashSelectedIds();
-  if (!ids.length) return;
-  if (!confirm(`Delete ${ids.length} record(s)?`)) return;
-  await fetch('/data/files/delete', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ids}),
-  });
-  const r = await fetch('/data/dashboard');
-  if (r.ok) _applyDashboard(await r.json());
-}
-
-async function bulkDashPending() {
-  const ids = _dashSelectedIds();
-  if (!ids.length) return;
-  await fetch('/data/files/pending', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ids}),
-  });
-  const r = await fetch('/data/dashboard');
-  if (r.ok) _applyDashboard(await r.json());
-}
-
-async function bulkDashAssign(slaveConfigId) {
-  const ids = _dashSelectedIds();
-  if (!ids.length) return;
-  await fetch('/data/files/assign', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ids, slave_config_id: slaveConfigId}),
-  });
-  const r = await fetch('/data/dashboard');
-  if (r.ok) _applyDashboard(await r.json());
-}
-
-async function bulkDashCancel() {
-  const ids = _dashSelectedIds();
-  if (!ids.length) return;
-  await fetch('/data/files/cancel', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ids}),
-  });
-  const r = await fetch('/data/dashboard');
-  if (r.ok) _applyDashboard(await r.json());
-}
-
-function _renderDashFiles() {
-  const filtered = _dashFiltered();
-  const total    = filtered.length;
-  const pages    = Math.max(1, Math.ceil(total / _dashPerPage));
-  if (_dashPage > pages) _dashPage = pages;
-  const slice = filtered.slice((_dashPage - 1) * _dashPerPage, _dashPage * _dashPerPage);
-
-  // File count
-  const cntEl = document.getElementById('dash-file-count');
-  if (cntEl) cntEl.textContent = _dashFiles.length;
-
-  // Status filter buttons
-  const base   = 'border:none;border-radius:3px;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;font-family:inherit;padding:.18rem .52rem;';
-  const shadow = 'box-shadow:inset 0 0 0 1.5px currentColor;';
-  let filters  = '<div style="display:flex;gap:.3rem;flex-wrap:wrap;margin-bottom:.55rem">';
-  const allActive = _dashFilter.size === 0;
-  filters += `<button onclick="_setDashFilter(null)" style="${base}background:${allActive?'#e8eaf6':'#f0f0f0'};color:#3949ab;${allActive?shadow:''}">All</button>`;
-  for (const [s, c] of Object.entries(_ST_COLORS)) {
-    const n = _dashFiles.filter(f => f.status === s).length;
-    if (!n) continue;
-    const active = _dashFilter.has(s);
-    filters += `<button onclick="_setDashFilter('${s}')" style="${base}background:${c.bg};color:${c.color};${active?shadow:''}">${s} (${n})</button>`;
-  }
-  filters += '</div>';
-  const filtersEl = document.getElementById('dash-status-filters');
-  if (filtersEl) filtersEl.innerHTML = filters;
-
-  // Search + action bar
-  let h = `<input type="text" class="modal-search" id="dash-search" placeholder="Filter by filename, path or slave…"
-              value="${_esc(_dashQuery)}" oninput="_dashQuery=this.value;_dashPage=1;_renderDashFiles()">
-    <div class="modal-bar">
-      <select onchange="_dashPerPage=+this.value;localStorage.setItem('dashPerPage',this.value);_dashPage=1;_renderDashFiles()"
-        style="padding:.22rem .4rem;border:1px solid var(--border-input);border-radius:4px;font-size:.78rem;font-family:inherit;background:var(--surface);color:var(--text)">
-        ${[25,50,100,250].map(n=>`<option value="${n}"${n===_dashPerPage?' selected':''}>${n} per page</option>`).join('')}
-      </select>
-      <span class="sel-count" id="dash-sel-count"></span>
-      <div class="modal-bar-right">
-        <button class="btn-act dash-bulk-btn" disabled onclick="bulkDashPending()">Set to pending</button>
-        <button class="btn-act dash-bulk-btn" disabled onclick="bulkDashCancel()">Set to cancelled</button>
-        <button class="btn-act danger dash-bulk-btn" disabled onclick="bulkDashDelete()">Delete selected</button>
-        ${(() => { const assignable = _dashSlaves.filter(s => s.state !== 'unreachable' && !s.unconfigured); return assignable.length ? `<select id="dash-assign-sel" disabled onchange="if(this.value){bulkDashAssign(this.value);this.value=''}" style="padding:.22rem .4rem;border:1px solid var(--border-input);border-radius:4px;font-size:.78rem;font-family:inherit;background:var(--surface);color:var(--text);cursor:pointer"><option value="">Assign to slave…</option>${assignable.map(s=>`<option value="${_esc(s.config_id)}">${_esc(s.config_id)}</option>`).join('')}</select>` : ''; })()}
-      </div>
-    </div>`;
-
-  // Table
-  h += '<div style="overflow-x:auto"><table class="modal-table"><thead><tr>';
-  h += `<th><input type="checkbox" class="chk-all" onchange="_dashToggleAll(this)"></th>`;
-  h += '<th>ID</th><th>Filename</th><th>Status</th><th>Slave</th><th>Source</th><th>Output</th><th>Duration</th><th>Finished</th>';
-  h += '</tr></thead><tbody>';
-  if (!slice.length) {
-    const msg = total === 0 && _dashQuery ? 'No results for this search.' : 'No files.';
-    h += `<tr><td colspan="9" style="color:#aaa;text-align:center;padding:.8rem">${msg}</td></tr>`;
-  } else {
-    for (const f of slice) {
-      h += `<tr>
-        <td><input type="checkbox" class="dash-row-chk" value="${f.id}" onchange="_dashUpdateSel()"></td>
-        <td>${f.id}</td>
-        <td><span class="modal-fname" title="${_esc(f.file_path)}">${_esc(f.file_name)}</span></td>
-        <td>${stBadge(f.status, f)}</td>
-        <td>${f.slave_id ? _esc(f.slave_id) : '—'}</td>
-        <td>${fmtBytes(f.file_size)}</td>
-        <td>${fmtBytes(f.output_size)}</td>
-        <td>${fmtDuration(f.started_at, f.finished_at)}</td>
-        <td>${fmtDate(f.finished_at)}</td>
-      </tr>`;
-    }
-  }
-  h += '</tbody></table></div>';
-
-  // Pagination
-  if (pages > 1) {
-    h += `<div class="modal-pagination">
-      <button class="btn-act" onclick="_dashPage--;_renderDashFiles()" ${_dashPage<=1?'disabled':''}>← Prev</button>
-      <span class="pag-info">Page ${_dashPage} of ${pages} &nbsp;·&nbsp; ${total} rows</span>
-      <button class="btn-act" onclick="_dashPage++;_renderDashFiles()" ${_dashPage>=pages?'disabled':''}>Next →</button>
-    </div>`;
-  } else if (total > 0) {
-    h += `<div class="modal-pagination"><span class="pag-info">${total} row${total!==1?'s':''}</span></div>`;
-  }
-
-  const prevChecked = new Set(_dashSelectedIds());
-  const searchWasActive = document.activeElement?.id === 'dash-search';
-  const tblEl = document.getElementById('dash-file-table');
-  if (tblEl) tblEl.innerHTML = h;
-  // Restore checked state
-  document.querySelectorAll('.dash-row-chk').forEach(c => {
-    if (prevChecked.has(+c.value)) c.checked = true;
-  });
-  const dashAllChk = document.querySelector('#dash-file-table .chk-all');
-  if (dashAllChk) {
-    const total   = document.querySelectorAll('.dash-row-chk').length;
-    const checked = document.querySelectorAll('.dash-row-chk:checked').length;
-    dashAllChk.checked       = total > 0 && checked === total;
-    dashAllChk.indeterminate = checked > 0 && checked < total;
-  }
-  if (searchWasActive) {
-    const el = document.getElementById('dash-search');
-    if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
-  }
-  _dashUpdateSel();
-}
-
-// ── Auto-refresh (smooth, no page reload) ────────────────────────────────
-let _refreshTimer = null;
-
-function _pauseRefresh() { clearTimeout(_refreshTimer); }
-function _resumeRefresh() { _refreshTimer = setTimeout(_dashRefresh, 3000); }
-
-async function _dashRefresh() {
-  try {
-    const r = await fetch('/data/dashboard');
-    if (r.ok) _applyDashboard(await r.json());
-  } catch(e) {}
-  if (!_ctx) _resumeRefresh();
-}
-
-function _applyDashboard(data) {
-  // Master error / content
-  const errEl     = document.getElementById('master-error');
-  const contentEl = document.getElementById('master-content');
-  if (data.master_error) {
-    errEl?.classList.remove('hidden');
-    contentEl?.classList.add('hidden');
-    const msg = document.getElementById('master-error-msg');
-    if (msg) msg.textContent = data.master_error;
-  } else {
-    errEl?.classList.add('hidden');
-    contentEl?.classList.remove('hidden');
-    // File counts
-    for (const [s, n] of Object.entries(data.file_counts || {})) {
-      const el = document.getElementById('cnt-' + s);
-      if (el) el.textContent = n;
-    }
-    // Scan live area
-    const scanEl = document.getElementById('scan-live');
-    if (scanEl && data.scan) scanEl.innerHTML = _scanLiveHtml(data.scan);
-  }
-  // File table
-  if (data.files) {
-    _dashFiles = data.files.slice().sort((a, b) => b.id - a.id);
-    _renderDashFiles();
-  }
-
-  // Slave section
-  const cntEl = document.getElementById('slave-count');
-  const secEl = document.getElementById('slave-section');
-  const slaves = data.slaves || [];
-  _dashSlaves = slaves;
-  if (cntEl) cntEl.textContent = slaves.length;
-  if (secEl) {
-    // Lock current height before updating so the section can only grow, never shrink.
-    // This prevents the file table from jumping when a slave card changes between states.
-    secEl.style.minHeight = secEl.offsetHeight + 'px';
-    if (!slaves.length) {
-      secEl.innerHTML = '<p style="color:#aaa;font-size:.9rem;margin-top:.5rem">No slaves registered.</p>';
-    } else {
-      secEl.innerHTML = '<div class="slave-grid">' + slaves.map(_slaveCardHtml).join('') + '</div>';
-    }
-  }
-}
-
-function _scanLiveHtml(scan) {
-  if (scan.running) {
-    return `<span class="badge badge-scanning">Scanning</span>
-      <div class="scan-stats">
-        <span>Found: ${scan.found}</span>
-        <span>Skipped: ${scan.skipped}</span>
-        ${scan.errors ? `<span class="scan-err">Errors: ${scan.errors}</span>` : ''}
-      </div>
-      <div class="actions" style="margin-top:.6rem">
-        <form method="post" action="/actions/scan/stop">
-          <button class="btn-act danger" type="submit">Stop scan</button>
-        </form>
-        ${scan.path ? `<span style="font-size:.76rem;color:#aaa;align-self:center">${_esc(scan.path)}</span>` : ''}
-      </div>`;
-  }
-  return `<span class="badge badge-idle">Scan idle</span>
-    <div class="actions" style="margin-top:.6rem">
-      <form method="post" action="/actions/scan/start">
-        <button class="btn-act" type="submit">Start scan</button>
-      </form>
-      ${scan.path ? `<span style="font-size:.76rem;color:#aaa;align-self:center">${_esc(scan.path)}</span>` : ''}
-    </div>`;
-}
-
-function _slaveCardHtml(s) {
-  const badge = s.state === 'unreachable'
-    ? '<span class="badge badge-unreachable">Unreachable</span>'
-    : s.unconfigured ? '<span class="badge badge-unconfigured">Unconfigured</span>'
-    : s.disk_full ? '<span class="badge badge-disk-full">Disk full</span>'
-    : s.sleeping ? '<span class="badge badge-sleeping">Sleeping</span>'
-    : s.paused   ? '<span class="badge badge-paused">Paused</span>'
-    : s.state === 'processing' ? `<span class="badge badge-processing">${s.drain ? 'Draining' : 'Converting'}</span>`
-    : s.drain    ? '<span class="badge badge-drain">Draining</span>'
-    : '<span class="badge badge-idle">Idle</span>';
-
-  let h = `<div class="slave-card" data-host="${_esc(s.host)}" data-port="${s.api_port}" data-name="${_esc(s.config_id)}"
-    onclick="showSlave(this.dataset.host,+this.dataset.port,this.dataset.name)">
-    <div class="slave-head">
-      <div><div class="slave-name">${_esc(s.config_id)}</div>
-      <div class="slave-host">${_esc(s.host)}:${s.api_port}</div></div>
-      ${badge}
-    </div>`;
-
-  if (s.state !== 'unreachable') {
-    h += `<div class="meta-row"><span>Queue</span><span>${s.queued} job${s.queued!==1?'s':''}</span></div>`;
-    if (!s.unconfigured)
-      h += `<div class="meta-row"><span>Encoder</span><span>${_encBadge(s.encoder)}</span></div>`;
-  }
-
-  if (s.state === 'processing' && s.progress) {
-    const p = s.progress;
-    const pct = Math.min(p.percent || 0, 100);
-    h += `<div class="prog-wrap"><div class="prog-bar" style="width:${pct}%"></div></div>
-      <div class="meta-row">
-        <span>${pct.toFixed(1)}%</span>
-        <span>${p.fps ? p.fps+'\u00a0fps\u00a0\u00a0' : ''}${p.speed ? p.speed+'×\u00a0\u00a0' : ''}${p.eta_seconds != null ? 'ETA\u00a0'+fmtEta(p.eta_seconds) : ''}</span>
-      </div>`;
-    if (p.current_size_bytes) {
-      h += `<div class="meta-row"><span>Size</span><span>${fmtBytes(p.current_size_bytes)}${p.projected_size_bytes ? ' → '+fmtBytes(p.projected_size_bytes) : ''}</span></div>`;
-      if (p.bitrate) h += `<div class="meta-row"><span>Bitrate</span><span>${_esc(p.bitrate)}</span></div>`;
-    }
-  } else if (s.state === 'processing') {
-    h += '<p style="font-size:.78rem;color:#aaa;margin-top:.5rem">Waiting for progress…</p>';
-  }
-
-  if (s.state !== 'unreachable') {
-    h += `<div class="actions" onclick="event.stopPropagation()">`;
-    if (s.unconfigured) {
-      // no buttons — user opens the modal to select encoder and activate
-    } else if (s.sleeping) {
-      h += _slaveBtn('/actions/slave/wake', s, 'Wake up', '');
-    } else if (s.paused) {
-      h += _slaveBtn('/actions/slave/resume', s, 'Resume', '') + _slaveBtn('/actions/slave/stop', s, 'Stop', 'danger');
-    } else if (s.state === 'processing') {
-      h += _slaveBtn('/actions/slave/pause', s, 'Pause', '');
-      if (!s.drain) h += _slaveBtn('/actions/slave/drain', s, 'Finish current', 'warn');
-      h += _slaveBtn('/actions/slave/stop', s, 'Stop', 'danger');
-    } else if (s.drain) {
-      h += _slaveBtn('/actions/slave/resume', s, 'Resume polling', '');
-    } else {
-      h += _slaveBtn('/actions/slave/sleep', s, 'Sleep', '');
-    }
-    h += '</div>';
-  }
-  h += '</div>';
-  return h;
-}
-
-function _slaveBtn(action, s, label, cls) {
-  return `<form method="post" action="${action}">
-    <input type="hidden" name="host" value="${_esc(s.host)}">
-    <input type="hidden" name="api_port" value="${s.api_port}">
-    <button class="btn-act ${cls}" type="submit">${label}</button>
-  </form>`;
-}
-
-function _showCopied(anchor) {
-  const existing = document.getElementById('_copy-toast');
-  if (existing) existing.remove();
-  const t = document.createElement('div');
-  t.id = '_copy-toast';
-  t.textContent = 'Copied to clipboard';
-  t.style.cssText = 'position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:#323232;color:#fff;font-size:.8rem;padding:.45rem 1rem;border-radius:6px;pointer-events:none;opacity:1;transition:opacity .4s;z-index:9999;white-space:nowrap';
-  document.body.appendChild(t);
-  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 400); }, 1800);
-}
-
-function _norm(s) {
-  return String(s).toLowerCase().replace(/[^\p{L}\p{N} ]/gu, ' ').replace(/\s+/g, ' ').trim();
-}
-
-function _esc(str) {
-  return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// ── Statistics ────────────────────────────────────────────────────────────
-function _fmtRatio(r) {
-  return (r != null && r > 0) ? (r * 100).toFixed(1) + '%' : '—';
-}
-
-function _statsSummaryHtml(o) {
-  return `<div style="display:flex;gap:2.5rem;flex-wrap:wrap;margin-bottom:1.2rem">
-    ${[
-      [o.jobs,                                          'Converted'],
-      [fmtBytes(o.total_input_bytes),                   'Original size'],
-      [fmtBytes(o.total_saved_bytes),                   'Saved'],
-      [_fmtRatio(o.avg_compression_ratio),              'Avg size ratio'],
-      [fmtEta(Math.round(o.avg_duration_seconds || 0)), 'Avg duration'],
-    ].map(([v, lbl]) => `<div>
-      <div style="font-size:1.4rem;font-weight:700;color:var(--text)">${v}</div>
-      <div style="font-size:.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">${lbl}</div>
-    </div>`).join('')}
-  </div>`;
-}
-
-function _fmtRange(lo, hi, fmt) {
-  if (lo == null && hi == null) return '—';
-  if (lo == null || hi == null) return fmt(lo ?? hi);
-  if (Math.abs(lo - hi) < 0.01) return fmt(lo);
-  return `${fmt(lo)} – ${fmt(hi)}`;
-}
-
-function _statsEncoderTableHtml(by_encoder) {
-  const encoders = Object.entries(by_encoder || {}).sort((a, b) => b[1].jobs - a[1].jobs);
-  if (!encoders.length) return '';
-  const hasFps   = encoders.some(([, e]) => e.min_fps   != null);
-  const hasSpeed = encoders.some(([, e]) => e.min_speed != null);
-  let h = `<table class="modal-table" style="margin-bottom:1.2rem"><thead><tr>
-    <th>Encoder</th><th>Jobs</th>
-    <th>Min dur</th><th>Max dur</th>
-    ${hasFps   ? '<th>Min fps</th><th>Max fps</th>'     : ''}
-    ${hasSpeed ? '<th>Min speed</th><th>Max speed</th>' : ''}
-    <th>Min ratio</th><th>Max ratio</th>
-    <th>Total saved</th>
-  </tr></thead><tbody>`;
-  for (const [enc, e] of encoders) {
-    const fmtDur = s => s != null ? fmtEta(Math.round(s)) : '—';
-    const fmtFps = v => v != null ? v.toFixed(1) : '—';
-    const fmtSpd = v => v != null ? v.toFixed(1) + '×' : '—';
-    const fmtRat = v => v != null ? _fmtRatio(v) : '—';
-    h += `<tr>
-      <td>${_encBadge(enc)}</td>
-      <td>${e.jobs}</td>
-      <td>${fmtDur(e.min_duration_seconds)}</td>
-      <td>${fmtDur(e.max_duration_seconds)}</td>
-      ${hasFps   ? `<td>${fmtFps(e.min_fps)}</td><td>${fmtFps(e.max_fps)}</td>`     : ''}
-      ${hasSpeed ? `<td>${fmtSpd(e.min_speed)}</td><td>${fmtSpd(e.max_speed)}</td>` : ''}
-      <td>${fmtRat(e.min_size_ratio)}</td>
-      <td>${fmtRat(e.max_size_ratio)}</td>
-      <td>${fmtBytes(e.total_saved_bytes)}</td>
-    </tr>`;
-  }
-  return h + '</tbody></table>';
-}
-
-function _statsDayChartHtml(by_day) {
-  const days = (by_day || []).slice(-60);
-  if (days.length < 2) return '';
-  const maxJobs = Math.max(...days.map(d => d.jobs), 1);
-  let h = `<div style="margin-top:.4rem">
-    <div style="font-size:.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.35rem">Jobs per day</div>
-    <div style="display:flex;align-items:flex-end;gap:2px;height:56px">`;
-  for (const d of days) {
-    const pct = Math.max(Math.round((d.jobs / maxJobs) * 100), 2);
-    h += `<div title="${d.date}: ${d.jobs} job${d.jobs !== 1 ? 's' : ''}, ${fmtBytes(d.saved_bytes)} saved"
-      style="flex:1;min-width:3px;height:${pct}%;background:#1976d2;opacity:.55;border-radius:2px 2px 0 0"></div>`;
-  }
-  return h + '</div></div>';
-}
-
-function _renderStats(data) {
-  const el = document.getElementById('stats-content');
-  if (!el) return;
-  if (!data || data.error) { el.innerHTML = '<p style="color:#aaa;font-size:.9rem">Could not load statistics.</p>'; return; }
-  const o = data.overall || {};
-  if (!o.jobs) { el.innerHTML = '<p style="color:#aaa;font-size:.9rem">No completed conversions yet.</p>'; return; }
-
-  let h = _statsSummaryHtml(o);
-
-  // Slave table (clickable rows)
-  const slaves = (data.by_slave || []).sort((a, b) => b.jobs - a.jobs);
-  if (slaves.length) {
-    h += `<table class="modal-table" style="margin-bottom:1.2rem">
-      <thead><tr><th>Slave</th><th>Jobs</th><th>Total saved</th><th>Avg size ratio</th><th>Avg duration</th></tr></thead>
-      <tbody>`;
-    for (const s of slaves) {
-      h += `<tr style="cursor:pointer" onclick="showSlaveStats('${_esc(s.slave_id)}')" title="Click for details">
-        <td>${_esc(s.slave_id)}</td>
-        <td>${s.jobs}</td>
-        <td>${fmtBytes(s.total_saved_bytes)}</td>
-        <td>${_fmtRatio(s.avg_compression_ratio ?? null)}</td>
-        <td>${fmtEta(Math.round(s.avg_duration_seconds || 0))}</td>
-      </tr>`;
-    }
-    h += '</tbody></table>';
-  }
-
-  h += _statsDayChartHtml(data.by_day);
-  el.innerHTML = h;
-}
-
-async function showSlaveStats(slaveId) {
-  _ctx = { type: 'slavestats', slave_id: slaveId };
-  _stopSlavePoll();
-  _setModal(slaveId + ' — Statistics', '<p class="modal-note">Loading…</p>');
-  try {
-    const r = await fetch(`/data/stats/slave?slave_id=${encodeURIComponent(slaveId)}`);
-    const data = await r.json();
-    if (!data || data.error) {
-      document.getElementById('modal-body').innerHTML = '<p class="modal-err">Failed to load.</p>';
-      return;
-    }
-    const o = data.overall || {};
-    if (!o.jobs) {
-      document.getElementById('modal-body').innerHTML = '<p style="color:#aaa;font-size:.9rem">No completed conversions for this slave.</p>';
-      return;
-    }
-    document.getElementById('modal-body').innerHTML =
-      _statsSummaryHtml(o) +
-      _statsEncoderTableHtml(data.by_encoder) +
-      _statsDayChartHtml(data.by_day);
-  } catch(e) {
-    document.getElementById('modal-body').innerHTML = '<p class="modal-err">Failed to load.</p>';
-  }
-}
-
-async function _fetchStats() {
-  try {
-    const r = await fetch('/data/stats');
-    if (r.ok) _renderStats(await r.json());
-  } catch(e) {}
-  setTimeout(_fetchStats, 30000);
-}
-
-// Seed file table from server-rendered data on first load
-_dashFiles = JSON.parse(document.getElementById('init-files').textContent).sort((a, b) => b.id - a.id);
-_renderDashFiles();
-
-_resumeRefresh();
-_fetchStats();
-
-// ── Slave status polling (500ms when slave modal is open) ─────────────────
-let _slaveStatusTimer = null;
-function _startSlavePoll(host, port) {
-  _stopSlavePoll();
-  _scheduleSlavePoll(host, port, 500);
-}
-function _stopSlavePoll() {
-  if (_slaveStatusTimer) { clearTimeout(_slaveStatusTimer); _slaveStatusTimer = null; }
-}
-function _scheduleSlavePoll(host, port, delay) {
-  _slaveStatusTimer = setTimeout(() => _doSlavePoll(host, port), delay);
-}
-async function _doSlavePoll(host, port) {
-  _slaveStatusTimer = null;
-  if (!_ctx || _ctx.type !== 'slave') return;
-  try {
-    const r = await fetch(`/data/slave?host=${encodeURIComponent(host)}&port=${port}`);
-    if (!r.ok) { _scheduleSlavePoll(host, port, 2000); return; }
-    const data = await r.json();
-    const el = document.getElementById('slave-status');
-    if (el) {
-      const encSel = document.getElementById(`enc-${port}`);
-      const savedEnc = encSel ? encSel.value : null;
-      const batchInp = document.getElementById(`batch-${port}`);
-      const savedBatch = batchInp ? batchInp.value : null;
-      const replaceChk = document.getElementById(`replace-${port}`);
-      const savedReplace = replaceChk ? replaceChk.checked : null;
-      const cmdEl = document.getElementById(`ffcmd-${port}`);
-      const cmdOpen = cmdEl ? cmdEl.style.display === 'block' : false;
-      const focusedId = document.activeElement?.id || null;
-      el.innerHTML = _slaveStatusHtml(data.status, host, port);
-      if (savedEnc) {
-        const newSel = document.getElementById(`enc-${port}`);
-        if (newSel) newSel.value = savedEnc;
-      }
-      if (savedBatch) {
-        const newInp = document.getElementById(`batch-${port}`);
-        if (newInp) newInp.value = savedBatch;
-      }
-      if (savedReplace !== null) {
-        const newChk = document.getElementById(`replace-${port}`);
-        if (newChk) newChk.checked = savedReplace;
-      }
-      if (focusedId) {
-        const refEl = document.getElementById(focusedId);
-        if (refEl) refEl.focus();
-      }
-      if (cmdOpen) {
-        const newCmd = document.getElementById(`ffcmd-${port}`);
-        if (newCmd) newCmd.style.display = 'block';
-      }
-    }
-    // Refresh the file table if the list has changed
-    if (data.files) {
-      const sorted = (data.files).slice().sort((a,b) =>
-        (b.updated_at||'').localeCompare(a.updated_at||''));
-      const prevIds = _allFiles.map(f=>f.id+f.status).join(',');
-      const newIds  = sorted.map(f=>f.id+f.status).join(',');
-      if (prevIds !== newIds) {
-        _allFiles = sorted;
-        _renderTable();
-      }
-    }
-    // Fast poll only during active conversion; idle/sleeping needs no sub-second updates
-    const active = data.status && data.status.state === 'processing';
-    _scheduleSlavePoll(host, port, active ? 500 : 2000);
-  } catch(e) {
-    _scheduleSlavePoll(host, port, 2000);
-  }
-}
-async function _refreshSlaveStatus(host, port) {
-  return _doSlavePoll(host, port);
-}
-
-// ── Modal state ───────────────────────────────────────────────────────────
-let _ctx           = null;  // { type:'master', status } | { type:'slave', host, port, name }
-let _allFiles      = [];    // full fetched list
-let _cols          = [];    // column definitions for current table
-let _page          = 1;
-let _query         = '';
-let _statusFilter  = null;  // null = all, or a status string (slave modal only)
-let _encoderFilter = null;  // null = all, or an encoder string
-const _PER_PAGE    = 50;
-
-// ── Modal open/close ──────────────────────────────────────────────────────
-function _setModal(title, html) {
-  _pauseRefresh();
-  document.getElementById('modal-title').textContent = title;
-  document.getElementById('modal-body').innerHTML = html;
-  document.getElementById('modal').style.display = 'flex';
-}
-function closeModal() {
-  document.getElementById('modal').style.display = 'none';
-  _ctx = null;
-  _stopSlavePoll();
-  _dashRefresh(); // immediate refresh so cards reflect latest state
-}
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
-
-// ── Formatters ────────────────────────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────────────────────
 function fmtBytes(b) {
   if (b == null || b === 0) return '—';
-  const units = ['B','KB','MB','GB','TB'];
-  for (const u of units) { if (b < 1024) return Math.round(b) + '\u00a0' + u; b /= 1024; }
-  return b.toFixed(1) + '\u00a0PB';
+  const u = ['B','KB','MB','GB','TB'];
+  let i = 0;
+  while (b >= 1024 && i < 4) { b /= 1024; i++; }
+  return `${b.toFixed(1)} ${u[i]}`;
 }
+
 function fmtDate(iso) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString(undefined, {dateStyle:'short', timeStyle:'short'});
+  const d = new Date(iso);
+  return d.toLocaleDateString('sv', {day:'2-digit', month:'short'}) + ' ' +
+         d.toLocaleTimeString('sv', {hour:'2-digit', minute:'2-digit'});
 }
-function fmtDuration(a, b) {
-  if (!a || !b) return '—';
-  let s = Math.round((new Date(b) - new Date(a)) / 1000);
-  if (s < 0) return '—';
-  if (s < 60) return s + 's';
-  if (s < 3600) return Math.floor(s/60) + 'm\u00a0' + String(s%60).padStart(2,'0') + 's';
-  return Math.floor(s/3600) + 'h\u00a0' + String(Math.floor((s%3600)/60)).padStart(2,'0') + 'm';
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
-function fmtEta(s) {
-  if (s == null) return '';
-  if (s < 60) return s + 's';
-  if (s < 3600) return Math.floor(s/60) + 'm\u00a0' + String(s%60).padStart(2,'0') + 's';
-  return Math.floor(s/3600) + 'h\u00a0' + String(Math.floor((s%3600)/60)).padStart(2,'0') + 'm';
+
+function badge(status) {
+  const map = {
+    pending:'badge-pending', assigned:'badge-assigned',
+    processing:'badge-processing', complete:'badge-done', done:'badge-done',
+    discarded:'badge-discarded', cancelled:'badge-cancelled',
+    error:'badge-error', duplicate:'badge-duplicate',
+    sleeping:'badge-sleeping', online:'badge-online', offline:'badge-offline',
+  };
+  const cls = map[status] || 'badge-discarded';
+  const label = status === 'complete' ? 'done' : status;
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
 }
-function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
-function stBadge(s, f) {
-  let title = '';
-  if (s === 'discarded') title = ' title="Already HEVC — no conversion needed"';
-  else if (s === 'cancelled') {
-    const reason = (f && f.cancel_reason) === 'auto'
-      ? 'Cancelled automatically — output exceeded source size'
-      : 'Cancelled by user';
-    title = ` title="${reason}"`;
+
+function svgIcon(name, size = 16) {
+  const paths = {
+    box: 'M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z',
+    plus: 'M12 5v14M5 12h14',
+    trash: 'M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6',
+    stop: 'M6 6h12v12H6z',
+    pause: 'M6 4h4v16H6zM14 4h4v16h-4z',
+    play: 'M5 3l14 9-14 9V3z',
+    settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z',
+    sleep: 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z',
+    sun: 'M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z',
+    moon: 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z',
+    chevronDown: 'M6 9l6 6 6-6',
+    chevronRight: 'M9 18l6-6-6-6',
+  };
+  const d = paths[name] || '';
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${d}"/></svg>`;
+}
+
+// ── State ────────────────────────────────────────────────────────────────────
+const ST = {
+  data: window._INIT_DATA || null,
+  tab: localStorage.getItem('packa-tab') || 'overview',
+  theme: localStorage.getItem('packa-theme') || 'dark',
+  connected: null,
+  demo: false,
+  pollInterval: 3000,
+  _pollTimer: null,
+  // files tab
+  fileFilter: 'all',
+  fileSearch: '',
+  fileSelected: new Set(),
+  fileBulkOpen: false,
+  // modal
+  modalStatus: null,
+  modalSelected: new Set(),
+  modalBulkOpen: false,
+  // workers tab
+  workerSettingsOpen: {},  // worker id → bool
+  // scan tab
+  scanEnabled: false,
+  scanInterval: 60,
+};
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  applyTheme(ST.theme);
+  setTab(ST.tab, false);
+
+  if (ST.data) {
+    if (ST.data.master_error) {
+      ST.connected = false;
+      ST.demo = true;
+    } else {
+      ST.connected = true;
+      ST.demo = false;
+    }
+    updateFromData(ST.data);
+    render();
   }
-  return `<span class="st-badge st-${s}"${title}>${s}</span>`;
-}
 
-// ── Status filter (slave modal) ───────────────────────────────────────────
+  fetchAll();
+  document.addEventListener('click', function(e) {
+    if (ST.fileBulkOpen && !e.target.closest('.dropdown')) {
+      ST.fileBulkOpen = false;
+      ST.fileQueueOpen = false;
+      renderFileBulkMenu();
+    }
+  });
+});
 
-function _setStatusFilter(s) {
-  _statusFilter = s;
-  _page = 1;
-  _renderTable();
-}
-
-function _setEncoderFilter(e) {
-  _encoderFilter = (e === _encoderFilter) ? null : e;
-  _page = 1;
-  _renderTable();
-}
-
-function _encoderFilterHtml() {
-  const encoders = [...new Set(_allFiles.map(f => f.encoder).filter(Boolean))].sort();
-  if (!encoders.length) return '';
-  const base   = 'border:none;border-radius:3px;font-size:.68rem;font-weight:700;cursor:pointer;font-family:inherit;padding:.18rem .52rem;';
-  const shadow = 'box-shadow:inset 0 0 0 1.5px currentColor;';
-  let h = '<div style="display:flex;gap:.3rem;flex-wrap:wrap;margin:.2rem 0 .35rem">';
-  for (const enc of encoders) {
-    const c = _ENC_COLORS[enc] || { bg:'#f5f5f5', color:'#666' };
-    const active = _encoderFilter === enc;
-    h += `<button onclick="_setEncoderFilter('${_esc(enc)}')" style="${base}background:${c.bg};color:${c.color};${active?shadow:''}">${_esc(enc)}</button>`;
+// ── Theme ────────────────────────────────────────────────────────────────────
+function applyTheme(t) {
+  ST.theme = t;
+  document.documentElement.setAttribute('data-theme', t);
+  localStorage.setItem('packa-theme', t);
+  const icon = document.getElementById('theme-icon');
+  if (icon) {
+    const paths = {
+      dark: 'M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z',
+      light: 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z',
+    };
+    icon.querySelector('path').setAttribute('d', paths[t === 'dark' ? 'dark' : 'light']);
   }
-  h += '</div>';
-  return h;
 }
 
-function _statusFilterHtml() {
-  const base = 'border:none;border-radius:3px;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;font-family:inherit;padding:.18rem .52rem;';
-  const shadow = 'box-shadow:inset 0 0 0 1.5px currentColor;';
-  let h = '<div style="display:flex;gap:.3rem;flex-wrap:wrap;margin:.35rem 0 .55rem">';
-  const allActive = _statusFilter === null;
-  h += `<button onclick="_setStatusFilter(null)" style="${base}background:${allActive?'#e8eaf6':'#f0f0f0'};color:#3949ab;${allActive?shadow:''}">All</button>`;
-  for (const [s, c] of Object.entries(_ST_COLORS)) {
-    const active = _statusFilter === s;
-    h += `<button onclick="_setStatusFilter('${s}')" style="${base}background:${c.bg};color:${c.color};${active?shadow:''}">${s}</button>`;
+function toggleTheme() {
+  applyTheme(ST.theme === 'dark' ? 'light' : 'dark');
+}
+
+// ── Tab switching ────────────────────────────────────────────────────────────
+function setTab(t, doRender = true) {
+  ST.tab = t;
+  localStorage.setItem('packa-tab', t);
+  document.querySelectorAll('.tab').forEach(el => {
+    el.classList.toggle('active', el.dataset.tab === t);
+  });
+  document.querySelectorAll('[id^="tab-"]').forEach(el => {
+    el.style.display = el.id === `tab-${t}` ? '' : 'none';
+  });
+  if (doRender) renderActiveTab();
+}
+
+// ── Edit-guard helpers ────────────────────────────────────────────────────────
+function isFocused() {
+  const a = document.activeElement;
+  return !!(a && (a.tagName === 'INPUT' || a.tagName === 'SELECT' || a.tagName === 'TEXTAREA'));
+}
+
+// Returns true when the user is mid-edit: focused input OR a worker settings panel is open.
+function isEditing() {
+  if (isFocused()) return true;
+  if (ST.modalSelected.size > 0) return true;
+  return Object.values(ST.workerSettingsOpen).some(Boolean);
+}
+
+// ── Polling ──────────────────────────────────────────────────────────────────
+async function fetchAll() {
+  try {
+    const r = await fetch('/data/dashboard');
+    if (!r.ok) throw new Error(`${r.status}`);
+    const data = await r.json();
+    if (data.master_error) {
+      ST.connected = false;
+      ST.demo = true;
+    } else {
+      ST.connected = true;
+      ST.demo = false;
+      if (!isEditing()) updateFromData(data);
+    }
+    ST.data = data;
+    render();
+  } catch(e) {
+    ST.connected = false;
+    updateConnectionUI();
+  } finally {
+    if (ST.pollInterval > 0) {
+      clearTimeout(ST._pollTimer);
+      ST._pollTimer = setTimeout(fetchAll, ST.pollInterval);
+    }
   }
-  h += '</div>';
-  return h;
 }
 
-// ── Search & pagination ───────────────────────────────────────────────────
-function _filtered() {
-  let result = _allFiles;
-  if (_statusFilter)  result = result.filter(f => f.status === _statusFilter);
-  if (_encoderFilter) result = result.filter(f => f.encoder === _encoderFilter);
-  if (_query) {
-    const q = _norm(_query);
-    result = result.filter(f =>
-      _norm(f.file_name).includes(q) ||
-      _norm(f.file_path).includes(q) ||
-      _norm(f.slave_id).includes(q)
-    );
+function updateFromData(data) {
+  if (data.scan_settings) {
+    ST.scanEnabled = !!data.scan_settings.enabled;
+    ST.scanInterval = Math.round((data.scan_settings.interval || 60) / 60);
   }
-  return result;
 }
 
-function _renderTable() {
-  const filtered = _filtered();
-  const total = filtered.length;
-  const pages = Math.max(1, Math.ceil(total / _PER_PAGE));
-  if (_page > pages) _page = pages;
-  const slice = filtered.slice((_page - 1) * _PER_PAGE, _page * _PER_PAGE);
+// ── Top-level render ─────────────────────────────────────────────────────────
+function render() {
+  updateConnectionUI();
+  updateTabBadges();
+  if (!isEditing()) renderActiveTab();
+}
 
-  let h = '<div class="modal-table-wrap"><table class="modal-table"><thead><tr>';
-  h += `<th><input type="checkbox" class="chk-all" onchange="toggleAll(this)"></th>`;
-  _cols.forEach(c => h += `<th>${c.label}</th>`);
-  h += '</tr></thead><tbody>';
-
-  if (!slice.length) {
-    const msg = total === 0 && _query ? 'No results for this search.' : 'No files.';
-    h += `<tr><td colspan="${_cols.length + 1}" style="color:#aaa;text-align:center;padding:.8rem">${msg}</td></tr>`;
-  } else {
-    slice.forEach(f => {
-      h += `<tr><td><input type="checkbox" class="row-chk" value="${f.id}" onchange="_updateSel()"></td>`;
-      h += _cols.map(c => `<td>${c.cell(f)}</td>`).join('');
-      h += '</tr>';
-    });
+function updateConnectionUI() {
+  const dot = document.getElementById('status-dot');
+  const label = document.getElementById('status-label');
+  const pill = document.getElementById('processing-pill');
+  const cnt = document.getElementById('processing-count');
+  if (dot) {
+    dot.className = 'status-dot ' + (ST.connected === null ? 'connecting' : ST.connected ? 'connected' : '');
   }
-  h += '</tbody></table></div>';
-
-  // Pagination controls
-  h += `<div class="modal-pagination">`;
-  if (pages > 1) {
-    h += `<button class="btn-act" onclick="_goPage(${_page-1})" ${_page<=1?'disabled':''}>← Prev</button>`;
+  if (label) {
+    label.textContent = ST.connected === null ? 'Connecting…' : ST.connected ? 'Connected' : 'Offline';
   }
-  h += `<span class="pag-info">`;
-  if (pages > 1) h += `Page ${_page} of ${pages} &nbsp;·&nbsp; `;
-  h += `${total} row${total!==1?'s':''}</span>`;
-  if (pages > 1) {
-    h += `<button class="btn-act" onclick="_goPage(${_page+1})" ${_page>=pages?'disabled':''}>Next →</button>`;
+  const workers = (ST.data && ST.data.workers) || [];
+  const processing = workers.filter(s => s.state === 'processing').length;
+  if (pill && cnt) {
+    cnt.textContent = processing;
+    pill.style.display = processing > 0 ? '' : 'none';
   }
-  h += '</div>';
-
-  document.getElementById('tbl').innerHTML = h;
-  const filtersEl = document.getElementById('status-filters');
-  if (filtersEl) {
-    const statusHtml  = (_ctx && _ctx.type === 'slave') ? _statusFilterHtml() : '';
-    const encoderHtml = _encoderFilterHtml();
-    filtersEl.innerHTML = statusHtml + encoderHtml;
-  }
-  const tblAllChk = document.querySelector('#tbl .chk-all');
-  if (tblAllChk) {
-    const total   = document.querySelectorAll('.row-chk').length;
-    const checked = document.querySelectorAll('.row-chk:checked').length;
-    tblAllChk.checked       = total > 0 && checked === total;
-    tblAllChk.indeterminate = checked > 0 && checked < total;
-  }
-  _updateSel();
 }
 
-function _onSearch() {
-  _query = document.getElementById('modal-search').value;
-  _page = 1;
-  _renderTable();
-}
-function _goPage(n) { _page = n; _renderTable(); }
-
-// ── Checkbox helpers ──────────────────────────────────────────────────────
-function toggleAll(src) {
-  document.querySelectorAll('.row-chk').forEach(c => c.checked = src.checked);
-  _updateSel();
-}
-function _updateSel() {
-  const n = document.querySelectorAll('.row-chk:checked').length;
-  const el = document.getElementById('sel-count');
-  if (el) el.textContent = n ? `${n} selected` : '';
-  document.querySelectorAll('.bulk-btn').forEach(b => b.disabled = n === 0);
-}
-function _selectedIds() {
-  return [...document.querySelectorAll('.row-chk:checked')].map(el => +el.value);
+function updateTabBadges() {
+  if (!ST.data) return;
+  const filesBadge = document.getElementById('tab-badge-files');
+  const workersBadge = document.getElementById('tab-badge-workers');
+  if (filesBadge) filesBadge.textContent = (ST.data.files || []).length;
+  if (workersBadge) workersBadge.textContent = (ST.data.workers || []).length;
 }
 
-// ── Bulk actions ──────────────────────────────────────────────────────────
-async function bulkDelete() {
-  const ids = _selectedIds();
-  if (!ids.length) return;
-  if (!confirm(`Delete ${ids.length} record(s)?`)) return;
-  const url = _ctx.type === 'master'
-    ? '/data/files/delete'
-    : `/data/slave/delete?host=${encodeURIComponent(_ctx.host)}&port=${_ctx.port}`;
-  await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids})});
-  _ctxReload();
-}
-async function bulkPending() {
-  const ids = _selectedIds();
-  if (!ids.length) return;
-  const url = _ctx.type === 'master'
-    ? '/data/files/pending'
-    : `/data/slave/pending?host=${encodeURIComponent(_ctx.host)}&port=${_ctx.port}`;
-  await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids})});
-  _ctxReload();
-}
-async function bulkCancel() {
-  const ids = _selectedIds();
-  if (!ids.length) return;
-  const url = _ctx.type === 'master'
-    ? '/data/files/cancel'
-    : `/data/slave/cancel?host=${encodeURIComponent(_ctx.host)}&port=${_ctx.port}`;
-  await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids})});
-  _ctxReload();
-}
-function _ctxReload() {
-  if (_ctx.type === 'master') showFiles(_ctx.status);
-  else showSlave(_ctx.host, _ctx.port, _ctx.name);
+function renderActiveTab() {
+  const renders = {
+    overview: renderOverview,
+    files: renderFiles,
+    stats: renderStats,
+    workers: renderWorkers,
+    scan: renderScan,
+    settings: renderSettings,
+  };
+  if (renders[ST.tab]) renders[ST.tab]();
 }
 
-// ── Shell HTML (search + action bar + table placeholder) ─────────────────
-function _shell() {
-  return `<input type="text" id="modal-search" class="modal-search"
-            placeholder="Filter by filename, path or slave…" oninput="_onSearch()">
-    <div id="status-filters"></div>
-    <div class="modal-bar">
-      <span class="sel-count" id="sel-count"></span>
-      <div class="modal-bar-right">
-        <button class="btn-act bulk-btn" disabled onclick="bulkPending()">Set to pending</button>
-        <button class="btn-act bulk-btn" disabled onclick="bulkCancel()">Set to cancelled</button>
-        <button class="btn-act danger bulk-btn" disabled onclick="bulkDelete()">Delete selected</button>
+// ── Overview tab ─────────────────────────────────────────────────────────────
+function renderOverview() {
+  const el = document.getElementById('tab-overview');
+  if (!el) return;
+  const data = ST.data || {};
+  const stats = data.stats || {total:0,converted:0,pending:0,processing:0,error:0,duplicate:0,saved_bytes:0};
+  const workers = data.workers || [];
+  const activeWorkers = workers.filter(s => s.state === 'processing').length;
+  const donePct = stats.total ? Math.round((stats.converted / stats.total) * 100) : 0;
+
+  const fc = data.file_counts || {};
+  const statusChips = [
+    { key:'pending',    label:'Pending',    color:'var(--yellow)' },
+    { key:'assigned',   label:'Assigned',   color:'var(--blue)' },
+    { key:'processing', label:'Processing', color:'var(--blue)' },
+    { key:'complete',   label:'Complete',   color:'var(--green)' },
+    { key:'discarded',  label:'Discarded',  color:'var(--text-dim)' },
+    { key:'cancelled',  label:'Cancelled',  color:'var(--text-dim)' },
+    { key:'error',      label:'Error',      color:'var(--red)' },
+    { key:'duplicate',  label:'Duplicate',  color:'var(--purple)' },
+  ];
+
+  el.innerHTML = `
+    ${ST.demo ? `<div class="demo-banner">⚡ Demo mode — master unreachable. Showing last known data.</div>` : ''}
+
+    <div class="stats-grid" style="margin-bottom:12px">
+      <div class="stat-card">
+        <div class="stat-label">Total Files</div>
+        <div class="stat-value">${(stats.total || 0).toLocaleString()}</div>
+        <div class="stat-sub">${donePct}% complete</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Space Saved</div>
+        <div class="stat-value stat-accent">${fmtBytes(stats.saved_bytes)}</div>
+        <div class="stat-sub">after compression</div>
       </div>
     </div>
-    <div id="tbl"></div>`;
-}
 
-// ── Master files modal ────────────────────────────────────────────────────
-async function showFiles(status) {
-  if (status === 'duplicate') { showDuplicates(); return; }
-  _ctx = { type:'master', status };
-  _page = 1; _query = ''; _allFiles = []; _statusFilter = null; _encoderFilter = null;
-  _cols = fileColumns(status);
-  _setModal(cap(status) + ' files',
-    _shell() + '<p class="modal-note" style="margin-top:.5rem">Loading…</p>');
-  try {
-    const r = await fetch('/data/files?status=' + status);
-    _allFiles = await r.json();
-    _sortFiles(status);
-    _renderTable();
-  } catch(e) {
-    document.getElementById('tbl').innerHTML = '<p class="modal-err">Failed to load.</p>';
-  }
-}
+    <div class="status-grid">
+      ${statusChips.map(c => `
+        <div class="status-chip" onclick="openStatusModal('${c.key}')">
+          <div>
+            <div class="status-chip-label">${c.label}</div>
+            <div class="status-chip-count" style="color:${c.color}">${(fc[c.key] || 0).toLocaleString()}</div>
+          </div>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-faint);flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg>
+        </div>`).join('')}
+    </div>
 
-async function showDuplicates() {
-  _setModal('Duplicate files', '<p class="modal-note">Loading…</p>');
-  try {
-    const r = await fetch('/data/files/duplicate-pairs');
-    const pairs = await r.json();
-    if (!pairs.length) {
-      document.getElementById('modal-body').innerHTML = '<p class="modal-note">No duplicates found.</p>';
-      return;
-    }
-    const rows = pairs.map(p => `
-      <tr>
-        <td style="padding:.3rem .5rem;color:#888;font-size:.8rem">${p.id}</td>
-        <td style="padding:.3rem .5rem;font-size:.85rem;word-break:break-all">${_esc(p.file_path)}</td>
-        <td style="padding:.3rem .5rem;color:#888;font-size:.75rem;white-space:nowrap">→ #${p.duplicate_of_id}</td>
-        <td style="padding:.3rem .5rem;font-size:.85rem;word-break:break-all">${p.original_file_path ? _esc(p.original_file_path) : '<span style="color:#aaa">—</span>'}</td>
-      </tr>`).join('');
-    document.getElementById('modal-body').innerHTML = `
-      <p class="modal-note" style="margin-bottom:.5rem">${pairs.length} duplicate${pairs.length===1?'':'s'} found</p>
-      <div style="overflow-x:auto">
-        <table style="width:100%;border-collapse:collapse">
-          <thead><tr style="border-bottom:1px solid var(--border)">
-            <th style="padding:.3rem .5rem;text-align:left;font-size:.75rem;color:#888">ID</th>
-            <th style="padding:.3rem .5rem;text-align:left;font-size:.75rem;color:#888">Duplicate path</th>
-            <th style="padding:.3rem .5rem;text-align:left;font-size:.75rem;color:#888"></th>
-            <th style="padding:.3rem .5rem;text-align:left;font-size:.75rem;color:#888">Original path</th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
-  } catch(e) {
-    document.getElementById('modal-body').innerHTML = '<p class="modal-err">Failed to load.</p>';
-  }
-}
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Overall Progress</div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-dim);margin-bottom:8px;font-family:'IBM Plex Mono',monospace">
+        <span>${(stats.converted||0).toLocaleString()} converted</span>
+        <span>${donePct}%</span>
+      </div>
+      <div class="progress-track" style="height:8px">
+        <div class="progress-fill green" style="width:${donePct}%"></div>
+      </div>
+      <div style="display:flex;gap:16px;margin-top:10px;font-size:11px;flex-wrap:wrap">
+        <span style="color:var(--green)">■ ${stats.converted||0} done</span>
+        <span style="color:var(--yellow)">■ ${stats.pending||0} pending</span>
+        <span style="color:var(--blue)">■ ${stats.processing||activeWorkers} processing</span>
+        <span style="color:var(--red)">■ ${stats.error||0} error</span>
+        <span style="color:var(--purple)">■ ${stats.duplicate||0} duplicate</span>
+        <span style="color:var(--text-dim)">■ ${stats.cancelled||0} cancelled</span>
+        <span style="color:var(--text-faint)">■ ${stats.discarded||0} discarded</span>
+      </div>
+    </div>
 
-function _sortFiles(status) {
-  _allFiles.sort((a, b) => {
-    if (status === 'pending') return a.id - b.id;
-    return (b.finished_at || b.updated_at || '').localeCompare(a.finished_at || a.updated_at || '');
+    <div class="card">
+      <div class="card-title">Workers — ${workers.length} registered, ${activeWorkers} active</div>
+      ${workers.length === 0 ? '<div class="empty">No workers registered</div>' : workers.map(s => {
+        const dotColor = s.state === 'processing' ? 'var(--blue)' : s.sleeping ? 'var(--text-faint)' : 'var(--green)';
+        const p = s.progress;
+        const pct = p ? Math.round(p.percent || 0) : 0;
+        const statusStr = s.sleeping ? 'sleeping' : s.state === 'processing' ? 'processing' : 'online';
+        return `
+        <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border-subtle)">
+          <div style="width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0"></div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:500">${esc(s.hostname)}</div>
+            <div style="font-size:11px;color:var(--text-faint);font-family:'IBM Plex Mono',monospace">${esc((s.encoder||'').toUpperCase())} · batch ${s.batch_size||1} · ${s.converted||0} converted</div>
+          </div>
+          ${s.state === 'processing' && p ? `
+          <div style="width:120px;flex-shrink:0">
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-dim);margin-bottom:4px;font-family:'IBM Plex Mono',monospace">
+              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px">${esc((s.current_file||'…').split('/').pop())}</span>
+              <span>${pct}%</span>
+            </div>
+            <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+          </div>` : ''}
+          ${badge(statusStr)}
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+
+  // Derive current_file from active record
+  (ST.data && ST.data.workers || []).forEach(s => {
+    s.current_file = s.current_file || (s.progress && s.progress.file_path) || null;
   });
 }
 
-function fileColumns(status) {
-  const id       = { label:'ID',       cell: f => f.id };
-  const name     = { label:'Filename', cell: f => `<span class="modal-fname">${f.file_name}</span>` };
-  const path     = { label:'Path',     cell: f => `<span class="modal-path">${f.file_path}</span>` };
-  const slave    = { label:'Slave',    cell: f => f.slave_id || '—' };
-  const added    = { label:'Added',    cell: f => fmtDate(f.created_at) };
-  const started  = { label:'Started',  cell: f => fmtDate(f.started_at) };
-  const finished = { label:'Finished', cell: f => fmtDate(f.finished_at) };
-  const duration = { label:'Duration', cell: f => fmtDuration(f.started_at, f.finished_at) };
-  const output   = { label:'Output',   cell: f => fmtBytes(f.output_size) };
-  const encoder  = { label:'Encoder',  cell: f => _encBadge(f.encoder) };
-  switch (status) {
-    case 'pending':    return [id, name, path, added];
-    case 'assigned':   return [id, name, slave, path, {label:'Claimed', cell: f => fmtDate(f.updated_at)}];
-    case 'processing': return [id, name, slave, encoder, path, started];
-    case 'complete':   return [id, name, slave, encoder, output, duration, finished];
-    case 'discarded':  return [id, name, slave, finished];
-    case 'cancelled':  return [id, name, slave, encoder, output, duration, finished];
-    case 'error':      return [id, name, slave, encoder, path, started, finished];
-    default:           return [id, name, path, added];
-  }
+// ── Files tab ────────────────────────────────────────────────────────────────
+function stripPrefix(path) {
+  const prefix = (ST.data && ST.data.scan && ST.data.scan.path) || '';
+  if (prefix && path && path.startsWith(prefix)) return path.slice(prefix.length);
+  return path;
 }
 
-// ── Slave detail modal ────────────────────────────────────────────────────
-async function showSlave(host, port, name) {
-  _ctx = { type:'slave', host, port, name };
-  _page = 1; _query = ''; _allFiles = []; _statusFilter = null; _encoderFilter = null;
-  _cols = [
-    { label:'ID',       cell: f => f.id },
-    { label:'Filename', cell: f => `<span class="modal-fname">${f.file_name}</span>` },
-    { label:'Status',   cell: f => stBadge(f.status, f) },
-    { label:'Encoder',  cell: f => _encBadge(f.encoder) },
-    { label:'Source',   cell: f => fmtBytes(f.file_size) },
-    { label:'Output',   cell: f => fmtBytes(f.output_size) },
-    { label:'Duration', cell: f => fmtDuration(f.started_at, f.finished_at) },
-    { label:'Finished', cell: f => fmtDate(f.finished_at) },
-  ];
-  _setModal(name, '<p class="modal-note">Loading…</p>');
-  try {
-    const r = await fetch(`/data/slave?host=${encodeURIComponent(host)}&port=${port}`);
-    const data = await r.json();
-    _allFiles = (data.files || []).sort((a,b) =>
-      (b.updated_at||'').localeCompare(a.updated_at||''));
+function renderFiles() {
+  const el = document.getElementById('tab-files');
+  if (!el) return;
+  const files = (ST.data && ST.data.files) || [];
+  const workers = (ST.data && ST.data.workers) || [];
 
-    const section = `<div class="modal-section">File history (${_allFiles.length} records)</div>`;
-    _setModal(name,
-      `<div id="slave-status">${_slaveStatusHtml(data.status, host, port)}</div>` +
-      section + _shell());
-    _renderTable();
-    _startSlavePoll(host, port);
-  } catch(e) {
-    document.getElementById('modal-body').innerHTML = '<p class="modal-err">Failed to load.</p>';
-  }
+  const statuses = ['all','pending','assigned','processing','complete','error','duplicate','discarded','cancelled'];
+  const counts = {};
+  statuses.forEach(s => counts[s] = s === 'all' ? files.length : files.filter(f => f.status === s).length);
+
+  const filtered = files.filter(f => {
+    if (ST.fileFilter !== 'all' && f.status !== ST.fileFilter) return false;
+    if (ST.fileSearch) {
+      const q = ST.fileSearch.toLowerCase();
+      if (!(f.file_path||'').toLowerCase().includes(q) &&
+          !(f.file_name||'').toLowerCase().includes(q) &&
+          !(f.worker_id||'').toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const visibleIds = filtered.slice(0, 100).map(f => f.id);
+  const allSelected = visibleIds.length > 0 && visibleIds.every(id => ST.fileSelected.has(id));
+  const someSelected = visibleIds.some(id => ST.fileSelected.has(id));
+  const nSel = ST.fileSelected.size;
+
+  const chipLabels = {
+    all: 'All', pending: 'Pending', assigned: 'Assigned',
+    processing: 'Processing', complete: 'Done', error: 'Error',
+    duplicate: 'Duplicate', discarded: 'Discarded', cancelled: 'Cancelled',
+  };
+  const visibleChips = ['all','pending','processing','complete','error','duplicate','discarded','cancelled'];
+
+  el.innerHTML = `
+    <div class="section-header">
+      <div class="section-title">Files</div>
+    </div>
+
+    <div class="filter-bar">
+      ${visibleChips.filter(s => counts[s] > 0 || s === 'all').map(s => `
+        <div class="filter-chip ${ST.fileFilter===s?'active':''}"
+             onclick="setFileFilter('${s}')">
+          ${chipLabels[s]} <span style="opacity:0.6;font-size:11px">(${counts[s]})</span>
+        </div>`).join('')}
+      <div style="flex:1"></div>
+      <input class="input" id="file-search-input" style="width:220px" placeholder="Search filename or worker…"
+             value="${esc(ST.fileSearch)}"
+             oninput="setFileSearch(this.value)">
+    </div>
+
+    <div class="card" style="padding:0;overflow:hidden">
+      <div class="table-wrap">
+        <table>
+          <thead>${nSel > 0 ? `
+          <tr style="height:38px;background:var(--accent-glow)">
+            <th style="width:36px;padding:0 0 0 14px">
+              <input type="checkbox" ${allSelected?'checked':''} onchange="toggleAllFiles(this)" style="accent-color:var(--accent)">
+            </th>
+            <th style="padding:0" colspan="6">
+              <span style="font-size:13px;font-weight:500;color:var(--accent);margin-right:12px">${nSel} selected</span>
+              <div class="dropdown" id="bulk-dropdown" style="display:inline-block">
+                <button class="btn btn-sm" onclick="toggleBulkMenu(event)" style="display:inline-flex;align-items:center;gap:6px">
+                  <span>Actions…</span>${svgIcon('chevronDown',12)}
+                </button>
+                ${ST.fileBulkOpen ? `
+                <div class="dropdown-menu">
+                  <div class="dropdown-item" onclick="bulkSetStatus('pending')">Set → Pending</div>
+                  <div class="dropdown-item" onclick="bulkSetStatus('cancelled')">Set → Cancelled</div>
+                  <div class="dropdown-item" onclick="bulkSetStatus('error')">Set → Error</div>
+                  <div class="dropdown-item" onclick="bulkDelete()">Delete records</div>
+                  ${workers.length > 0 ? `
+                  <div class="dropdown-item dropdown-item-sub" style="display:flex;justify-content:space-between;align-items:center">
+                    <span>Queue to…</span>${svgIcon('chevronRight',12)}
+                    <div class="submenu">
+                      ${workers.map(w => `<div class="dropdown-item" onclick="bulkQueue('${esc(w.config_id)}')">${esc(w.hostname)}</div>`).join('')}
+                    </div>
+                  </div>` : ''}
+                </div>` : ''}
+              </div>
+            </th>
+            <th style="padding:0 14px 0 0;text-align:right" colspan="2">
+              <button class="btn btn-sm" onclick="clearSelection()">Clear</button>
+            </th>
+          </tr>` : `
+          <tr style="height:38px">
+            <th style="width:36px;padding-left:14px">
+              <input type="checkbox" ${allSelected?'checked':''} onchange="toggleAllFiles(this)"
+                     style="accent-color:var(--accent)">
+            </th>
+            <th>Path</th>
+            <th>Status</th>
+            <th>Worker</th>
+            <th>Original</th>
+            <th>Converted</th>
+            <th>Saved</th>
+            <th>Added</th>
+            <th></th>
+          </tr>`}
+          </thead>
+          <tbody>
+            ${filtered.length === 0 ? `<tr><td colspan="9"><div class="empty">No files matching filter</div></td></tr>` :
+              filtered.slice(0, 100).map(f => {
+                const saved = (f.file_size && f.output_size) ? f.file_size - f.output_size : 0;
+                const savedPct = f.file_size ? Math.round(saved / f.file_size * 100) : 0;
+                const worker = workers.find(w => w.config_id === f.worker_id);
+                const isSel = ST.fileSelected.has(f.id);
+                return `<tr${isSel?' style="background:var(--accent-glow)"':''}>
+                  <td style="padding-left:14px">
+                    <input type="checkbox" ${isSel?'checked':''} value="${f.id}"
+                           onchange="toggleFileSelect(${f.id})"
+                           style="accent-color:var(--accent)">
+                  </td>
+                  <td><div class="path-cell" title="${esc(f.file_path)}">${esc(stripPrefix(f.file_path))}</div></td>
+                  <td>${badge(f.status)}</td>
+                  <td><span class="mono">${worker ? esc(worker.hostname) : '<span style="color:var(--text-faint)">—</span>'}</span></td>
+                  <td><span class="mono">${fmtBytes(f.file_size)}</span></td>
+                  <td><span class="mono">${f.status === 'complete' ? fmtBytes(f.output_size) : '—'}</span></td>
+                  <td><span class="mono" style="color:${savedPct > 0 ? 'var(--green)' : 'var(--text-faint)'}">
+                    ${f.status === 'complete' && savedPct > 0 ? `${savedPct}%` : '—'}
+                  </span></td>
+                  <td><span class="mono">${fmtDate(f.created_at)}</span></td>
+                  <td>
+                    <button class="btn btn-sm btn-danger" onclick="deleteFile(${f.id})" title="Delete record">
+                      ${svgIcon('trash',12)}
+                    </button>
+                  </td>
+                </tr>`;
+              }).join('')
+            }
+          </tbody>
+        </table>
+      </div>
+      ${filtered.length > 100 ? `<div style="padding:10px 16px;border-top:1px solid var(--border);font-size:12px;color:var(--text-faint)">Showing 100 of ${filtered.length} records</div>` : ''}
+    </div>
+  `;
+
+  // Re-apply indeterminate state
+  const hdr = el.querySelector('thead input[type="checkbox"]');
+  if (hdr) hdr.indeterminate = someSelected && !allSelected;
 }
 
+function setFileFilter(f) {
+  ST.fileFilter = f;
+  ST.fileSelected.clear();
+  renderFiles();
+}
 
-async function saveSlaveSettings(host, port) {
-  const sel = document.getElementById(`enc-${port}`);
-  const inp = document.getElementById(`batch-${port}`);
-  const chk = document.getElementById(`replace-${port}`);
-  if (!sel) return;
-  const encoder = sel.value;
-  if (!encoder) return;
-  const batch_size = Math.max(1, parseInt(inp?.value) || 1);
-  if (inp) inp.value = batch_size;
-  const replace_original = chk ? chk.checked : false;
-  const btn = document.getElementById(`settings-save-${port}`);
-  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+function setFileSearch(q) {
+  ST.fileSearch = q;
+  ST.fileSelected.clear();
+  renderFiles();
+  const inp = document.getElementById('file-search-input');
+  if (inp) { inp.focus(); inp.setSelectionRange(q.length, q.length); }
+}
+
+function toggleAllFiles(src) {
+  const files = (ST.data && ST.data.files) || [];
+  const filtered = files.filter(f => {
+    if (ST.fileFilter !== 'all' && f.status !== ST.fileFilter) return false;
+    if (ST.fileSearch) {
+      const q = ST.fileSearch.toLowerCase();
+      if (!(f.file_path||'').toLowerCase().includes(q) && !(f.file_name||'').toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+  const visibleIds = filtered.slice(0, 100).map(f => f.id);
+  if (src.checked) visibleIds.forEach(id => ST.fileSelected.add(id));
+  else ST.fileSelected.clear();
+  renderFiles();
+}
+
+function toggleFileSelect(id) {
+  if (ST.fileSelected.has(id)) ST.fileSelected.delete(id);
+  else ST.fileSelected.add(id);
+  renderFiles();
+}
+
+function clearSelection() {
+  ST.fileSelected.clear();
+  ST.fileBulkOpen = false;
+  renderFiles();
+}
+
+function toggleBulkMenu(e) {
+  e.stopPropagation();
+  ST.fileBulkOpen = !ST.fileBulkOpen;
+  renderFiles();
+}
+
+async function addFileFromInput() {
+  const input = document.getElementById('add-path-input');
+  if (!input || !input.value.trim()) return;
+  const path = input.value.trim();
+  if (ST.demo) { toast(`[Demo] Add: ${path}`, 'info'); input.value = ''; return; }
   try {
-    const r = await fetch('/data/slave/encoder', {
+    const r = await fetch('/data/transfer', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({host, port, encoder, batch_size, replace_original}),
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({file_path: path}),
     });
-    if (!r.ok) throw new Error('failed');
-    if (btn) { btn.textContent = 'Saved'; setTimeout(() => { if (btn) btn.textContent = 'Save'; }, 1500); }
-  } catch(e) {
-    if (btn) { btn.disabled = false; btn.textContent = 'Error — retry'; }
+    if (!r.ok) throw new Error(await r.text());
+    toast('File added to queue', 'success');
+    input.value = '';
+    fetchAll();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function deleteFile(id) {
+  if (ST.demo) { toast('[Demo] Delete record', 'info'); return; }
+  try {
+    const r = await fetch('/data/files/delete', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ids: [id]}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast('Record deleted', 'success');
+    fetchAll();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function bulkSetStatus(status) {
+  const ids = [...ST.fileSelected];
+  if (!ids.length) return;
+  ST.fileBulkOpen = false;
+  if (ST.demo) { toast(`[Demo] Set ${ids.length} → ${status}`, 'info'); ST.fileSelected.clear(); renderFiles(); return; }
+  const endpoint = status === 'pending' ? '/data/files/pending' : '/data/files/cancel';
+  try {
+    const r = await fetch(endpoint, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ids}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast(`${ids.length} records updated`, 'success');
+    ST.fileSelected.clear();
+    fetchAll();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function bulkDelete() {
+  const ids = [...ST.fileSelected];
+  if (!ids.length) return;
+  ST.fileBulkOpen = false;
+  if (!confirm(`Delete ${ids.length} record(s)?`)) return;
+  if (ST.demo) { toast(`[Demo] Delete ${ids.length} records`, 'info'); ST.fileSelected.clear(); renderFiles(); return; }
+  try {
+    const r = await fetch('/data/files/delete', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ids}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast(`${ids.length} records deleted`, 'success');
+    ST.fileSelected.clear();
+    fetchAll();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function bulkQueue(workerConfigId) {
+  const ids = [...ST.fileSelected];
+  if (!ids.length) return;
+  ST.fileBulkOpen = false;
+  if (ST.demo) { toast(`[Demo] Queue ${ids.length} → ${workerConfigId}`, 'info'); ST.fileSelected.clear(); renderFiles(); return; }
+  try {
+    const r = await fetch('/data/files/assign', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ids, worker_config_id: workerConfigId}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const res = await r.json();
+    toast(`Queued ${res.assigned || ids.length} files`, 'success');
+    ST.fileSelected.clear();
+    fetchAll();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+// ── Statistics tab ────────────────────────────────────────────────────────────
+function renderStats() {
+  const el = document.getElementById('tab-stats');
+  if (!el) return;
+  const data = ST.data || {};
+  const stats = data.stats || {};
+  const workers = data.workers || [];
+  const ms = data.master_stats || {};
+  const overall = ms.overall || {};
+  const byEncoder = ms.by_encoder || {};
+
+  const total = stats.total || 1;
+  const errorRate = total > 1 ? ((stats.error||0) / total * 100).toFixed(1) : '0.0';
+  const avgRatio = overall.avg_compression_ratio
+    ? Math.round((1 - overall.avg_compression_ratio) * 100)
+    : 0;
+
+  const segments = [
+    {label:'Done',      value:stats.converted||0, color:'var(--green)'},
+    {label:'Pending',   value:stats.pending||0,   color:'var(--yellow)'},
+    {label:'Processing',value:stats.processing||0,color:'var(--blue)'},
+    {label:'Cancelled', value:stats.cancelled||0, color:'var(--text-dim)'},
+    {label:'Error',     value:stats.error||0,     color:'var(--red)'},
+    {label:'Duplicate', value:stats.duplicate||0, color:'var(--purple)'},
+    {label:'Discarded', value:stats.discarded||0, color:'var(--text-faint)'},
+  ].filter(s => s.value > 0 || s.label === 'Done');
+
+  el.innerHTML = `
+    <div class="stats-grid" style="margin-bottom:20px">
+      <div class="stat-card">
+        <div class="stat-label">Total converted</div>
+        <div class="stat-value stat-accent">${(stats.converted||0).toLocaleString()}</div>
+        <div class="stat-sub">of ${(stats.total||0).toLocaleString()} files</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Space saved</div>
+        <div class="stat-value stat-accent">${fmtBytes(stats.saved_bytes)}</div>
+        <div class="stat-sub">avg ${avgRatio}% reduction</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Error rate</div>
+        <div class="stat-value" style="color:${(stats.error||0) > 20 ? 'var(--red)' : 'var(--text)'}">
+          ${errorRate}%
+        </div>
+        <div class="stat-sub">${stats.error||0} failed files</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Active workers</div>
+        <div class="stat-value">${workers.filter(s=>s.state==='processing').length}</div>
+        <div class="stat-sub">of ${workers.length} registered</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+      <div class="card">
+        <div class="card-title">Status breakdown</div>
+        ${segments.map(seg => `
+        <div style="margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px">
+            <span style="color:${seg.color};font-weight:500">${seg.label}</span>
+            <span style="font-family:'IBM Plex Mono',monospace;color:var(--text-dim)">${(seg.value).toLocaleString()}
+              <span style="color:var(--text-faint)">${Math.round(seg.value/total*100)}%</span></span>
+          </div>
+          <div class="progress-track">
+            <div style="height:100%;border-radius:2px;background:${seg.color};width:${Math.round(seg.value/total*100)}%;transition:width 0.4s ease"></div>
+          </div>
+        </div>`).join('')}
+      </div>
+
+      <div class="card">
+        <div class="card-title">Codec breakdown</div>
+        ${Object.keys(byEncoder).length === 0
+          ? '<div style="color:var(--text-faint);font-size:13px">No data</div>'
+          : Object.entries(byEncoder).map(([codec, enc]) => {
+              const totalConv = Object.values(byEncoder).reduce((s,e)=>s+(e.jobs||0),0) || 1;
+              const pct = Math.round((enc.jobs||0)/totalConv*100);
+              return `<div style="margin-bottom:12px">
+                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px">
+                  <span style="font-family:'IBM Plex Mono',monospace;font-weight:500;color:var(--accent)">${esc(codec.toUpperCase())}</span>
+                  <span style="font-family:'IBM Plex Mono',monospace;color:var(--text-dim)">${(enc.jobs||0).toLocaleString()} <span style="color:var(--text-faint)">${pct}%</span></span>
+                </div>
+                <div class="progress-track">
+                  <div style="height:100%;border-radius:2px;background:var(--accent);width:${pct}%;transition:width 0.4s ease"></div>
+                </div>
+              </div>`;
+            }).join('')
+        }
+      </div>
+    </div>
+
+    <div class="card" style="padding:0;overflow:hidden">
+      <div style="padding:16px 20px 12px;border-bottom:1px solid var(--border)">
+        <div class="card-title" style="margin-bottom:0">Per-worker statistics</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Worker</th><th>Encoder</th><th>Converted</th><th>Errors</th>
+            <th>Input</th><th>Output</th><th>Saved</th>
+          </tr></thead>
+          <tbody>
+            ${workers.length === 0
+              ? '<tr><td colspan="7"><div class="empty">No worker statistics available</div></td></tr>'
+              : workers.map(s => {
+                  const se = (ms.by_worker||[]).find(b=>b.worker_id===s.config_id) || {};
+                  const inp = se.total_input_bytes || 0;
+                  const out = se.total_output_bytes || 0;
+                  const saved = inp - out;
+                  const savedPct = inp > 0 ? Math.round(saved/inp*100) : 0;
+                  return `<tr>
+                    <td style="font-weight:500">${esc(s.hostname)}</td>
+                    <td><span class="mono" style="color:var(--accent)">${esc((s.encoder||'').toUpperCase())}</span></td>
+                    <td><span class="mono">${(s.converted||0).toLocaleString()}</span></td>
+                    <td><span class="mono" style="color:${(s.errors||0)>0?'var(--red)':'var(--text-faint)'}">${s.errors||0}</span></td>
+                    <td><span class="mono">${fmtBytes(inp||null)}</span></td>
+                    <td><span class="mono">${fmtBytes(out||null)}</span></td>
+                    <td><span class="mono" style="color:var(--green)">${savedPct > 0 ? `${savedPct}% (${fmtBytes(saved)})` : '—'}</span></td>
+                  </tr>`;
+                }).join('')
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+// ── Workers (workers) tab ──────────────────────────────────────────────────────
+function renderWorkers() {
+  const el = document.getElementById('tab-workers');
+  if (!el) return;
+  const workers = (ST.data && ST.data.workers) || [];
+
+  el.innerHTML = `
+    <div class="section-header">
+      <div class="section-title">Workers — ${workers.length}</div>
+    </div>
+    <div class="workers-grid">
+      ${workers.length === 0
+        ? '<div class="card"><div class="empty">No workers registered</div></div>'
+        : workers.map(s => renderWorkerCard(s)).join('')
+      }
+    </div>
+  `;
+}
+
+function renderWorkerCard(s) {
+  const isProcessing = s.state === 'processing';
+  const isSleeping = s.sleeping;
+  const isPaused = s.paused;
+  const showSettings = !!ST.workerSettingsOpen[s.config_id];
+  const p = s.progress;
+  const pct = p ? Math.round(p.percent || 0) : 0;
+  const statusStr = isSleeping ? 'sleeping' : isProcessing ? (isPaused ? 'paused' : 'processing') : (s.state === 'unreachable' ? 'offline' : 'online');
+
+  const encoders = s.available_encoders || ['libx265'];
+  const labels = s.encoder_labels || {};
+  const encOptions = encoders.map(e => `<option value="${esc(e)}" ${s.encoder===e?'selected':''}>${esc(labels[e]||e)}</option>`).join('');
+
+  return `
+  <div class="worker-card ${isProcessing?'active':''}">
+    <div class="worker-header">
+      <div class="worker-header-info">
+        <div class="worker-name">${esc(s.hostname)}</div>
+        <div class="worker-meta">${esc(s.config_id)} · ${esc(s.url)}</div>
+      </div>
+      ${badge(statusStr)}
+    </div>
+
+    ${isProcessing && p ? `
+    <div class="worker-progress">
+      <div class="worker-progress-label">
+        <span style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          ${esc((p.file_path||s.current_file||'…').split('/').pop())}
+        </span>
+        <span>${pct}%${p.fps ? ` · ${p.fps} fps` : ''}${p.speed ? ` · ${p.speed}×` : ''}</span>
+      </div>
+      <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-faint);margin-top:4px;font-family:'IBM Plex Mono',monospace">
+        <span>${p.eta_seconds != null ? `ETA ${fmtEta(p.eta_seconds)}` : '—'}</span>
+        <span>Queue: ${s.queued||0}</span>
+      </div>
+      ${p.current_size_bytes != null ? `
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-faint);margin-top:3px;font-family:'IBM Plex Mono',monospace">
+        <span>${fmtBytes(p.current_size_bytes)}${p.projected_size_bytes ? ` → ${fmtBytes(p.projected_size_bytes)}` : ''}</span>
+        ${p.bitrate ? `<span>${esc(p.bitrate)}</span>` : ''}
+      </div>` : ''}
+    </div>` : ''}
+
+    <div class="worker-stats">
+      <div class="worker-stat">
+        <div class="worker-stat-label">Converted</div>
+        <div class="worker-stat-value">${s.converted||0}</div>
+      </div>
+      <div class="worker-stat">
+        <div class="worker-stat-label">Errors</div>
+        <div class="worker-stat-value" style="color:${(s.errors||0)>0?'var(--red)':'inherit'}">${s.errors||0}</div>
+      </div>
+      <div class="worker-stat">
+        <div class="worker-stat-label">Encoder</div>
+        <div class="worker-stat-value" style="font-size:12px">${esc((s.encoder||'').toUpperCase())}</div>
+      </div>
+      <div class="worker-stat">
+        <div class="worker-stat-label">Batch</div>
+        <div class="worker-stat-value">${s.batch_size||1}</div>
+      </div>
+    </div>
+
+    <div class="worker-controls">
+      ${isProcessing ? `
+        <button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'pause')">${svgIcon('pause',12)} Pause</button>
+        <button class="btn btn-sm btn-danger" onclick="workerAction('${esc(s.host)}',${s.api_port},'stop')">${svgIcon('stop',12)} Stop</button>
+        <button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'drain')">Drain</button>
+      ` : ''}
+      ${isPaused ? `
+        <button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')">${svgIcon('play',12)} Resume</button>
+      ` : ''}
+      ${isSleeping
+        ? `<button class="btn btn-primary btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')">${svgIcon('play',12)} Wake</button>`
+        : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'sleep')">${svgIcon('moon',12)} Sleep</button>`
+      }
+      <button class="btn btn-sm" onclick="toggleWorkerSettings('${esc(s.config_id)}')">${svgIcon('settings',12)} Settings</button>
+      <button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="deregisterWorker('${esc(s.config_id)}')" title="Deregister">${svgIcon('trash',12)}</button>
+    </div>
+
+    ${showSettings ? `
+    <div class="worker-settings-panel">
+      <div class="form-group">
+        <label class="label">Encoder</label>
+        <select class="select" id="enc-${esc(s.config_id)}">${encOptions}</select>
+      </div>
+      <div class="form-group">
+        <label class="label">Batch size</label>
+        <input class="input" type="number" min="1" max="16" value="${s.batch_size||1}"
+               id="batch-${esc(s.config_id)}">
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <label class="label">Replace original</label>
+        <div class="toggle ${s.replace_original?'on':''}" id="repl-${esc(s.config_id)}"
+             onclick="this.classList.toggle('on')"></div>
+      </div>
+      <button class="btn btn-primary btn-sm"
+              onclick="saveWorkerSettings('${esc(s.config_id)}','${esc(s.host)}',${s.api_port})">
+        Save settings
+      </button>
+    </div>` : ''}
+  </div>`;
+}
+
+function fmtEta(seconds) {
+  if (seconds == null) return '—';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+function toggleWorkerSettings(configId) {
+  ST.workerSettingsOpen[configId] = !ST.workerSettingsOpen[configId];
+  renderWorkers();
+}
+
+async function workerAction(host, port, action) {
+  if (ST.demo) { toast(`[Demo] ${action} → ${host}:${port}`, 'info'); return; }
+  try {
+    const r = await fetch('/data/worker/action', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({host, port, action}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast(`${action} sent`, 'success');
+    fetchAll();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function saveWorkerSettings(configId, host, port) {
+  const enc = document.getElementById(`enc-${configId}`);
+  const batch = document.getElementById(`batch-${configId}`);
+  const repl = document.getElementById(`repl-${configId}`);
+  if (!enc) return;
+  const payload = {
+    host, port,
+    encoder: enc.value,
+    batch_size: parseInt(batch ? batch.value : '1', 10),
+    replace_original: repl ? repl.classList.contains('on') : false,
+  };
+  if (ST.demo) { toast('[Demo] Settings saved', 'info'); return; }
+  try {
+    const r = await fetch('/data/worker/encoder', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast('Settings saved', 'success');
+    ST.workerSettingsOpen[configId] = false;
+    fetchAll();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function registerWorker() {
+  const id = document.getElementById('reg-id');
+  const url = document.getElementById('reg-url');
+  if (!id || !url || !id.value.trim() || !url.value.trim()) return;
+  if (ST.demo) { toast('[Demo] Register worker', 'info'); return; }
+  try {
+    const r = await fetch('/data/workers/register', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({id: id.value.trim(), url: url.value.trim()}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast('Worker registered', 'success');
+    id.value = ''; url.value = '';
+    fetchAll();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function deregisterWorker(configId) {
+  if (!confirm(`Deregister worker ${configId}?`)) return;
+  if (ST.demo) { toast('[Demo] Deregister worker', 'info'); return; }
+  try {
+    const r = await fetch(`/data/workers/${encodeURIComponent(configId)}`, {method: 'DELETE'});
+    if (!r.ok) throw new Error(await r.text());
+    toast('Worker deregistered', 'success');
+    fetchAll();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+// ── Scan tab ─────────────────────────────────────────────────────────────────
+function renderScan() {
+  const el = document.getElementById('tab-scan');
+  if (!el) return;
+  const data = ST.data || {};
+  const scan = data.scan || {running: false};
+  const running = scan.running;
+  const scanned = scan.scanned || 0;
+  const total = scan.total || 0;
+  const found = scan.found || 0;
+  const scanPct = total > 0 ? Math.round(scanned / total * 100) : 0;
+
+  el.innerHTML = `
+    <div style="max-width:720px">
+      <div class="scan-status-bar">
+        <div class="scan-indicator ${running?'scanning':''}"></div>
+        <div class="scan-info">
+          <div class="scan-title">${running ? 'Scan in progress…' : 'Scanner idle'}</div>
+          <div class="scan-sub">
+            ${running
+              ? `${scanned.toLocaleString()} / ${total.toLocaleString()} scanned · ${found} new files found`
+              : scan.path ? `Path: ${esc(scan.path)}` : 'No scan running'
+            }
+          </div>
+        </div>
+        ${running
+          ? `<button class="btn btn-danger btn-sm" onclick="scanStop()">${svgIcon('stop',12)} Stop scan</button>`
+          : `<button class="btn btn-primary btn-sm" onclick="scanStart()">${svgIcon('play',12)} Start scan</button>`
+        }
+      </div>
+
+      ${running ? `
+      <div style="margin-bottom:20px">
+        <div class="progress-track" style="height:6px">
+          <div class="progress-fill" style="width:${scanPct}%"></div>
+        </div>
+      </div>` : ''}
+
+      <div class="card">
+        <div class="card-title">Periodic Scan Settings</div>
+        <div>
+          <div class="settings-row">
+            <div class="settings-label">
+              <strong>Enable periodic scanning</strong>
+              <p>Automatically scan for new files on schedule</p>
+            </div>
+            <div class="toggle ${ST.scanEnabled?'on':''}" id="scan-enabled-toggle"
+                 onclick="ST.scanEnabled=!ST.scanEnabled;this.classList.toggle('on')"></div>
+          </div>
+          <div class="settings-row">
+            <div class="settings-label">
+              <strong>Scan interval</strong>
+              <p>How often to run a background scan</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <input class="input" type="number" min="1" max="10080" value="${ST.scanInterval}"
+                     id="scan-interval-input" style="width:80px"
+                     oninput="ST.scanInterval=+this.value">
+              <span style="font-size:13px;color:var(--text-dim)">minutes</span>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:16px">
+          <button class="btn btn-primary" onclick="saveScanSettings()">Save settings</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function scanStart() {
+  if (ST.demo) { toast('[Demo] Scan started', 'info'); return; }
+  try {
+    const r = await fetch('/data/scan/start', {method:'POST'});
+    if (!r.ok) throw new Error(await r.text());
+    toast('Scan started', 'success');
+    fetchAll();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function scanStop() {
+  if (ST.demo) { toast('[Demo] Scan stopped', 'info'); return; }
+  try {
+    const r = await fetch('/data/scan/stop', {method:'POST'});
+    if (!r.ok) throw new Error(await r.text());
+    toast('Scan stopped', 'info');
+    fetchAll();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function saveScanSettings() {
+  if (ST.demo) { toast('[Demo] Settings saved', 'success'); return; }
+  try {
+    const r = await fetch('/data/scan/settings', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({enabled: ST.scanEnabled, interval_minutes: ST.scanInterval}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast('Scan settings saved', 'success');
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+// ── Settings tab ──────────────────────────────────────────────────────────────
+function renderSettings() {
+  const el = document.getElementById('tab-settings');
+  if (!el) return;
+
+  el.innerHTML = `
+    <div style="max-width:600px">
+      <div class="card">
+        <div class="card-title">Connection</div>
+        <div class="settings-row">
+          <div class="settings-label">
+            <strong>Poll interval</strong>
+            <p>How often the UI fetches new data</p>
+          </div>
+          <select class="select" onchange="setPollInterval(+this.value)" style="width:auto">
+            <option value="1000" ${ST.pollInterval===1000?'selected':''}>1 second</option>
+            <option value="3000" ${ST.pollInterval===3000?'selected':''}>3 seconds</option>
+            <option value="5000" ${ST.pollInterval===5000?'selected':''}>5 seconds</option>
+            <option value="10000" ${ST.pollInterval===10000?'selected':''}>10 seconds</option>
+            <option value="0" ${ST.pollInterval===0?'selected':''}>Manual only</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <div class="card-title">API Reference</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          ${[
+            ['Master','port 9000'],['Workers','port 8000'],
+            ['POST /scan/start','Start scan'],['GET /stats','Statistics'],
+            ['GET /workers','List workers'],['GET /files','File records'],
+            ['POST /transfer','Add file'],['POST /jobs/claim','Claim jobs'],
+          ].map(([k,v]) => `
+            <div style="background:var(--surface2);border-radius:6px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--accent)">${esc(k)}</span>
+              <span style="font-size:11px;color:var(--text-dim)">${esc(v)}</span>
+            </div>`).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function setPollInterval(ms) {
+  ST.pollInterval = ms;
+  clearTimeout(ST._pollTimer);
+  if (ms > 0) ST._pollTimer = setTimeout(fetchAll, ms);
+}
+
+// ── Toast ────────────────────────────────────────────────────────────────────
+function openStatusModal(status) {
+  ST.modalStatus = status;
+  ST.modalSelected.clear();
+  ST.modalBulkOpen = false;
+  document.getElementById('status-modal-backdrop').style.display = 'flex';
+  renderStatusModal();
+}
+
+function closeStatusModal() {
+  document.getElementById('status-modal-backdrop').style.display = 'none';
+  ST.modalStatus = null;
+  ST.modalSelected.clear();
+  ST.modalBulkOpen = false;
+}
+
+function renderStatusModal() {
+  if (!ST.modalStatus) return;
+  const status = ST.modalStatus;
+  const files = (ST.data && ST.data.files) || [];
+  const workers = (ST.data && ST.data.workers) || [];
+  const filtered = status === 'all' ? files : files.filter(f => f.status === status);
+  const labels = {
+    all:'All Files', pending:'Pending', assigned:'Assigned', processing:'Processing',
+    complete:'Complete', discarded:'Discarded', cancelled:'Cancelled', error:'Error', duplicate:'Duplicate',
+  };
+  const nSel = ST.modalSelected.size;
+  const allSelected = filtered.length > 0 && filtered.every(f => ST.modalSelected.has(f.id));
+
+  document.getElementById('status-modal-title').textContent =
+    `${labels[status] || status} — ${filtered.length} file${filtered.length !== 1 ? 's' : ''}`;
+
+  const body = document.getElementById('status-modal-body');
+
+  const thead = nSel > 0 ? `
+      <thead><tr style="height:36px;font-size:11px;color:var(--text-dim);border-bottom:1px solid var(--border-subtle);background:var(--accent-glow)">
+        <th style="width:36px;padding:0 0 0 14px;font-weight:500">
+          <input type="checkbox" ${allSelected?'checked':''} onchange="toggleAllModal(this)" style="accent-color:var(--accent)">
+        </th>
+        <th style="padding:0;font-weight:500;text-align:left" colspan="2">
+          <span style="color:var(--accent);margin-right:12px">${nSel} selected</span>
+          <div class="dropdown" id="modal-bulk-dropdown" style="display:inline-block">
+            <button class="btn btn-sm" onclick="toggleModalBulkMenu(event)"
+                    style="display:inline-flex;align-items:center;gap:6px">
+              <span>Actions…</span>${svgIcon('chevronDown',12)}
+            </button>
+            ${ST.modalBulkOpen ? `
+            <div class="dropdown-menu">
+              <div class="dropdown-item" onclick="modalBulkSetStatus('pending')">Set → Pending</div>
+              <div class="dropdown-item" onclick="modalBulkSetStatus('cancelled')">Set → Cancelled</div>
+              <div class="dropdown-item" onclick="modalBulkDelete()">Delete records</div>
+              ${workers.length > 0 ? `
+              <div class="dropdown-item dropdown-item-sub" style="display:flex;justify-content:space-between;align-items:center">
+                <span>Queue to…</span>${svgIcon('chevronRight',12)}
+                <div class="submenu">
+                  ${workers.map(w => `<div class="dropdown-item" onclick="modalBulkQueue('${esc(w.config_id)}')">${esc(w.hostname)}</div>`).join('')}
+                </div>
+              </div>` : ''}
+            </div>` : ''}
+          </div>
+        </th>
+        <th style="padding:0 14px 0 0;text-align:right">
+          <button class="btn btn-sm" onclick="ST.modalSelected.clear();ST.modalBulkOpen=false;renderStatusModal()">Clear</button>
+        </th>
+      </tr></thead>` : `
+      <thead><tr style="height:36px;font-size:11px;color:var(--text-dim);border-bottom:1px solid var(--border-subtle)">
+        <th style="width:36px;padding:0 0 0 14px;font-weight:500">
+          <input type="checkbox" ${allSelected?'checked':''} onchange="toggleAllModal(this)" style="accent-color:var(--accent)">
+        </th>
+        <th style="padding:0 12px 0 0;font-weight:500;text-align:left">Path</th>
+        <th style="padding:0 14px 0 0;font-weight:500;text-align:left;white-space:nowrap">Worker</th>
+        <th style="padding:0 14px 0 0;font-weight:500;text-align:right;white-space:nowrap">Size</th>
+      </tr></thead>`;
+
+  if (filtered.length === 0) {
+    body.innerHTML = `<table style="width:100%;border-collapse:collapse">${thead}<tbody><tr><td colspan="4"><div class="modal-empty">No files with this status.</div></td></tr></tbody></table>`;
     return;
   }
-  if (btn) btn.disabled = false;
-  await _refreshSlaveStatus(host, port);
-  const r = await fetch('/data/dashboard');
-  if (r.ok) _applyDashboard(await r.json());
+
+  body.innerHTML = `
+    <table style="width:100%;border-collapse:collapse">
+      ${thead}
+      <tbody>
+        ${filtered.map(f => {
+          const isSel = ST.modalSelected.has(f.id);
+          const worker = workers.find(w => w.config_id === f.worker_id);
+          return `<tr style="${isSel?'background:var(--accent-glow)':''};font-size:12px;border-bottom:1px solid var(--border-subtle)" onmouseenter="this.style.background='${isSel?'var(--accent-glow)':'var(--surface2)'}'" onmouseleave="this.style.background='${isSel?'var(--accent-glow)':''}'">
+            <td style="padding:7px 0 7px 14px">
+              <input type="checkbox" ${isSel?'checked':''} onchange="toggleModalFile(${f.id})" style="accent-color:var(--accent)">
+            </td>
+            <td style="padding:7px 12px 7px 0;font-family:'IBM Plex Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:400px" title="${esc(f.file_path)}">${esc(stripPrefix(f.file_path))}</td>
+            <td style="padding:7px 14px 7px 0;font-family:'IBM Plex Mono',monospace;color:var(--accent);white-space:nowrap">${worker ? esc(worker.hostname) : '<span style="color:var(--text-faint)">—</span>'}</td>
+            <td style="padding:7px 14px 7px 0;font-family:'IBM Plex Mono',monospace;text-align:right;white-space:nowrap;color:var(--text-dim)">${fmtBytes(f.file_size)}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
 }
 
-function _encoderSelect(encoder, host, port, unconfigured, availableEncoders, encoderLabels) {
-  const labels = encoderLabels || {};
-  const available = (availableEncoders && availableEncoders.length)
-    ? availableEncoders
-    : Object.keys(labels);
-  let opts = unconfigured
-    ? '<option value="" disabled selected>— Select encoder —</option>'
-    : '';
-  opts += available
-    .map(v => `<option value="${v}"${!unconfigured && v === encoder ? ' selected' : ''}>${labels[v] || v}</option>`)
-    .join('');
-  // Pause live-refresh while user has the dropdown open so it can't reset their selection
-  const sel = `<select id="enc-${port}"
-    onfocus="_stopSlavePoll()"
-    onblur="_scheduleSlavePoll('${_esc(host)}',${port},3000)"
-    style="padding:.25rem .45rem;border:1px solid var(--border-input);border-radius:4px;font-size:.8rem;font-family:inherit;background:var(--surface);color:var(--text);cursor:pointer">${opts}</select>`;
-  return sel;
+function toggleModalFile(id) {
+  if (ST.modalSelected.has(id)) ST.modalSelected.delete(id);
+  else ST.modalSelected.add(id);
+  renderStatusModal();
 }
 
-function _slaveStatusHtml(st, host, port) {
-  let h = `<div style="font-size:.8rem;color:#aaa;margin-bottom:.7rem">${host}:${port}</div>`;
-  if (!st) return h + '<p class="modal-err" style="margin-bottom:.8rem">Unreachable.</p>';
+function toggleAllModal(src) {
+  const files = (ST.data && ST.data.files) || [];
+  const filtered = ST.modalStatus === 'all' ? files : files.filter(f => f.status === ST.modalStatus);
+  if (src.checked) filtered.forEach(f => ST.modalSelected.add(f.id));
+  else ST.modalSelected.clear();
+  renderStatusModal();
+}
 
-  const label = st.unconfigured ? 'Unconfigured'
-              : st.disk_full ? 'Disk full'
-              : st.sleeping ? 'Sleeping' : st.paused ? 'Paused' : st.drain ? 'Draining'
-              : st.state === 'processing' ? 'Converting' : 'Idle';
-  const cls   = st.unconfigured ? 'badge-unconfigured'
-              : st.disk_full ? 'badge-disk-full'
-              : st.sleeping ? 'badge-sleeping' : st.paused ? 'badge-paused' : st.drain ? 'badge-drain'
-              : st.state === 'processing' ? 'badge-processing' : 'badge-idle';
-  const slaveActions = st.sleeping
-    ? `<form method="post" action="/actions/slave/wake" onclick="event.stopPropagation()">
-        <input type="hidden" name="host" value="${_esc(host)}">
-        <input type="hidden" name="api_port" value="${port}">
-        <button class="btn-act" type="submit">Wake up</button>
-      </form>`
-    : `<form method="post" action="/actions/slave/sleep" onclick="event.stopPropagation()">
-        <input type="hidden" name="host" value="${_esc(host)}">
-        <input type="hidden" name="api_port" value="${port}">
-        <button class="btn-act" type="submit">Sleep</button>
-      </form>`;
-  h += `<div class="modal-state-row">
-    <span class="badge ${cls}">${label}</span>
-    <span class="modal-meta">Queue: ${st.queued} job${st.queued!==1?'s':''}</span>`;
-  if (st.record_id != null) h += `<span class="modal-meta">Record #${st.record_id}</span>`;
-  h += slaveActions + '</div>';
-  if (st.unconfigured) {
-    h += `<div style="font-size:.82rem;color:var(--text-dim);margin-bottom:.6rem">
-      Select an encoder to activate this slave:
-    </div>`;
-  }
-  h += `<div style="display:flex;flex-wrap:nowrap;align-items:center;gap:.75rem;margin-bottom:.8rem;font-size:.8rem;color:var(--text-dim)">
-    <span>Encoder</span>${_encoderSelect(st.encoder || 'libx265', host, port, st.unconfigured, st.available_encoders, st.encoder_labels)}
-    <span style="margin-left:.25rem">Queue size</span>
-    <input id="batch-${port}" type="number" min="1" value="${st.batch_size || 1}"
-      onfocus="_stopSlavePoll()"
-      onblur="_scheduleSlavePoll('${_esc(host)}',${port},3000)"
-      style="width:4rem;padding:.25rem .45rem;border:1px solid var(--border-input);border-radius:4px;font-size:.8rem;font-family:inherit;background:var(--surface);color:var(--text)">
-    <label style="display:flex;align-items:center;gap:.3rem;cursor:pointer;white-space:nowrap">
-      <input id="replace-${port}" type="checkbox" ${st.replace_original ? 'checked' : ''}
-        onclick="_stopSlavePoll(); _scheduleSlavePoll('${_esc(host)}',${port},3000)">Replace original</label>
-    <button id="settings-save-${port}" class="btn-act" type="button" onclick="saveSlaveSettings('${_esc(host)}',${port})" style="margin-left:auto">Save</button>
-  </div>`;
+function toggleModalBulkMenu(e) {
+  e.stopPropagation();
+  ST.modalBulkOpen = !ST.modalBulkOpen;
+  renderStatusModal();
+}
 
-  if (st.state === 'processing') {
-    const cmdId = `ffcmd-${port}`;
-    const cmdBtn = st.current_cmd
-      ? ` <button onclick="document.getElementById('${cmdId}').style.display=document.getElementById('${cmdId}').style.display==='none'?'block':'none'"
-             style="border:none;background:none;color:var(--text-dim);font-size:.7rem;cursor:pointer;padding:.1rem .3rem;text-decoration:underline">cmd</button>
-           <div id="${cmdId}" data-cmd="${_esc(st.current_cmd)}" style="display:none;position:relative;margin:.4rem 0 0">
-             <button onclick="navigator.clipboard.writeText(this.parentElement.dataset.cmd).then(()=>_showCopied(this))"
-               title="Copy to clipboard"
-               style="position:absolute;top:.35rem;right:.35rem;border:none;background:none;color:var(--text-dim);cursor:pointer;font-size:.85rem;padding:.1rem .25rem;line-height:1">⎘</button>
-             <pre style="font-size:.7rem;white-space:pre-wrap;word-break:break-all;background:var(--surface-2);border:1px solid var(--border-2);border-radius:4px;padding:.5rem;color:var(--text);margin:0">${_esc(st.current_cmd)}</pre>
-           </div>`
-      : '';
-    h += `<div style="font-size:.8rem;color:var(--text-dim);margin-bottom:.6rem">Active: ${_encBadge(st.encoder)}${cmdBtn}</div>`;
-  }
+async function modalBulkSetStatus(status) {
+  const ids = [...ST.modalSelected];
+  if (!ids.length) return;
+  ST.modalBulkOpen = false;
+  const endpoint = status === 'pending' ? '/data/files/pending' : '/data/files/cancel';
+  try {
+    const r = await fetch(endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids}) });
+    if (!r.ok) throw new Error(await r.text());
+    toast(`${ids.length} records updated`, 'success');
+    ST.modalSelected.clear();
+    await fetchAll();
+    renderStatusModal();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
 
-  if (st.state === 'processing' && st.progress) {
-    const p = st.progress;
-    const pct = Math.min(p.percent || 0, 100).toFixed(1);
-    h += `<div style="margin:.4rem 0 1rem">
-      <div class="prog-wrap-lg">
-        <div class="prog-bar-lg" style="width:${pct}%"></div>
-      </div>
-      <div class="meta-sm" style="display:flex;justify-content:space-between">
-        <span>${pct}%</span>
-        <span>${p.fps?p.fps+'\u00a0fps\u00a0\u00a0':''}${p.speed?p.speed+'×\u00a0\u00a0':''}${p.eta_seconds!=null?'ETA\u00a0'+fmtEta(p.eta_seconds):''}</span>
-      </div>`;
-    if (p.current_size_bytes)
-      h += `<div class="meta-xs">${fmtBytes(p.current_size_bytes)}${p.projected_size_bytes?' → '+fmtBytes(p.projected_size_bytes):''}${p.bitrate?' &middot; '+p.bitrate:''}</div>`;
-    h += '</div>';
-  }
-  return h;
+async function modalBulkDelete() {
+  const ids = [...ST.modalSelected];
+  if (!ids.length) return;
+  ST.modalBulkOpen = false;
+  if (!confirm(`Delete ${ids.length} record(s)?`)) return;
+  try {
+    const r = await fetch('/data/files/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids}) });
+    if (!r.ok) throw new Error(await r.text());
+    toast(`${ids.length} records deleted`, 'success');
+    ST.modalSelected.clear();
+    await fetchAll();
+    renderStatusModal();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function modalBulkQueue(workerConfigId) {
+  const ids = [...ST.modalSelected];
+  if (!ids.length) return;
+  ST.modalBulkOpen = false;
+  try {
+    const r = await fetch('/data/files/assign', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids, worker_config_id: workerConfigId}) });
+    if (!r.ok) throw new Error(await r.text());
+    const res = await r.json();
+    toast(`Queued ${res.assigned || ids.length} files`, 'success');
+    ST.modalSelected.clear();
+    await fetchAll();
+    renderStatusModal();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeStatusModal(); });
+
+function toast(msg, type = 'info') {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const div = document.createElement('div');
+  div.className = `toast ${type}`;
+  div.textContent = msg;
+  container.appendChild(div);
+  setTimeout(() => div.remove(), 3500);
 }

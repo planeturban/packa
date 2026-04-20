@@ -11,10 +11,10 @@ class Base(DeclarativeBase):
 
 class FileStatus(str, enum.Enum):
     PENDING = "pending"
-    ASSIGNED = "assigned"     # Claimed by a slave, not yet processing
+    ASSIGNED = "assigned"     # Claimed by a worker, not yet processing
     PROCESSING = "processing"
     COMPLETE = "complete"
-    DISCARDED = "discarded"   # Already HEVC — skipped by slave
+    DISCARDED = "discarded"   # Already HEVC — skipped by worker
     CANCELLED = "cancelled"   # Terminated mid-conversion (user or auto size limit)
     ERROR = "error"
     DUPLICATE = "duplicate"   # Same content already exists under a different path
@@ -33,7 +33,7 @@ class FileRecord(Base):
     c_time: Mapped[float] = mapped_column(Float, nullable=False)
     m_time: Mapped[float] = mapped_column(Float, nullable=False)
     checksum: Mapped[str] = mapped_column(String(64), nullable=False)
-    slave_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[FileStatus] = mapped_column(
         SAEnum(FileStatus), nullable=False, default=FileStatus.PENDING
     )

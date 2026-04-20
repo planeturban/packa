@@ -6,8 +6,8 @@ from .models import FileStatus
 
 
 class FileRecordCreate(BaseModel):
-    id: int | None = None       # Set by master; slave uses master's ID
-    slave_id: str | None = None # Which slave holds this file
+    id: int | None = None       # Set by master; worker uses master's ID
+    worker_id: str | None = None # Which worker holds this file
     file_name: str
     file_path: str
     file_size: int | None = None
@@ -25,7 +25,7 @@ class FileRecordOut(BaseModel):
     c_time: float
     m_time: float
     checksum: str
-    slave_id: str | None
+    worker_id: str | None
     status: FileStatus
     file_size: int | None
     cancel_reason: str | None

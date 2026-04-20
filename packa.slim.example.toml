@@ -5,7 +5,7 @@ bind     = "localhost"   # "any" for 0.0.0.0
 api_port = 9000
 
 [master.paths]
-prefix = "/mnt/data/"   # stripped from paths before sending to slaves
+prefix = "/mnt/data/"   # stripped from paths before sending to workers
 
 [master.scan]
 extensions = [".mkv", ".mp4", ".avi", ".mov"]
@@ -14,35 +14,35 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 
 # ---------------------------------------------------------------------------
 
-[slave]
+[worker]
 bind        = "localhost"
 api_port    = 8000
 master_host = "localhost"
 master_port = 9000
 id          = "storage-01"   # omit to auto-generate and persist a UUID
 
-[slave.paths]
+[worker.paths]
 prefix = "/mnt/files/"   # prepended to paths from master; omit to reuse master prefix
 
-[slave.ffmpeg]
+[worker.ffmpeg]
 bin        = "ffmpeg"
 output_dir = "/mnt/output"
 # extra_args = ""
 # encoders   = ["libx265", "nvenc"]   # restrict dashboard dropdown
 
-[slave.ffmpeg.encoder.libx265]
+[worker.ffmpeg.encoder.libx265]
 display_name = "Software"
 video_args   = "-c:v libx265"
 
-# [slave.ffmpeg.encoder.videotoolbox]
+# [worker.ffmpeg.encoder.videotoolbox]
 # display_name = "Apple"
 # video_args   = "-c:v hevc_videotoolbox -q:v 65"
 
-# [slave.ffmpeg.encoder.nvenc_hq]
+# [worker.ffmpeg.encoder.nvenc_hq]
 # display_name = "NVIDIA HQ"
 # video_args   = "-c:v hevc_nvenc -preset p7 -cq 18"
 
-[slave.worker]
+[worker.worker]
 poll_interval     = 5
 # cancel_thresholds = [[10.0, 1.10], [25.0, 1.05], [50.0, 1.0]]   # remove to disable early cancellation
 

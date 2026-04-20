@@ -3,32 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
   <title>Packa</title>
-  <script>
-    (function() {
-      var t = localStorage.getItem('theme') || 'system';
-      if (t !== 'system') document.documentElement.dataset.theme = t;
-    })();
-  </script>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f59e0b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z'/%3E%3C/svg%3E">
+  <script>(function(){var t=localStorage.getItem('packa-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <nav>
-    <span class="brand">📦 PACKA</span>
-    <div class="nav-right">
-      <div class="theme-picker" id="theme-picker">
-        <button class="theme-btn" data-t="light" onclick="_setTheme('light')">Light</button>
-        <button class="theme-btn" data-t="system" onclick="_setTheme('system')">System</button>
-        <button class="theme-btn" data-t="dark"  onclick="_setTheme('dark')">Dark</button>
-      </div>
-      {% block nav_right %}{% endblock %}
-    </div>
-  </nav>
-  <main>
-    {% block content %}{% endblock %}
-  </main>
-  <script src="/static/theme.js"></script>
+{% block content %}{% endblock %}
 </body>
 </html>

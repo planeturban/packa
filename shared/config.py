@@ -78,7 +78,7 @@ class Config:
     master_host: str = "localhost"
     master_port: int = 9000
     advertise_host: str = ""
-    slave_id: str = ""
+    worker_id: str = ""
     path_prefix: str = ""
     ffmpeg: FfmpegConfig = field(default_factory=FfmpegConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
@@ -134,27 +134,27 @@ def load_master(config_path: str | None) -> Config:
     )
 
 
-def load_slave(config_path: str | None) -> Config:
+def load_worker(config_path: str | None) -> Config:
     data: dict = {}
     if config_path:
         with open(config_path, "rb") as f:
             data = tomllib.load(f)
 
     master_prefix = data.get("master", {}).get("paths", {}).get("prefix", "")
-    slave = data.get("slave", {})
-    paths = slave.get("paths", {})
-    ffmpeg_data = slave.get("ffmpeg", {})
-    worker_data = slave.get("worker", {})
+    worker = data.get("worker", {})
+    paths = worker.get("paths", {})
+    ffmpeg_data = worker.get("ffmpeg", {})
+    worker_data = worker.get("worker", {})
 
     path_prefix = _env(
-        "PACKA_SLAVE_PREFIX",
+        "PACKA_WORKER_PREFIX",
         paths.get("prefix", "") or master_prefix,
     )
 
     encoder_data: dict = ffmpeg_data.get("encoder", {})
 
-    # Presets are entirely config-driven; only what's in [slave.ffmpeg.encoder.*] is loaded.
-    # If nothing is configured, fall back to a bare libx265 preset so the slave can run.
+    # Presets are entirely config-driven; only what's in [worker.ffmpeg.encoder.*] is loaded.
+    # If nothing is configured, fall back to a bare libx265 preset so the worker can run.
     if encoder_data:
         presets: dict[str, EncoderPreset] = {
             name: EncoderPreset(
@@ -173,7 +173,7 @@ def load_slave(config_path: str | None) -> Config:
     else:
         available_encoders = list(presets.keys())
 
-    _ct_env = os.environ.get("PACKA_SLAVE_CANCEL_THRESHOLDS")
+    _ct_env = os.environ.get("PACKA_WORKER_CANCEL_THRESHOLDS")
     if _ct_env:
         _cancel_thresholds = _parse_cancel_thresholds(_ct_env)
     elif "cancel_thresholds" in worker_data:
@@ -182,23 +182,23 @@ def load_slave(config_path: str | None) -> Config:
         _cancel_thresholds = []
 
     return Config(
-        bind=_env("PACKA_SLAVE_BIND", slave.get("bind", "localhost")),
-        api_port=_env_int("PACKA_SLAVE_API_PORT", slave.get("api_port", 8000)),
-        master_host=_env("PACKA_SLAVE_MASTER_HOST", slave.get("master_host", "localhost")),
-        master_port=_env_int("PACKA_SLAVE_MASTER_PORT", slave.get("master_port", 9000)),
-        advertise_host=_env("PACKA_SLAVE_ADVERTISE_HOST", slave.get("advertise_host", "")),
-        slave_id=_env("PACKA_SLAVE_ID", slave.get("id", "")),
+        bind=_env("PACKA_WORKER_BIND", worker.get("bind", "localhost")),
+        api_port=_env_int("PACKA_WORKER_API_PORT", worker.get("api_port", 8000)),
+        master_host=_env("PACKA_WORKER_MASTER_HOST", worker.get("master_host", "localhost")),
+        master_port=_env_int("PACKA_WORKER_MASTER_PORT", worker.get("master_port", 9000)),
+        advertise_host=_env("PACKA_WORKER_ADVERTISE_HOST", worker.get("advertise_host", "")),
+        worker_id=_env("PACKA_WORKER_ID", worker.get("id", "")),
         path_prefix=path_prefix,
         ffmpeg=FfmpegConfig(
-            bin=_env("PACKA_SLAVE_FFMPEG_BIN", ffmpeg_data.get("bin", "ffmpeg")),
-            output_dir=_env("PACKA_SLAVE_FFMPEG_OUTPUT_DIR", ffmpeg_data.get("output_dir", "")),
-            extra_args=_env("PACKA_SLAVE_FFMPEG_EXTRA_ARGS", ffmpeg_data.get("extra_args", "")),
+            bin=_env("PACKA_WORKER_FFMPEG_BIN", ffmpeg_data.get("bin", "ffmpeg")),
+            output_dir=_env("PACKA_WORKER_FFMPEG_OUTPUT_DIR", ffmpeg_data.get("output_dir", "")),
+            extra_args=_env("PACKA_WORKER_FFMPEG_EXTRA_ARGS", ffmpeg_data.get("extra_args", "")),
             presets=presets,
             available_encoders=available_encoders,
         ),
         worker=WorkerConfig(
-            batch_size=_env_int("PACKA_SLAVE_BATCH_SIZE", worker_data.get("batch_size", 1)),
-            poll_interval=_env_int("PACKA_SLAVE_POLL_INTERVAL", worker_data.get("poll_interval", 5)),
+            batch_size=_env_int("PACKA_WORKER_BATCH_SIZE", worker_data.get("batch_size", 1)),
+            poll_interval=_env_int("PACKA_WORKER_POLL_INTERVAL", worker_data.get("poll_interval", 5)),
             cancel_thresholds=_cancel_thresholds,
         ),
     )

@@ -1,5 +1,5 @@
 """
-Slave REST API.
+Worker REST API.
 
   GET    /status                 — worker state + live ffmpeg progress
   POST   /files                  — submit a file record (enqueues for conversion)
@@ -14,7 +14,7 @@ Slave REST API.
   POST   /conversion/sleep       — enter sleep mode (no polling, no new jobs)
   POST   /conversion/wake        — leave sleep mode
   GET    /settings               — current encoder
-  POST   /settings               — change encoder (also activates unconfigured slave)
+  POST   /settings               — change encoder (also activates unconfigured worker)
 """
 
 import asyncio
@@ -45,7 +45,7 @@ migrate(engine)
 
 _config: Config = Config()
 _advertise_host: str = ""
-_slave_config_id: str = ""
+_worker_config_id: str = ""
 
 
 def set_config(config: Config) -> None:
@@ -53,16 +53,16 @@ def set_config(config: Config) -> None:
     _config = config
 
 
-def set_registration_params(advertise_host: str, slave_config_id: str) -> None:
-    global _advertise_host, _slave_config_id
+def set_registration_params(advertise_host: str, worker_config_id: str) -> None:
+    global _advertise_host, _worker_config_id
     _advertise_host = advertise_host
-    _slave_config_id = slave_config_id
+    _worker_config_id = worker_config_id
 
 
 async def _register_and_poll() -> None:
     """Retry registration until master is reachable, then run the poller."""
-    url = f"http://{_config.master_host}:{_config.master_port}/slaves"
-    payload = {"config_id": _slave_config_id, "host": _advertise_host, "api_port": _config.api_port}
+    url = f"http://{_config.master_host}:{_config.master_port}/workers"
+    payload = {"config_id": _worker_config_id, "host": _advertise_host, "api_port": _config.api_port}
     attempt = 0
     while True:
         try:
@@ -70,21 +70,21 @@ async def _register_and_poll() -> None:
                 r = await client.post(url, json=payload)
                 r.raise_for_status()
                 record = r.json()
-            worker_state.slave_id = record["id"]
-            worker_state.slave_config_id = _slave_config_id
+            worker_state.worker_id = record["id"]
+            worker_state.worker_config_id = _worker_config_id
             worker_state.master_url = f"http://{_config.master_host}:{_config.master_port}"
-            print(f"[slave] registered as slave-{record['id']}")
+            print(f"[worker] registered as worker-{record['id']}")
             break
         except Exception as exc:
             attempt += 1
             wait = min(5 * attempt, 30)
-            print(f"[slave] registration failed (attempt {attempt}): {exc} — retrying in {wait}s")
+            print(f"[worker] registration failed (attempt {attempt}): {exc} — retrying in {wait}s")
             await asyncio.sleep(wait)
 
     if _config.ffmpeg.output_dir:
         await poller_loop(
             master_url=worker_state.master_url,
-            slave_config_id=_slave_config_id,
+            worker_config_id=_worker_config_id,
             path_prefix=_config.path_prefix,
             batch_size=_config.worker.batch_size,
             poll_interval=_config.worker.poll_interval,
@@ -110,7 +110,7 @@ async def lifespan(app: FastAPI):
         worker_state.encoder = _default_encoder
         worker_state.sleeping = True
         worker_state.unconfigured = True
-        print("[slave] no stored configuration — starting in unconfigured state")
+        print("[worker] no stored configuration — starting in unconfigured state")
     else:
         worker_state.encoder = _default_encoder
 
@@ -131,7 +131,7 @@ async def lifespan(app: FastAPI):
             pass
 
 
-app = FastAPI(title="Packa Slave API", lifespan=lifespan)
+app = FastAPI(title="Packa Worker API", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ class ProgressOut(BaseModel):
     projected_size_bytes: int | None
 
 
-class SlaveStatus(BaseModel):
+class WorkerStatus(BaseModel):
     state: str
     record_id: int | None
     queued: int
@@ -177,10 +177,10 @@ class EncoderUpdate(BaseModel):
 # Routes
 # ---------------------------------------------------------------------------
 
-@app.get("/status", response_model=SlaveStatus)
+@app.get("/status", response_model=WorkerStatus)
 def get_status():
     p = worker_state.progress
-    return SlaveStatus(
+    return WorkerStatus(
         state="processing" if worker_state.active else "idle",
         record_id=worker_state.record_id,
         queued=worker_state.queued,
@@ -263,7 +263,7 @@ def push_jobs(jobs: list[FileRecordCreate], db: Session = Depends(get_db)):
         full_path = (_config.path_prefix + job.file_path) if _config.path_prefix else job.file_path
         record = None
         try:
-            record = crud.create_file_record(db, job.model_copy(update={"file_path": full_path, "slave_id": _slave_config_id}))
+            record = crud.create_file_record(db, job.model_copy(update={"file_path": full_path, "worker_id": _worker_config_id}))
         except IntegrityError:
             db.rollback()
             record = crud.get_file_record(db, job.id)
@@ -357,7 +357,7 @@ def update_settings(body: EncoderUpdate):
     if worker_state.unconfigured:
         worker_state.unconfigured = False
         worker_state.sleeping = False
-        print(f"[slave] activated with encoder={body.encoder!r}")
+        print(f"[worker] activated with encoder={body.encoder!r}")
     else:
-        print(f"[slave] encoder changed to {body.encoder!r}")
+        print(f"[worker] encoder changed to {body.encoder!r}")
     return {"encoder": worker_state.encoder, "batch_size": worker_state.batch_size}
