@@ -9,6 +9,7 @@
   </div>
   <div id="processing-pill" style="display:none" class="processing-pill">● <span id="processing-count">0</span> processing</div>
   <div class="topbar-sep"></div>
+  <button class="btn btn-sm" id="topbar-scan-btn" onclick="topbarScanClick()" style="font-size:11px;padding:3px 10px;height:26px"></button>
   <div class="status-pill">
     <div class="status-dot connecting" id="status-dot"></div>
     <span id="status-label">Connecting…</span>
@@ -47,9 +48,9 @@
     Workers
     <span class="tab-badge" id="tab-badge-workers">0</span>
   </div>
-  <div class="tab" data-tab="scan" onclick="setTab('scan')">
+  <div class="tab" data-tab="master" onclick="setTab('master')">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/></svg>
-    Scan
+    Master
   </div>
   <div class="tab" data-tab="settings" onclick="setTab('settings')">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -62,7 +63,7 @@
   <div id="tab-files" style="display:none"></div>
   <div id="tab-stats" style="display:none"></div>
   <div id="tab-workers" style="display:none"></div>
-  <div id="tab-scan" style="display:none"></div>
+  <div id="tab-master" style="display:none"></div>
   <div id="tab-settings" style="display:none"></div>
 </div>
 
