@@ -8,6 +8,8 @@ Files are never transferred over the network — workers access them directly vi
 
 Encoder support is fully config-driven — each encoder is defined as a set of ffmpeg arguments in `packa.toml`. Any encoder supported by the ffmpeg build in use will work. The Docker image is based on [`linuxserver/ffmpeg`](https://github.com/linuxserver/docker-ffmpeg), so any hardware encoder supported by that image works out of the box.
 
+![Packa dashboard](docs/assets/packa_screenshot.png)
+
 ---
 
 ## Quick start

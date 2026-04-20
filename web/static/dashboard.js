@@ -58,6 +58,7 @@ const ST = {
   connected: null,
   demo: false,
   pollInterval: 3000,
+  workerPollInterval: 500,
   _pollTimer: null,
   // files tab
   fileFilter: 'all',
@@ -133,6 +134,10 @@ function setTab(t, doRender = true) {
     el.style.display = el.id === `tab-${t}` ? '' : 'none';
   });
   if (doRender) renderActiveTab();
+  // Reset poll timer when switching to/from workers tab so interval takes effect immediately
+  clearTimeout(ST._pollTimer);
+  const interval = t === 'workers' ? ST.workerPollInterval : ST.pollInterval;
+  if (interval > 0) ST._pollTimer = setTimeout(fetchAll, interval);
 }
 
 // ── Edit-guard helpers ────────────────────────────────────────────────────────
@@ -169,9 +174,10 @@ async function fetchAll() {
     ST.connected = false;
     updateConnectionUI();
   } finally {
-    if (ST.pollInterval > 0) {
+    const nextInterval = ST.tab === 'workers' ? ST.workerPollInterval : ST.pollInterval;
+    if (nextInterval > 0) {
       clearTimeout(ST._pollTimer);
-      ST._pollTimer = setTimeout(fetchAll, ST.pollInterval);
+      ST._pollTimer = setTimeout(fetchAll, nextInterval);
     }
   }
 }
@@ -187,7 +193,28 @@ function updateFromData(data) {
 function render() {
   updateConnectionUI();
   updateTabBadges();
+  updateScanButton();
   if (!isEditing()) renderActiveTab();
+}
+
+function updateScanButton() {
+  const btn = document.getElementById('topbar-scan-btn');
+  if (!btn) return;
+  const scan = (ST.data && ST.data.scan) || {};
+  if (scan.running) {
+    btn.textContent = '⏹ Stop scan';
+    btn.className = 'btn btn-sm btn-danger';
+    btn.style.cssText = 'font-size:11px;padding:3px 10px;height:26px';
+  } else {
+    btn.innerHTML = '▶ Scan';
+    btn.className = 'btn btn-sm btn-primary';
+    btn.style.cssText = 'font-size:11px;padding:3px 10px;height:26px';
+  }
+}
+
+function topbarScanClick() {
+  const scan = (ST.data && ST.data.scan) || {};
+  if (scan.running) scanStop(); else scanStart();
 }
 
 function updateConnectionUI() {
@@ -223,7 +250,7 @@ function renderActiveTab() {
     files: renderFiles,
     stats: renderStats,
     workers: renderWorkers,
-    scan: renderScan,
+    master: renderScan,
     settings: renderSettings,
   };
   if (renders[ST.tab]) renders[ST.tab]();
@@ -237,9 +264,9 @@ function renderOverview() {
   const stats = data.stats || {total:0,converted:0,pending:0,processing:0,error:0,duplicate:0,saved_bytes:0};
   const workers = data.workers || [];
   const activeWorkers = workers.filter(s => s.state === 'processing').length;
-  const donePct = stats.total ? Math.round((stats.converted / stats.total) * 100) : 0;
-
   const fc = data.file_counts || {};
+  const activeTotal = (fc.pending||0) + (fc.assigned||0) + (fc.processing||0) + (fc.complete||0);
+  const donePct = activeTotal ? Math.round(((fc.complete||0) / activeTotal) * 100) : 0;
   const statusChips = [
     { key:'pending',    label:'Pending',    color:'var(--yellow)' },
     { key:'assigned',   label:'Assigned',   color:'var(--blue)' },
@@ -310,7 +337,7 @@ function renderOverview() {
           <div style="width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0"></div>
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;font-weight:500">${esc(s.hostname)}</div>
-            <div style="font-size:11px;color:var(--text-faint);font-family:'IBM Plex Mono',monospace">${s.unconfigured ? 'UNCONFIGURED' : esc((s.encoder||'').toUpperCase())} · batch ${s.batch_size||1} · ${s.converted||0} converted</div>
+            <div style="font-size:11px;color:var(--text-faint);font-family:'IBM Plex Mono',monospace">${s.unconfigured ? 'SETUP REQUIRED' : esc((s.encoder||'').toUpperCase())} · batch ${s.batch_size||1} · ${s.converted||0} converted</div>
           </div>
           ${s.state === 'processing' && p ? `
           <div style="width:120px;flex-shrink:0">
@@ -728,7 +755,7 @@ function renderStats() {
                   const savedPct = inp > 0 ? Math.round(saved/inp*100) : 0;
                   return `<tr>
                     <td style="font-weight:500">${esc(s.hostname)}</td>
-                    <td><span class="mono" style="color:var(--accent)">${s.unconfigured ? 'UNCONFIGURED' : esc((s.encoder||'').toUpperCase())}</span></td>
+                    <td><span class="mono" style="color:var(--accent)">${s.unconfigured ? 'SETUP REQUIRED' : esc((s.encoder||'').toUpperCase())}</span></td>
                     <td><span class="mono">${(s.converted||0).toLocaleString()}</span></td>
                     <td><span class="mono" style="color:${(s.errors||0)>0?'var(--red)':'var(--text-faint)'}">${s.errors||0}</span></td>
                     <td><span class="mono">${fmtBytes(inp||null)}</span></td>
@@ -824,7 +851,7 @@ function renderWorkerCard(s) {
                   onkeydown="if(event.key==='Escape')cancelInlineEdit('${esc(s.config_id)}')">${encOptions}</select>
           <button class="btn btn-primary btn-sm" onclick="saveInlineEdit('${esc(s.config_id)}','${esc(s.host)}',${s.api_port})">✓</button>
           <button class="btn btn-sm" onclick="cancelInlineEdit('${esc(s.config_id)}')">✕</button>
-        </div>` : `<div class="worker-stat-value" style="font-size:12px">${s.unconfigured ? 'UNCONFIGURED' : esc((s.encoder||'').toUpperCase())}</div>`}
+        </div>` : `<div class="worker-stat-value" style="font-size:12px">${s.unconfigured ? 'SETUP REQUIRED' : esc((s.encoder||'').toUpperCase())}</div>`}
       </div>
       <div class="worker-stat" style="cursor:pointer" onclick="startInlineEdit('${esc(s.config_id)}','batch')">
         <div class="worker-stat-label">Batch</div>
@@ -999,7 +1026,7 @@ async function deregisterWorker(configId) {
 
 // ── Scan tab ─────────────────────────────────────────────────────────────────
 function renderScan() {
-  const el = document.getElementById('tab-scan');
+  const el = document.getElementById('tab-master');
   if (!el) return;
   const data = ST.data || {};
   const scan = data.scan || {running: false};
@@ -1022,10 +1049,6 @@ function renderScan() {
             }
           </div>
         </div>
-        ${running
-          ? `<button class="btn btn-danger btn-sm" onclick="scanStop()">${svgIcon('stop',12)} Stop scan</button>`
-          : `<button class="btn btn-primary btn-sm" onclick="scanStart()">${svgIcon('play',12)} Start scan</button>`
-        }
       </div>
 
       ${running ? `
@@ -1122,23 +1145,20 @@ function renderSettings() {
             <option value="0" ${ST.pollInterval===0?'selected':''}>Manual only</option>
           </select>
         </div>
-      </div>
-
-      <div class="card" style="margin-top:16px">
-        <div class="card-title">API Reference</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          ${[
-            ['Master','port 9000'],['Workers','port 8000'],
-            ['POST /scan/start','Start scan'],['GET /stats','Statistics'],
-            ['GET /workers','List workers'],['GET /files','File records'],
-            ['POST /transfer','Add file'],['POST /jobs/claim','Claim jobs'],
-          ].map(([k,v]) => `
-            <div style="background:var(--surface2);border-radius:6px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center">
-              <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--accent)">${esc(k)}</span>
-              <span style="font-size:11px;color:var(--text-dim)">${esc(v)}</span>
-            </div>`).join('')}
+        <div class="settings-row">
+          <div class="settings-label">
+            <strong>Workers tab poll interval</strong>
+            <p>How often worker cards refresh when on the Workers tab</p>
+          </div>
+          <select class="select" onchange="setWorkerPollInterval(+this.value)" style="width:auto">
+            <option value="500"  ${ST.workerPollInterval===500 ?'selected':''}>0.5 seconds</option>
+            <option value="1000" ${ST.workerPollInterval===1000?'selected':''}>1 second</option>
+            <option value="2000" ${ST.workerPollInterval===2000?'selected':''}>2 seconds</option>
+            <option value="3000" ${ST.workerPollInterval===3000?'selected':''}>3 seconds</option>
+          </select>
         </div>
       </div>
+
     </div>
   `;
 }
@@ -1146,7 +1166,16 @@ function renderSettings() {
 function setPollInterval(ms) {
   ST.pollInterval = ms;
   clearTimeout(ST._pollTimer);
-  if (ms > 0) ST._pollTimer = setTimeout(fetchAll, ms);
+  const interval = ST.tab === 'workers' ? ST.workerPollInterval : ms;
+  if (interval > 0) ST._pollTimer = setTimeout(fetchAll, interval);
+}
+
+function setWorkerPollInterval(ms) {
+  ST.workerPollInterval = ms;
+  if (ST.tab === 'workers') {
+    clearTimeout(ST._pollTimer);
+    if (ms > 0) ST._pollTimer = setTimeout(fetchAll, ms);
+  }
 }
 
 // ── Toast ────────────────────────────────────────────────────────────────────
