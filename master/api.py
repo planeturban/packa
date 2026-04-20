@@ -316,9 +316,9 @@ def list_workers():
     return registry.all()
 
 
-@app.delete("/workers/{worker_id}", status_code=204)
-def remove_worker(worker_id: int):
-    if not registry.remove(worker_id):
+@app.delete("/workers/{config_id}", status_code=204)
+def remove_worker(config_id: str):
+    if not registry.remove_by_config_id(config_id):
         raise HTTPException(status_code=404, detail="Worker not found")
 
 
