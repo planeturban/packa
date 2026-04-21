@@ -102,6 +102,7 @@ async def fetch_dashboard(master_url: str) -> dict:
             "paused": (st or {}).get("paused", False),
             "drain": (st or {}).get("drain", False),
             "sleeping": (st or {}).get("sleeping", False),
+            "disk_full": (st or {}).get("disk_full", False),
             "current_file": (st or {}).get("current_file"),
             "current_cmd": (st or {}).get("current_cmd"),
             "unconfigured": (st or {}).get("unconfigured", False),
