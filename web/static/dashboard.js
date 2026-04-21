@@ -41,6 +41,7 @@ function badge(status) {
     discarded:'badge-discarded', cancelled:'badge-cancelled',
     error:'badge-error', duplicate:'badge-duplicate',
     sleeping:'badge-sleeping', draining:'badge-draining', online:'badge-online', offline:'badge-offline',
+    'disk full':'badge-error',
   };
   const cls = map[status] || 'badge-discarded';
   const label = status === 'complete' ? 'done' : status;
@@ -346,10 +347,10 @@ function renderOverview() {
     <div class="card">
       <div class="card-title">Workers — ${workers.length} registered, ${activeWorkers} active</div>
       ${workers.length === 0 ? '<div class="empty">No workers registered</div>' : workers.map(s => {
-        const dotColor = s.state === 'processing' ? 'var(--blue)' : s.sleeping ? 'var(--text-faint)' : 'var(--green)';
+        const dotColor = s.disk_full ? 'var(--red)' : s.state === 'processing' ? 'var(--blue)' : s.sleeping ? 'var(--text-faint)' : 'var(--green)';
         const p = s.progress;
         const pct = p ? Math.round(p.percent || 0) : 0;
-        const statusStr = s.sleeping ? 'sleeping' : s.drain ? 'draining' : s.state === 'processing' ? 'processing' : 'online';
+        const statusStr = s.disk_full ? 'disk full' : s.sleeping ? 'sleeping' : s.drain ? 'draining' : s.state === 'processing' ? 'processing' : 'online';
         return `
         <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border-subtle)">
           <div style="width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0"></div>
@@ -950,7 +951,8 @@ function renderWorkerCard(s) {
   const showSettings = !!ST.workerSettingsOpen[s.config_id];
   const p = s.progress;
   const pct = p ? Math.round(p.percent || 0) : 0;
-  const statusStr = isSleeping ? 'sleeping' : s.drain ? 'draining' : isProcessing ? (isPaused ? 'paused' : 'processing') : (s.state === 'unreachable' ? 'offline' : 'online');
+  const isDiskFull = !!s.disk_full;
+  const statusStr = isDiskFull ? 'disk full' : isSleeping ? 'sleeping' : s.drain ? 'draining' : isProcessing ? (isPaused ? 'paused' : 'processing') : (s.state === 'unreachable' ? 'offline' : 'online');
 
   const encoders = s.available_encoders || ['libx265'];
   const labels = s.encoder_labels || {};
