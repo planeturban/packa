@@ -49,7 +49,7 @@ _last_periodic_start: datetime | None = None
 # ---------------------------------------------------------------------------
 
 def _recover() -> None:
-    """Reset any PROCESSING records to PENDING on startup."""
+    """Reset stuck PROCESSING records to PENDING and SCANNING records to SCANNING (re-probe) on startup."""
     db = SessionLocal()
     try:
         stuck = (
@@ -63,6 +63,14 @@ def _recover() -> None:
         if stuck:
             db.commit()
             print(f"[master] reset {len(stuck)} stuck PROCESSING record(s) to PENDING")
+
+        unprobed = (
+            db.query(FileRecord)
+            .filter(FileRecord.status == FileStatus.SCANNING)
+            .count()
+        )
+        if unprobed:
+            print(f"[master] {unprobed} SCANNING record(s) pending probe")
     finally:
         db.close()
 
@@ -99,7 +107,7 @@ async def _probe_codec(file_path: str) -> tuple[str, int | None, int | None, int
 
 
 async def _hevc_check_loop() -> None:
-    """Cursor-based loop: probe all PENDING records for HEVC, 20 at a time concurrently."""
+    """Cursor-based loop: probe all SCANNING records, 20 at a time concurrently."""
     global _hevc_cursor
     await asyncio.sleep(15)
     while True:
@@ -108,7 +116,7 @@ async def _hevc_check_loop() -> None:
             records = (
                 db.query(FileRecord)
                 .filter(
-                    FileRecord.status == FileStatus.PENDING,
+                    FileRecord.status == FileStatus.SCANNING,
                     FileRecord.id > _hevc_cursor,
                 )
                 .order_by(FileRecord.id)
@@ -128,6 +136,8 @@ async def _hevc_check_loop() -> None:
                 if codec == "hevc":
                     record.status = FileStatus.DISCARDED
                     print(f"[master] record {record.id} discarded — already HEVC ({record.file_name!r})")
+                else:
+                    record.status = FileStatus.PENDING
             db.commit()
             _hevc_cursor = records[-1].id
         finally:
@@ -229,7 +239,7 @@ async def _scan_task(scan_dir: str, extensions: set[str], min_size: int, max_siz
             try:
                 video = collect(str(path), _config.scan.checksum_bytes)
                 existing = crud.get_record_by_checksum(db, video.checksum)
-                status = FileStatus.DUPLICATE if existing else FileStatus.PENDING
+                status = FileStatus.DUPLICATE if existing else FileStatus.SCANNING
                 duplicate_of_id = existing.id if existing else None
                 crud.create_file_record(db, FileRecordCreate(
                     file_name=video.file_name,
@@ -353,7 +363,7 @@ def transfer_file(body: TransferRequest, db: Session = Depends(get_db)):
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     existing = crud.get_record_by_checksum(db, video.checksum)
-    status = FileStatus.DUPLICATE if existing else FileStatus.PENDING
+    status = FileStatus.DUPLICATE if existing else FileStatus.SCANNING
     duplicate_of_id = existing.id if existing else None
     record = crud.create_file_record(db, FileRecordCreate(
         file_name=video.file_name,

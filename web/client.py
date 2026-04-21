@@ -6,7 +6,7 @@ import asyncio
 
 import httpx
 
-_STATUSES = ["pending", "assigned", "processing", "complete", "discarded", "cancelled", "error", "duplicate"]
+_STATUSES = ["scanning", "pending", "assigned", "processing", "complete", "discarded", "cancelled", "error", "duplicate"]
 
 
 async def fetch_dashboard(master_url: str) -> dict:
