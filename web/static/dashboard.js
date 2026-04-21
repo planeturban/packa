@@ -72,14 +72,15 @@ function svgIcon(name, size = 16) {
 const ST = {
   data: window._INIT_DATA || null,
   tab: localStorage.getItem('packa-tab') || 'overview',
-  theme: localStorage.getItem('packa-theme') || 'dark',
+  theme: localStorage.getItem('packa-theme') || 'system',
   connected: null,
   demo: false,
   pollInterval: 3000,
   workerPollInterval: 500,
   _pollTimer: null,
   // files tab
-  fileFilter: 'all',
+  fileFilters: new Set(),     // OR — empty means all
+  fileFiltersNot: new Set(),  // NOT — always excluded
   fileSearch: '',
   fileSelected: new Set(),
   fileBulkOpen: false,
@@ -124,23 +125,35 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // ── Theme ────────────────────────────────────────────────────────────────────
+function _resolvedTheme(t) {
+  return t === 'system'
+    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    : t;
+}
+
 function applyTheme(t) {
   ST.theme = t;
-  document.documentElement.setAttribute('data-theme', t);
+  document.documentElement.setAttribute('data-theme', _resolvedTheme(t));
   localStorage.setItem('packa-theme', t);
   const icon = document.getElementById('theme-icon');
   if (icon) {
     const paths = {
-      dark: 'M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z',
-      light: 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z',
+      dark:   'M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z',
+      light:  'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z',
+      system: 'M2 3h20v14H2zM8 21h8M12 17v4',
     };
-    icon.querySelector('path').setAttribute('d', paths[t === 'dark' ? 'dark' : 'light']);
+    icon.querySelector('path').setAttribute('d', paths[t] || paths.system);
   }
 }
 
 function toggleTheme() {
-  applyTheme(ST.theme === 'dark' ? 'light' : 'dark');
+  const next = { dark: 'light', light: 'system', system: 'dark' };
+  applyTheme(next[ST.theme] || 'system');
 }
+
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  if (ST.theme === 'system') applyTheme('system');
+});
 
 // ── Tab switching ────────────────────────────────────────────────────────────
 function setTab(t, doRender = true) {
@@ -398,7 +411,8 @@ function renderFiles() {
   statuses.forEach(s => counts[s] = s === 'all' ? files.length : files.filter(f => f.status === s).length);
 
   const filtered = files.filter(f => {
-    if (ST.fileFilter !== 'all' && f.status !== ST.fileFilter) return false;
+    if (ST.fileFilters.size > 0 && !ST.fileFilters.has(f.status)) return false;
+    if (ST.fileFiltersNot.has(f.status)) return false;
     if (ST.fileSearch) {
       const q = ST.fileSearch.toLowerCase();
       if (!(f.file_path||'').toLowerCase().includes(q) &&
@@ -426,11 +440,15 @@ function renderFiles() {
     </div>
 
     <div class="filter-bar">
-      ${visibleChips.filter(s => counts[s] > 0 || s === 'all').map(s => `
-        <div class="filter-chip ${ST.fileFilter===s?'active':''}"
-             onclick="setFileFilter('${s}')">
+      ${visibleChips.filter(s => counts[s] > 0 || s === 'all').map(s => {
+        const isAll = s === 'all';
+        const isActive = isAll ? (ST.fileFilters.size === 0 && ST.fileFiltersNot.size === 0) : ST.fileFilters.has(s);
+        const isNot = ST.fileFiltersNot.has(s);
+        const cls = isNot ? 'not' : isActive ? 'active' : '';
+        return `<div class="filter-chip ${cls}" onclick="toggleFileFilter('${s}',event)">
           ${chipLabels[s]} <span style="opacity:0.6;font-size:11px">(${counts[s]})</span>
-        </div>`).join('')}
+        </div>`;
+      }).join('')}
       <div style="flex:1"></div>
       <input class="input" id="file-search-input" style="width:220px" placeholder="Search filename or worker…"
              value="${esc(ST.fileSearch)}"
@@ -528,8 +546,28 @@ function renderFiles() {
   if (hdr) hdr.indeterminate = someSelected && !allSelected;
 }
 
-function setFileFilter(f) {
-  ST.fileFilter = f;
+function toggleFileFilter(s, event) {
+  const alt = event && (event.altKey || event.ctrlKey);
+  const shift = event && event.shiftKey;
+  if (s === 'all') {
+    ST.fileFilters.clear();
+    ST.fileFiltersNot.clear();
+  } else if (shift) {
+    if (ST.fileFiltersNot.has(s)) { ST.fileFiltersNot.delete(s); }
+    else { ST.fileFiltersNot.add(s); ST.fileFilters.delete(s); }
+  } else if (alt) {
+    if (ST.fileFilters.has(s)) { ST.fileFilters.delete(s); }
+    else { ST.fileFilters.add(s); ST.fileFiltersNot.delete(s); }
+  } else {
+    if (ST.fileFilters.size > 1 && ST.fileFilters.has(s)) {
+      ST.fileFilters.delete(s);
+    } else {
+      const wasOnly = ST.fileFilters.size === 1 && ST.fileFilters.has(s) && ST.fileFiltersNot.size === 0;
+      ST.fileFilters.clear();
+      ST.fileFiltersNot.clear();
+      if (!wasOnly) ST.fileFilters.add(s);
+    }
+  }
   ST.fileSelected.clear();
   renderFiles();
 }
@@ -545,7 +583,8 @@ function setFileSearch(q) {
 function toggleAllFiles(src) {
   const files = (ST.data && ST.data.files) || [];
   const filtered = files.filter(f => {
-    if (ST.fileFilter !== 'all' && f.status !== ST.fileFilter) return false;
+    if (ST.fileFilters.size > 0 && !ST.fileFilters.has(f.status)) return false;
+    if (ST.fileFiltersNot.has(f.status)) return false;
     if (ST.fileSearch) {
       const q = ST.fileSearch.toLowerCase();
       if (!(f.file_path||'').toLowerCase().includes(q) && !(f.file_name||'').toLowerCase().includes(q)) return false;
