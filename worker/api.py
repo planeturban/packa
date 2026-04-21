@@ -376,8 +376,7 @@ def update_settings(body: EncoderUpdate):
         set_setting("replace_original", "true" if body.replace_original else "false")
     if worker_state.unconfigured:
         worker_state.unconfigured = False
-        worker_state.sleeping = False
-        print(f"[worker] activated with encoder={body.encoder!r}")
+        print(f"[worker] activated with encoder={body.encoder!r} — sleeping until woken")
     else:
         print(f"[worker] encoder changed to {body.encoder!r}")
     return {"encoder": worker_state.encoder, "batch_size": worker_state.batch_size}
