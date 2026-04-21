@@ -56,20 +56,21 @@ Both master and worker use `NullPool` for their SQLite connections — each requ
 ## File status lifecycle
 
 ```
-PENDING → ASSIGNED → DISCARDED   (already HEVC — skipped before ffmpeg runs)
-        → DUPLICATE               (same content exists at another path)
-                   → PROCESSING → COMPLETE
-                                → CANCELLED   (user stop, or output too large)
-                                → ERROR
+SCANNING → PENDING → ASSIGNED → DISCARDED   (already HEVC — detected by master probe loop)
+         → DUPLICATE            (same content exists at another path)
+                             → PROCESSING → COMPLETE
+                                          → CANCELLED   (user stop, or output too large)
+                                          → ERROR
 ```
 
 | Status | Description |
 |--------|-------------|
-| `pending` | Created, not yet claimed |
+| `scanning` | Discovered by scan or `/transfer`; awaiting ffprobe analysis by master |
+| `pending` | Probed and ready — codec, resolution, bitrate and duration are known; not yet claimed by a worker |
 | `assigned` | Claimed by a worker, not yet processing |
 | `processing` | ffmpeg is running |
 | `complete` | Converted successfully; output is smaller than source |
-| `discarded` | Already HEVC — no conversion needed |
+| `discarded` | Already HEVC — detected by master probe loop before the file is ever sent to a worker |
 | `duplicate` | Same content (by checksum) already exists at another path |
 | `cancelled` | Stopped by user (`cancel_reason = "user"`) or because output exceeded the size limit (`cancel_reason = "auto"`) |
 | `error` | ffmpeg exited with a non-zero code, or the converted file could not be moved back to the original path |
@@ -85,7 +86,7 @@ ffmpeg [input_args] -i {file} -map 0 -c copy {video_args} [extra_args] -progress
 `input_args` is only present when the encoder preset defines it — used for hardware decode options that must precede `-i` (e.g. `-hwaccel vaapi`).
 
 - All streams (audio, subtitles, attachments) are copied; only the video stream is re-encoded.
-- `ffprobe` checks the video codec before starting. If already HEVC the record is immediately set to `discarded`.
+- The worker does not run ffprobe. The master probe loop analyses every `scanning` record (codec, resolution, bitrate, duration) and either promotes it to `pending` or sets it to `discarded` (already HEVC). Only `pending` records with a known duration are sent to workers.
 - Output size is monitored every 5 seconds. If the actual output grows larger than the source, ffmpeg is terminated and the record is set to `cancelled`.
 - The projected output size (estimated from progress and current bitrate) is also checked per progress frame against a set of stepped thresholds (`cancel_thresholds`). Each threshold is a `[progress%, ratio]` pair. Once that progress percentage is reached, ffmpeg is terminated early if the projection exceeds `source_size × ratio`. The tightest (highest progress) reached threshold applies. An empty list disables the check.
 - When `replace_original` is enabled (set per worker in the dashboard), the output file is moved back to the original source path on success. If the move fails the record is set to `error` and the output file remains in `output_dir`.
@@ -124,15 +125,4 @@ Run Packa on an isolated network or behind a firewall. Do not expose master or w
 
 The browser talks to the web process only. The web process acts as a backend-for-frontend (BFF), fanning out requests to the master and all registered workers in parallel.
 
-The dashboard auto-refreshes every 3 seconds. It has six tabs:
-
-| Tab | Contents |
-|-----|----------|
-| **Overview** | 8 clickable status chips (Pending, Assigned, Processing, Complete, Discarded, Cancelled, Error, Duplicate), overall progress bar, worker summary. Each chip opens a modal listing files with that status, with bulk actions. |
-| **Files** | Full file table with status filter chips, search by filename or worker name, checkboxes and bulk actions (Set → Pending, Set → Cancelled, Delete, Queue to worker). |
-| **Statistics** | Aggregated and per-worker conversion stats: jobs, input/output size, space saved, compression ratio, avg duration, throughput over time. |
-| **Workers** | Per-worker cards with live ffmpeg progress (%, FPS, speed, bitrate, size), encoder selector, batch size, pause/drain/stop/sleep controls. |
-| **Scan** | Manual scan trigger and periodic scan toggle with interval setting. |
-| **Settings** | Poll interval and other dashboard preferences. |
-
-Fonts (IBM Plex Sans and IBM Plex Mono) are served locally from `/static/fonts/` — no external network requests are made by the UI.
+See [UI reference](ui.md) for a full description of the dashboard tabs, file filtering, worker cards, and keyboard/mouse interactions.

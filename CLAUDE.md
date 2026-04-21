@@ -39,16 +39,18 @@ The worker also has a `worker_settings` table (key/value) used to persist the au
 ## FileStatus enum
 
 ```
-PENDING → ASSIGNED → DISCARDED  (already HEVC, detected by worker before ffmpeg starts)
-                  → PROCESSING → COMPLETE
-                               → CANCELLED  (user stopped, or output >= source size)
-                               → ERROR
+SCANNING → PENDING → ASSIGNED → DISCARDED  (already HEVC, detected by master probe loop)
+         → DUPLICATE
+                             → PROCESSING → COMPLETE
+                                          → CANCELLED  (user stopped, or output >= source size)
+                                          → ERROR
 ```
 
-- `PENDING` — record created, not yet claimed by any worker
+- `SCANNING` — record created by scan or `/transfer`; awaiting ffprobe analysis by the master probe loop
+- `PENDING` — probed; codec, resolution, bitrate and duration known; not yet claimed by any worker
 - `ASSIGNED` — claimed by a worker via `/jobs/claim`, not yet processing
 - `PROCESSING` — ffmpeg is running on the worker
-- `DISCARDED` — file was already HEVC; worker detected this via ffprobe and skipped conversion
+- `DISCARDED` — file was already HEVC; detected by master probe loop, never sent to a worker
 - `CANCELLED` — conversion stopped mid-run. `cancel_reason` is `"user"` (manual stop) or `"auto"` (output exceeded source size, either detected mid-run or post-completion)
 - `COMPLETE` / `ERROR` — terminal states
 

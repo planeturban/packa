@@ -34,4 +34,5 @@ Packa has no authentication between nodes and is intended for use on trusted net
 
 - [Configuration](docs/configuration.md) — config file reference, environment variables, encoder presets
 - [Architecture](docs/architecture.md) — pull model, path prefix translation, databases, file status lifecycle
+- [UI reference](docs/ui.md) — dashboard tabs, file filtering, worker cards, keyboard/mouse interactions
 - [API reference](docs/api.md) — master and worker HTTP endpoints

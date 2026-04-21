@@ -352,6 +352,7 @@ input[type="checkbox"] {
 }
 .filter-chip:hover { color: var(--text); }
 .filter-chip.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
+.filter-chip.not { background: color-mix(in oklch, var(--red) 10%, transparent); border-color: var(--red); color: var(--red); text-decoration: line-through; }
 
 /* ── Worker cards ────────────────────────────────────────────────────── */
 .workers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
