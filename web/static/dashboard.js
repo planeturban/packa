@@ -367,21 +367,28 @@ function renderOverview() {
         const pct = p ? Math.round(p.percent || 0) : 0;
         const statusStr = s.disk_full ? 'disk full' : s.sleeping ? 'sleeping' : s.drain ? 'draining' : s.state === 'processing' ? 'processing' : 'online';
         return `
-        <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border-subtle)">
-          <div style="width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0"></div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:13px;font-weight:500">${esc(s.hostname)}</div>
-            <div style="font-size:11px;color:var(--text-faint);font-family:'IBM Plex Mono',monospace">${s.unconfigured ? 'SETUP REQUIRED' : esc((s.encoder||'').toUpperCase())} · batch ${s.batch_size||1} · ${s.converted||0} converted</div>
+        <div style="padding:10px 0;border-bottom:1px solid var(--border-subtle)">
+          <div style="font-size:13px;font-weight:500;margin-bottom:5px">${esc(s.hostname)}</div>
+          <div style="display:flex;align-items:center;gap:12px;min-width:0">
+            <div style="width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0"></div>
+            <div style="font-size:11px;color:var(--text-faint);font-family:'IBM Plex Mono',monospace;white-space:nowrap">${s.unconfigured ? 'SETUP REQUIRED' : esc((s.encoder||'').toUpperCase())} · batch ${s.batch_size||1} · ${s.converted||0} converted</div>
+            ${s.state === 'processing' && p ? `
+            <div style="flex:1;min-width:0;display:flex;align-items:center;gap:8px">
+              <span style="font-size:11px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1" title="${esc(s.current_file||'')}">${esc((s.current_file||'…').split('/').pop())}</span>
+              <div class="progress-track" style="width:120px;flex-shrink:0"><div class="progress-fill" style="width:${pct}%"></div></div>
+              <span style="font-size:11px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace;white-space:nowrap;min-width:32px;text-align:right">${pct}%</span>
+            </div>` : '<div style="flex:1"></div>'}
+            ${badge(statusStr)}
+            ${s.state === 'processing' ? `
+            <div style="display:flex;gap:4px;flex-shrink:0">
+              ${s.paused
+                ? `<button class="btn btn-sm btn-primary" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')" title="Resume">${svgIcon('play',11)}</button>`
+                : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'pause')" title="Pause">${svgIcon('pause',11)}</button>`
+              }
+              <button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'drain')" title="Drain">⏭</button>
+              <button class="btn btn-sm btn-danger" onclick="workerAction('${esc(s.host)}',${s.api_port},'stop')" title="Stop">${svgIcon('stop',11)}</button>
+            </div>` : ''}
           </div>
-          ${s.state === 'processing' && p ? `
-          <div style="width:120px;flex-shrink:0">
-            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-dim);margin-bottom:4px;font-family:'IBM Plex Mono',monospace">
-              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px">${esc((s.current_file||'…').split('/').pop())}</span>
-              <span>${pct}%</span>
-            </div>
-            <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
-          </div>` : ''}
-          ${badge(statusStr)}
         </div>`;
       }).join('')}
     </div>
