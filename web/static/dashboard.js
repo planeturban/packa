@@ -41,7 +41,7 @@ function badge(status) {
     processing:'badge-processing', complete:'badge-done', done:'badge-done',
     discarded:'badge-discarded', cancelled:'badge-cancelled',
     error:'badge-error', duplicate:'badge-duplicate',
-    sleeping:'badge-sleeping', draining:'badge-draining', online:'badge-online', offline:'badge-offline',
+    sleeping:'badge-sleeping', paused:'badge-paused', draining:'badge-draining', online:'badge-online', offline:'badge-offline',
     'disk full':'badge-error',
   };
   const cls = map[status] || 'badge-discarded';
@@ -365,7 +365,7 @@ function renderOverview() {
         const dotColor = s.disk_full ? 'var(--red)' : s.state === 'processing' ? 'var(--blue)' : s.sleeping ? 'var(--text-faint)' : 'var(--green)';
         const p = s.progress;
         const pct = p ? Math.round(p.percent || 0) : 0;
-        const statusStr = s.disk_full ? 'disk full' : s.sleeping ? 'sleeping' : s.drain ? 'draining' : s.state === 'processing' ? 'processing' : 'online';
+        const statusStr = s.disk_full ? 'disk full' : s.sleeping ? 'sleeping' : s.drain ? 'draining' : s.state === 'processing' ? (s.paused ? 'paused' : 'processing') : 'online';
         return `
         <div style="padding:10px 0;border-bottom:1px solid var(--border-subtle)">
           <div style="font-size:13px;font-weight:500;margin-bottom:5px">${esc(s.hostname)}</div>
@@ -378,16 +378,26 @@ function renderOverview() {
               <div class="progress-track" style="width:120px;flex-shrink:0"><div class="progress-fill" style="width:${pct}%"></div></div>
               <span style="font-size:11px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace;white-space:nowrap;min-width:32px;text-align:right">${pct}%</span>
             </div>` : '<div style="flex:1"></div>'}
-            ${badge(statusStr)}
+            <div style="width:100px;flex-shrink:0">${badge(statusStr)}</div>
             ${s.state === 'processing' ? `
             <div style="display:flex;gap:4px;flex-shrink:0">
-              ${s.paused
-                ? `<button class="btn btn-sm btn-primary" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')" title="Resume">${svgIcon('play',11)}</button>`
-                : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'pause')" title="Pause">${svgIcon('pause',11)}</button>`
+              ${s.drain
+                ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')" title="Wake">${svgIcon('play',11)}</button>`
+                : s.paused
+                  ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')" title="Resume">${svgIcon('play',11)}</button>`
+                  : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'pause')" title="Pause">${svgIcon('pause',11)}</button>`
               }
-              <button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'drain')" title="Drain">⏭</button>
+              <button class="btn btn-sm ${s.drain?'btn-primary':''}" onclick="workerAction('${esc(s.host)}',${s.api_port},'drain')" title="Drain">⏭</button>
               <button class="btn btn-sm btn-danger" onclick="workerAction('${esc(s.host)}',${s.api_port},'stop')" title="Stop">${svgIcon('stop',11)}</button>
-            </div>` : ''}
+            </div>` : `
+            <div style="display:flex;gap:4px;flex-shrink:0">
+              ${s.sleeping
+                ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')" title="Wake">${svgIcon('play',11)}</button>`
+                : `<button class="btn btn-sm" disabled>${svgIcon('pause',11)}</button>`
+              }
+              <button class="btn btn-sm" disabled>⏭</button>
+              <button class="btn btn-sm" disabled>${svgIcon('stop',11)}</button>
+            </div>`}
           </div>
         </div>`;
       }).join('')}
@@ -1072,13 +1082,23 @@ function renderWorkerCard(s) {
 
     <div class="worker-controls">
       ${isProcessing ? `
-        <button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'pause')">${svgIcon('pause',12)} Pause</button>
+        ${s.drain
+          ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')">${svgIcon('play',12)} Wake</button>`
+          : isPaused
+            ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')">${svgIcon('play',12)} Resume</button>`
+            : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'pause')">${svgIcon('pause',12)} Pause</button>`
+        }
         <button class="btn btn-sm btn-danger" onclick="workerAction('${esc(s.host)}',${s.api_port},'stop')">${svgIcon('stop',12)} Stop</button>
-        <button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'drain')">Drain</button>
-      ` : ''}
-      ${isPaused ? `
-        <button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')">${svgIcon('play',12)} Resume</button>
-      ` : ''}
+        <button class="btn btn-sm ${s.drain?'btn-primary':''}" onclick="workerAction('${esc(s.host)}',${s.api_port},'drain')">Drain</button>
+      ` : isSleeping ? `
+        <button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')">${svgIcon('play',12)} Wake</button>
+        <button class="btn btn-sm" disabled>${svgIcon('stop',12)} Stop</button>
+        <button class="btn btn-sm" disabled>Drain</button>
+      ` : `
+        <button class="btn btn-sm" disabled>${svgIcon('pause',12)} Pause</button>
+        <button class="btn btn-sm" disabled>${svgIcon('stop',12)} Stop</button>
+        <button class="btn btn-sm" disabled>Drain</button>
+      `}
       ${isSleeping
         ? `<button class="btn btn-primary btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')">${svgIcon('play',12)} Wake</button>`
         : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'sleep')">${svgIcon('moon',12)} Sleep</button>`
