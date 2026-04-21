@@ -164,6 +164,7 @@ class ProgressOut(BaseModel):
     out_time: str | None
     eta_seconds: int | None
     bitrate: str | None
+    source_size_bytes: int | None
     current_size_bytes: int | None
     projected_size_bytes: int | None
 
@@ -221,6 +222,7 @@ def get_status():
             out_time=p.out_time,
             eta_seconds=p.eta_seconds,
             bitrate=p.bitrate,
+            source_size_bytes=p.source_size_bytes,
             current_size_bytes=p.current_size_bytes,
             projected_size_bytes=p.projected_size_bytes,
         ) if p else None,
