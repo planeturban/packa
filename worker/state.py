@@ -8,6 +8,7 @@ from shared.config import EncoderPreset
 class Job:
     record_id: int
     file_path: str
+    duration: float | None = None
 
 
 @dataclass

@@ -288,6 +288,7 @@ class ClaimOut(BaseModel):
     c_time: float
     m_time: float
     checksum: str
+    duration: float | None
 
 
 class FileResultUpdate(BaseModel):
@@ -402,6 +403,7 @@ def assign_jobs(body: AssignRequest, db: Session = Depends(get_db)):
             c_time=record.c_time,
             m_time=record.m_time,
             checksum=record.checksum,
+            duration=record.duration,
         ))
     db.commit()
     print(f"[master] assigned {len(result)} job(s) to worker '{body.worker_id}'")
@@ -412,7 +414,7 @@ def assign_jobs(body: AssignRequest, db: Session = Depends(get_db)):
 def claim_jobs(body: ClaimRequest, db: Session = Depends(get_db)):
     records = (
         db.query(FileRecord)
-        .filter(FileRecord.status == FileStatus.PENDING)
+        .filter(FileRecord.status == FileStatus.PENDING, FileRecord.duration.isnot(None))
         .order_by(FileRecord.id)
         .limit(body.count)
         .all()
@@ -432,6 +434,7 @@ def claim_jobs(body: ClaimRequest, db: Session = Depends(get_db)):
             c_time=record.c_time,
             m_time=record.m_time,
             checksum=record.checksum,
+            duration=record.duration,
         ))
     db.commit()
     print(f"[master] worker '{body.worker_id}' claimed {len(result)} job(s)")
