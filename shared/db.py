@@ -17,6 +17,10 @@ _MIGRATE_COLS = [
     ("avg_fps", "FLOAT"),
     ("avg_speed", "FLOAT"),
     ("duplicate_of_id", "INTEGER"),
+    ("width", "INTEGER"),
+    ("height", "INTEGER"),
+    ("bitrate", "INTEGER"),
+    ("duration", "REAL"),
 ]
 
 
