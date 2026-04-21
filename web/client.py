@@ -102,6 +102,8 @@ async def fetch_dashboard(master_url: str) -> dict:
             "paused": (st or {}).get("paused", False),
             "drain": (st or {}).get("drain", False),
             "sleeping": (st or {}).get("sleeping", False),
+            "current_file": (st or {}).get("current_file"),
+            "current_cmd": (st or {}).get("current_cmd"),
             "unconfigured": (st or {}).get("unconfigured", False),
             "encoder": (st or {}).get("encoder", "libx265"),
             "available_encoders": (st or {}).get("available_encoders", ["libx265"]),

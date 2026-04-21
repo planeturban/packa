@@ -262,6 +262,7 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
 
         duration_s = job.duration
         worker_state.progress = FfmpegProgress(source_size_bytes=source_size)
+        worker_state.current_file = job.file_path
         cmd = _build_cmd(ffmpeg_bin, job.file_path, output_path, extra_args,
                          encoder, worker_state.presets)
         worker_state.current_cmd = ' '.join(cmd)

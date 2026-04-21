@@ -87,6 +87,7 @@ const ST = {
   modalBulkOpen: false,
   // workers tab
   workerSettingsOpen: {},   // configId → bool
+  workerCmdOpen: {},        // configId → bool
   workerInlineEdit: {},     // configId → 'encoder' | 'batch' | null
   // scan tab
   scanEnabled: false,
@@ -167,7 +168,8 @@ function isEditing() {
   if (isFocused()) return true;
   if (ST.modalSelected.size > 0) return true;
   if (Object.values(ST.workerSettingsOpen).some(Boolean)) return true;
-  return Object.values(ST.workerInlineEdit).some(Boolean);
+  if (Object.values(ST.workerInlineEdit).some(Boolean)) return true;
+  return Object.values(ST.workerCmdOpen).some(Boolean);
 }
 
 // ── Polling ──────────────────────────────────────────────────────────────────
@@ -954,6 +956,9 @@ function renderWorkerCard(s) {
   const labels = s.encoder_labels || {};
   const encOptions = encoders.map(e => `<option value="${esc(e)}" ${s.encoder===e?'selected':''}>${esc(labels[e]||e)}</option>`).join('');
   const inlineEdit = ST.workerInlineEdit[s.config_id] || null;
+  const showCmd = !!ST.workerCmdOpen[s.config_id];
+  const currentFile = s.current_file || '';
+  const currentFileName = currentFile ? currentFile.split('/').pop() : '…';
 
   return `
   <div class="worker-card ${isProcessing?'active':''}">
@@ -968,10 +973,8 @@ function renderWorkerCard(s) {
     ${isProcessing && p ? `
     <div class="worker-progress">
       <div class="worker-progress-label">
-        <span style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-          ${esc((p.file_path||s.current_file||'…').split('/').pop())}
-        </span>
-        <span>${pct}%${p.fps ? ` · ${p.fps} fps` : ''}${p.speed ? ` · ${p.speed}×` : ''}</span>
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1" title="${esc(currentFile)}">${esc(currentFileName)}</span>
+        <span style="white-space:nowrap;margin-left:8px;min-width:140px;text-align:right">${pct}%${p.fps ? ` · ${p.fps} fps` : ''}${p.speed ? ` · ${p.speed}×` : ''}</span>
       </div>
       <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
       <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-faint);margin-top:4px;font-family:'IBM Plex Mono',monospace">
@@ -1031,8 +1034,12 @@ function renderWorkerCard(s) {
         : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'sleep')">${svgIcon('moon',12)} Sleep</button>`
       }
       <button class="btn btn-sm" onclick="toggleWorkerSettings('${esc(s.config_id)}')">${svgIcon('settings',12)} Settings</button>
+      ${s.current_cmd ? `<button class="btn btn-sm ${showCmd?'btn-primary':''}" onclick="toggleWorkerCmd('${esc(s.config_id)}')">CMD</button>` : ''}
       <button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="deregisterWorker('${esc(s.config_id)}')" title="Deregister">${svgIcon('trash',12)}</button>
     </div>
+
+    ${showCmd && s.current_cmd ? `
+    <div style="margin-top:8px;padding:8px;background:var(--bg-subtle);border-radius:6px;font-size:10px;font-family:'IBM Plex Mono',monospace;color:var(--text-faint);word-break:break-all;white-space:pre-wrap">${esc(s.current_cmd)}</div>` : ''}
 
     ${showSettings ? `
     <div class="worker-settings-panel">
@@ -1068,6 +1075,11 @@ function fmtEta(seconds) {
 
 function toggleWorkerSettings(configId) {
   ST.workerSettingsOpen[configId] = !ST.workerSettingsOpen[configId];
+  renderWorkers();
+}
+
+function toggleWorkerCmd(configId) {
+  ST.workerCmdOpen[configId] = !ST.workerCmdOpen[configId];
   renderWorkers();
 }
 

@@ -182,6 +182,7 @@ class WorkerStatus(BaseModel):
     encoder: str
     available_encoders: list[str]
     encoder_labels: dict[str, str]
+    current_file: str | None
     current_cmd: str | None
     batch_size: int
     replace_original: bool
@@ -212,6 +213,7 @@ def get_status():
         encoder=worker_state.encoder,
         available_encoders=worker_state.available_encoders,
         encoder_labels={k: (f"{v.display_name} ({k})" if v.display_name else k) for k, v in worker_state.presets.items()},
+        current_file=worker_state.current_file or None,
         current_cmd=worker_state.current_cmd or None,
         batch_size=worker_state.batch_size,
         replace_original=worker_state.replace_original,
