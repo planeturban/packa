@@ -70,21 +70,32 @@ def _recover() -> None:
 _hevc_cursor: int = 0  # last record id checked; resets each full cycle
 
 
-async def _probe_codec(file_path: str) -> str:
+async def _probe_codec(file_path: str) -> tuple[str, int | None, int | None, int | None, float | None]:
     try:
         proc = await asyncio.create_subprocess_exec(
             "ffprobe", "-v", "quiet",
             "-select_streams", "v:0",
-            "-show_entries", "stream=codec_name",
-            "-of", "csv=p=0",
+            "-show_entries", "stream=codec_name,width,height:format=bit_rate,duration",
+            "-of", "default=noprint_wrappers=1",
             file_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
         stdout, _ = await proc.communicate()
-        return stdout.decode().strip().lower()
+        info = {}
+        for line in stdout.decode().splitlines():
+            if "=" in line:
+                k, _, v = line.partition("=")
+                info[k.strip()] = v.strip()
+        codec = info.get("codec_name", "").lower()
+        width = int(info["width"]) if info.get("width", "").isdigit() else None
+        height = int(info["height"]) if info.get("height", "").isdigit() else None
+        bitrate = int(info["bit_rate"]) if info.get("bit_rate", "").isdigit() else None
+        dur_s = info.get("duration", "")
+        duration = float(dur_s) if dur_s.replace(".", "", 1).isdigit() else None
+        return codec, width, height, bitrate, duration
     except Exception:
-        return ""
+        return "", None, None, None, None
 
 
 async def _hevc_check_loop() -> None:
@@ -108,8 +119,12 @@ async def _hevc_check_loop() -> None:
                 _hevc_cursor = 0
                 await asyncio.sleep(60)
                 continue
-            codecs = await asyncio.gather(*[_probe_codec(r.file_path) for r in records])
-            for record, codec in zip(records, codecs):
+            probes = await asyncio.gather(*[_probe_codec(r.file_path) for r in records])
+            for record, (codec, width, height, bitrate, duration) in zip(records, probes):
+                record.width = width
+                record.height = height
+                record.bitrate = bitrate
+                record.duration = duration
                 if codec == "hevc":
                     record.status = FileStatus.DISCARDED
                     print(f"[master] record {record.id} discarded — already HEVC ({record.file_name!r})")
@@ -285,6 +300,10 @@ class FileResultUpdate(BaseModel):
     encoder: str | None = None
     avg_fps: float | None = None
     avg_speed: float | None = None
+    width: int | None = None
+    height: int | None = None
+    bitrate: int | None = None
+    duration: float | None = None
 
 
 class ScanStatus(BaseModel):
@@ -436,6 +455,10 @@ def update_file_result(record_id: int, body: FileResultUpdate, db: Session = Dep
         encoder=body.encoder,
         avg_fps=body.avg_fps,
         avg_speed=body.avg_speed,
+        width=body.width,
+        height=body.height,
+        bitrate=body.bitrate,
+        duration=body.duration,
     )
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")

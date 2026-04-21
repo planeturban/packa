@@ -84,36 +84,60 @@ def get_stats(db: Session) -> dict:
         FileRecord.finished_at.isnot(None),
     ]
 
-    jobs, total_in, total_out, avg_dur = db.query(
+    jobs, total_in, total_out, avg_dur, avg_fps, avg_speed = db.query(
         func.count(FileRecord.id),
         func.sum(FileRecord.file_size),
         func.sum(FileRecord.output_size),
         func.avg(_dur),
+        func.avg(FileRecord.avg_fps),
+        func.avg(FileRecord.avg_speed),
     ).filter(*_f).one()
     jobs, total_in, total_out = jobs or 0, total_in or 0, total_out or 0
+    _avg_dur = avg_dur or 0
+    _mb_per_s = ((total_in / jobs) / 1_048_576 / _avg_dur) if (jobs and _avg_dur) else None
+
+    # Library-wide totals — include COMPLETE + DISCARDED (both have been ffprobed)
+    _lf = [FileRecord.status.in_([FileStatus.COMPLETE, FileStatus.DISCARDED])]
+    lib_total_duration, lib_avg_bitrate = db.query(
+        func.sum(FileRecord.duration),
+        func.avg(FileRecord.bitrate),
+    ).filter(*_lf).one()
 
     overall = {
         "jobs": jobs,
         "total_input_bytes": total_in,
         "total_output_bytes": total_out,
         "total_saved_bytes": total_in - total_out,
-        "avg_duration_seconds": round(avg_dur or 0, 1),
+        "avg_duration_seconds": round(_avg_dur, 1),
         "avg_compression_ratio": round(total_out / total_in, 3) if total_in else 0.0,
+        "avg_fps": round(avg_fps, 1) if avg_fps is not None else None,
+        "avg_speed": round(avg_speed, 2) if avg_speed is not None else None,
+        "avg_mb_per_s": round(_mb_per_s, 2) if _mb_per_s is not None else None,
+        "total_duration_seconds": round(lib_total_duration, 0) if lib_total_duration else None,
+        "avg_bitrate_bps": round(lib_avg_bitrate, 0) if lib_avg_bitrate else None,
     }
 
     by_encoder: dict = {}
-    for enc, j, in_b, out_b, dur in db.query(
+    for enc, j, in_b, out_b, dur, avg_fps, avg_speed, avg_src_br in db.query(
         FileRecord.encoder, func.count(FileRecord.id),
         func.sum(FileRecord.file_size), func.sum(FileRecord.output_size), func.avg(_dur),
+        func.avg(FileRecord.avg_fps), func.avg(FileRecord.avg_speed),
+        func.avg(FileRecord.bitrate),
     ).filter(*_f).group_by(FileRecord.encoder).all():
         in_b, out_b = in_b or 0, out_b or 0
+        avg_dur = dur or 0
+        mb_per_s = ((in_b / j) / 1_048_576 / avg_dur) if (j and avg_dur) else None
         by_encoder[enc or "unknown"] = {
             "jobs": j or 0,
             "total_input_bytes": in_b,
             "total_output_bytes": out_b,
             "total_saved_bytes": in_b - out_b,
-            "avg_duration_seconds": round(dur or 0, 1),
+            "avg_duration_seconds": round(avg_dur, 1),
             "avg_compression_ratio": round(out_b / in_b, 3) if in_b else 0.0,
+            "avg_fps": round(avg_fps, 1) if avg_fps is not None else None,
+            "avg_speed": round(avg_speed, 2) if avg_speed is not None else None,
+            "avg_mb_per_s": round(mb_per_s, 2) if mb_per_s is not None else None,
+            "avg_src_bitrate_bps": round(avg_src_br, 0) if avg_src_br is not None else None,
         }
 
     by_worker = []
@@ -122,6 +146,8 @@ def get_stats(db: Session) -> dict:
         func.sum(FileRecord.file_size), func.sum(FileRecord.output_size), func.avg(_dur),
     ).filter(*_f).group_by(FileRecord.worker_id).all():
         in_b, out_b = in_b or 0, out_b or 0
+        w_dur = dur or 0
+        w_mb_per_s = ((in_b / j) / 1_048_576 / w_dur) if (j and w_dur) else None
         by_worker.append({
             "worker_id": sid or "unknown",
             "jobs": j or 0,
@@ -129,7 +155,8 @@ def get_stats(db: Session) -> dict:
             "total_output_bytes": out_b,
             "total_saved_bytes": in_b - out_b,
             "avg_compression_ratio": round(out_b / in_b, 3) if in_b else 0.0,
-            "avg_duration_seconds": round(dur or 0, 1),
+            "avg_duration_seconds": round(w_dur, 1),
+            "avg_mb_per_s": round(w_mb_per_s, 2) if w_mb_per_s is not None else None,
         })
 
     by_day = []
@@ -146,7 +173,51 @@ def get_stats(db: Session) -> dict:
     ).filter(*_day_f).group_by('day').order_by('day').all():
         by_day.append({"date": day, "jobs": j or 0, "saved_bytes": saved or 0})
 
-    return {"overall": overall, "by_encoder": by_encoder, "by_worker": by_worker, "by_day": by_day}
+    def _res_tier(h: int) -> str:
+        if h >= 2160: return "4K"
+        if h >= 1080: return "1080p"
+        if h >= 720:  return "720p"
+        return "SD"
+
+    def _br_tier(bps: int) -> str:
+        if bps < 5_000_000:  return "<5 Mbps"
+        if bps < 15_000_000: return "5–15 Mbps"
+        if bps < 40_000_000: return "15–40 Mbps"
+        return "40+ Mbps"
+
+    _tier_defaults: dict = {"count": 0, "total_duration_seconds": 0.0,
+                            "total_saved_bytes": 0, "bitrate_samples": []}
+
+    by_resolution: dict[str, dict] = {}
+    for h, br, dur, fsz, osz, st in db.query(
+        FileRecord.height, FileRecord.bitrate, FileRecord.duration,
+        FileRecord.file_size, FileRecord.output_size, FileRecord.status,
+    ).filter(FileRecord.height.isnot(None)).all():
+        tier = _res_tier(h)
+        t = by_resolution.setdefault(tier, {"count": 0, "total_duration_seconds": 0.0,
+                                             "total_saved_bytes": 0, "bitrate_samples": []})
+        t["count"] += 1
+        if dur: t["total_duration_seconds"] += dur
+        if br:  t["bitrate_samples"].append(br)
+        if st == FileStatus.COMPLETE and fsz and osz:
+            t["total_saved_bytes"] += max(0, fsz - osz)
+    for t in by_resolution.values():
+        samples = t.pop("bitrate_samples")
+        t["avg_bitrate_bps"] = round(sum(samples) / len(samples), 0) if samples else None
+        t["total_duration_seconds"] = round(t["total_duration_seconds"], 0)
+
+    by_bitrate_tier: dict[str, dict] = {}
+    for br, fsz, osz, st in db.query(
+        FileRecord.bitrate, FileRecord.file_size, FileRecord.output_size, FileRecord.status,
+    ).filter(FileRecord.bitrate.isnot(None)).all():
+        tier = _br_tier(br)
+        t = by_bitrate_tier.setdefault(tier, {"count": 0, "total_saved_bytes": 0})
+        t["count"] += 1
+        if st == FileStatus.COMPLETE and fsz and osz:
+            t["total_saved_bytes"] += max(0, fsz - osz)
+
+    return {"overall": overall, "by_encoder": by_encoder, "by_worker": by_worker,
+            "by_day": by_day, "by_resolution": by_resolution, "by_bitrate_tier": by_bitrate_tier}
 
 
 def get_worker_stats(db: Session, worker_id: str) -> dict:
@@ -234,6 +305,10 @@ def update_conversion_result(
     encoder: str | None = None,
     avg_fps: float | None = None,
     avg_speed: float | None = None,
+    width: int | None = None,
+    height: int | None = None,
+    bitrate: int | None = None,
+    duration: float | None = None,
 ) -> FileRecord | None:
     record = get_file_record(db, record_id)
     if record:
@@ -249,6 +324,14 @@ def update_conversion_result(
             record.avg_fps = avg_fps
         if avg_speed is not None:
             record.avg_speed = avg_speed
+        if width is not None:
+            record.width = width
+        if height is not None:
+            record.height = height
+        if bitrate is not None:
+            record.bitrate = bitrate
+        if duration is not None:
+            record.duration = duration
         db.commit()
         db.refresh(record)
     return record

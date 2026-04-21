@@ -18,6 +18,22 @@ function esc(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+function fmtBitrate(bps) {
+  if (bps == null || bps === 0) return '—';
+  if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`;
+  if (bps >= 1_000)     return `${(bps / 1_000).toFixed(0)} kbps`;
+  return `${Math.round(bps)} bps`;
+}
+
+function fmtDuration(s) {
+  if (s == null || s === 0) return '—';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h >= 24) return `${Math.floor(h/24)}d ${h%24}h`;
+  if (h > 0)   return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
 function badge(status) {
   const map = {
     pending:'badge-pending', assigned:'badge-assigned',
@@ -654,6 +670,8 @@ function renderStats() {
   const ms = data.master_stats || {};
   const overall = ms.overall || {};
   const byEncoder = ms.by_encoder || {};
+  const byResolution = ms.by_resolution || {};
+  const byBitrateTier = ms.by_bitrate_tier || {};
 
   const total = stats.total || 1;
   const errorRate = total > 1 ? ((stats.error||0) / total * 100).toFixed(1) : '0.0';
@@ -695,6 +713,26 @@ function renderStats() {
         <div class="stat-value">${workers.filter(s=>s.state==='processing').length}</div>
         <div class="stat-sub">of ${workers.length} registered</div>
       </div>
+      <div class="stat-card">
+        <div class="stat-label">Avg MB/s</div>
+        <div class="stat-value">${overall.avg_mb_per_s != null ? overall.avg_mb_per_s : '—'}</div>
+        <div class="stat-sub">input throughput</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Avg FPS</div>
+        <div class="stat-value">${overall.avg_fps != null ? overall.avg_fps : '—'}</div>
+        <div class="stat-sub">${overall.avg_speed != null ? overall.avg_speed + '× speed' : 'encode speed'}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Library playtime</div>
+        <div class="stat-value">${overall.total_duration_seconds != null ? fmtDuration(overall.total_duration_seconds) : '—'}</div>
+        <div class="stat-sub">total source duration</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Avg source bitrate</div>
+        <div class="stat-value">${overall.avg_bitrate_bps != null ? fmtBitrate(overall.avg_bitrate_bps) : '—'}</div>
+        <div class="stat-sub">across library</div>
+      </div>
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
@@ -714,22 +752,134 @@ function renderStats() {
       </div>
 
       <div class="card">
-        <div class="card-title">Codec breakdown</div>
+        <div class="card-title">By encoder</div>
         ${Object.keys(byEncoder).length === 0
           ? '<div style="color:var(--text-faint);font-size:13px">No data</div>'
           : Object.entries(byEncoder).map(([codec, enc]) => {
               const totalConv = Object.values(byEncoder).reduce((s,e)=>s+(e.jobs||0),0) || 1;
               const pct = Math.round((enc.jobs||0)/totalConv*100);
-              return `<div style="margin-bottom:12px">
+              const dur = enc.avg_duration_seconds || 0;
+              const durStr = dur >= 60
+                ? `${Math.floor(dur/60)}m ${Math.round(dur%60)}s`
+                : `${Math.round(dur)}s`;
+              const savedPct = enc.total_input_bytes
+                ? Math.round((enc.total_saved_bytes||0) / enc.total_input_bytes * 100)
+                : 0;
+              return `<div style="margin-bottom:16px">
                 <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px">
                   <span style="font-family:'IBM Plex Mono',monospace;font-weight:500;color:var(--accent)">${esc(codec.toUpperCase())}</span>
-                  <span style="font-family:'IBM Plex Mono',monospace;color:var(--text-dim)">${(enc.jobs||0).toLocaleString()} <span style="color:var(--text-faint)">${pct}%</span></span>
+                  <span style="font-family:'IBM Plex Mono',monospace;color:var(--text-dim)">${(enc.jobs||0).toLocaleString()} jobs <span style="color:var(--text-faint)">${pct}%</span></span>
                 </div>
-                <div class="progress-track">
+                <div class="progress-track" style="margin-bottom:10px">
                   <div style="height:100%;border-radius:2px;background:var(--accent);width:${pct}%;transition:width 0.4s ease"></div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;font-size:11px;font-family:'IBM Plex Mono',monospace">
+                  <div style="background:var(--surface2);border-radius:6px;padding:6px 8px">
+                    <div style="color:var(--text-faint);margin-bottom:2px">Saved</div>
+                    <div style="color:var(--green)">${fmtBytes(enc.total_saved_bytes)} <span style="color:var(--text-faint)">${savedPct}%</span></div>
+                  </div>
+                  <div style="background:var(--surface2);border-radius:6px;padding:6px 8px">
+                    <div style="color:var(--text-faint);margin-bottom:2px">Avg time</div>
+                    <div>${dur ? durStr : '—'}</div>
+                  </div>
+                  <div style="background:var(--surface2);border-radius:6px;padding:6px 8px">
+                    <div style="color:var(--text-faint);margin-bottom:2px">Avg FPS</div>
+                    <div>${enc.avg_fps != null ? enc.avg_fps : '—'}</div>
+                  </div>
+                  <div style="background:var(--surface2);border-radius:6px;padding:6px 8px">
+                    <div style="color:var(--text-faint);margin-bottom:2px">Avg speed</div>
+                    <div>${enc.avg_speed != null ? enc.avg_speed + '×' : '—'}</div>
+                  </div>
+                  <div style="background:var(--surface2);border-radius:6px;padding:6px 8px">
+                    <div style="color:var(--text-faint);margin-bottom:2px">MB/s</div>
+                    <div>${enc.avg_mb_per_s != null ? enc.avg_mb_per_s : '—'}</div>
+                  </div>
+                  <div style="background:var(--surface2);border-radius:6px;padding:6px 8px">
+                    <div style="color:var(--text-faint);margin-bottom:2px">Src bitrate</div>
+                    <div>${enc.avg_src_bitrate_bps != null ? fmtBitrate(enc.avg_src_bitrate_bps) : '—'}</div>
+                  </div>
+                  <div style="background:var(--surface2);border-radius:6px;padding:6px 8px">
+                    <div style="color:var(--text-faint);margin-bottom:2px">Input</div>
+                    <div>${fmtBytes(enc.total_input_bytes)}</div>
+                  </div>
                 </div>
               </div>`;
             }).join('')
+        }
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+      <div class="card">
+        <div class="card-title">By resolution</div>
+        ${Object.keys(byResolution).length === 0
+          ? '<div style="color:var(--text-faint);font-size:13px">No data</div>'
+          : (() => {
+              const order = ['4K','1080p','720p','SD'];
+              const resTotal = Object.values(byResolution).reduce((s,v)=>s+(v.count||0),0) || 1;
+              return order.filter(k => byResolution[k]).map(k => {
+                const r = byResolution[k];
+                const pct = Math.round((r.count||0) / resTotal * 100);
+                const dur = r.total_duration_seconds || 0;
+                return `<div style="margin-bottom:14px">
+                  <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px">
+                    <span style="font-weight:500">${esc(k)}</span>
+                    <span style="font-family:'IBM Plex Mono',monospace;color:var(--text-dim)">${(r.count||0).toLocaleString()} <span style="color:var(--text-faint)">${pct}%</span></span>
+                  </div>
+                  <div class="progress-track" style="margin-bottom:8px">
+                    <div style="height:100%;border-radius:2px;background:var(--blue);width:${pct}%;transition:width 0.4s ease"></div>
+                  </div>
+                  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px;font-family:'IBM Plex Mono',monospace">
+                    <div style="background:var(--surface2);border-radius:6px;padding:5px 8px">
+                      <div style="color:var(--text-faint);margin-bottom:2px">Avg bitrate</div>
+                      <div>${r.avg_bitrate_bps != null ? fmtBitrate(r.avg_bitrate_bps) : '—'}</div>
+                    </div>
+                    <div style="background:var(--surface2);border-radius:6px;padding:5px 8px">
+                      <div style="color:var(--text-faint);margin-bottom:2px">Playtime</div>
+                      <div>${dur ? fmtDuration(dur) : '—'}</div>
+                    </div>
+                    <div style="background:var(--surface2);border-radius:6px;padding:5px 8px">
+                      <div style="color:var(--text-faint);margin-bottom:2px">Saved</div>
+                      <div style="color:var(--green)">${r.total_saved_bytes ? fmtBytes(r.total_saved_bytes) : '—'}</div>
+                    </div>
+                  </div>
+                </div>`;
+              }).join('');
+            })()
+        }
+      </div>
+
+      <div class="card">
+        <div class="card-title">By source bitrate</div>
+        ${Object.keys(byBitrateTier).length === 0
+          ? '<div style="color:var(--text-faint);font-size:13px">No data</div>'
+          : (() => {
+              const order = ['<5 Mbps','5–15 Mbps','15–40 Mbps','40+ Mbps'];
+              const brTotal = Object.values(byBitrateTier).reduce((s,v)=>s+(v.count||0),0) || 1;
+              return order.filter(k => byBitrateTier[k]).map(k => {
+                const b = byBitrateTier[k];
+                const pct = Math.round((b.count||0) / brTotal * 100);
+                return `<div style="margin-bottom:14px">
+                  <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px">
+                    <span style="font-weight:500">${esc(k)}</span>
+                    <span style="font-family:'IBM Plex Mono',monospace;color:var(--text-dim)">${(b.count||0).toLocaleString()} <span style="color:var(--text-faint)">${pct}%</span></span>
+                  </div>
+                  <div class="progress-track" style="margin-bottom:8px">
+                    <div style="height:100%;border-radius:2px;background:var(--purple);width:${pct}%;transition:width 0.4s ease"></div>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px;font-family:'IBM Plex Mono',monospace">
+                    <div style="background:var(--surface2);border-radius:6px;padding:5px 8px">
+                      <div style="color:var(--text-faint);margin-bottom:2px">Space saved</div>
+                      <div style="color:var(--green)">${b.total_saved_bytes ? fmtBytes(b.total_saved_bytes) : '—'}</div>
+                    </div>
+                    <div style="background:var(--surface2);border-radius:6px;padding:5px 8px">
+                      <div style="color:var(--text-faint);margin-bottom:2px">Share</div>
+                      <div>${pct}% of library</div>
+                    </div>
+                  </div>
+                </div>`;
+              }).join('');
+            })()
         }
       </div>
     </div>
@@ -742,11 +892,11 @@ function renderStats() {
         <table>
           <thead><tr>
             <th>Worker</th><th>Encoder</th><th>Converted</th><th>Errors</th>
-            <th>Input</th><th>Output</th><th>Saved</th>
+            <th>Input</th><th>Output</th><th>Saved</th><th>MB/s</th>
           </tr></thead>
           <tbody>
             ${workers.length === 0
-              ? '<tr><td colspan="7"><div class="empty">No worker statistics available</div></td></tr>'
+              ? '<tr><td colspan="8"><div class="empty">No worker statistics available</div></td></tr>'
               : workers.map(s => {
                   const se = (ms.by_worker||[]).find(b=>b.worker_id===s.config_id) || {};
                   const inp = se.total_input_bytes || 0;
@@ -761,6 +911,7 @@ function renderStats() {
                     <td><span class="mono">${fmtBytes(inp||null)}</span></td>
                     <td><span class="mono">${fmtBytes(out||null)}</span></td>
                     <td><span class="mono" style="color:var(--green)">${savedPct > 0 ? `${savedPct}% (${fmtBytes(saved)})` : '—'}</span></td>
+                    <td><span class="mono">${se.avg_mb_per_s != null ? se.avg_mb_per_s : '—'}</span></td>
                   </tr>`;
                 }).join('')
             }

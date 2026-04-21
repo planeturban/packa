@@ -58,37 +58,33 @@ def _build_cmd(
     return cmd
 
 
-async def _get_duration(ffprobe: str, file_path: str) -> float | None:
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            ffprobe, "-v", "quiet",
-            "-show_entries", "format=duration",
-            "-of", "csv=p=0",
-            file_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        stdout, _ = await proc.communicate()
-        return float(stdout.decode().strip())
-    except Exception:
-        return None
-
-
-async def _get_video_codec(ffprobe: str, file_path: str) -> str | None:
+async def _get_video_info(ffprobe: str, file_path: str) -> tuple[str | None, int | None, int | None, int | None, float | None]:
+    """Return (codec_name, width, height, bitrate, duration) from a single ffprobe call."""
     try:
         proc = await asyncio.create_subprocess_exec(
             ffprobe, "-v", "quiet",
             "-select_streams", "v:0",
-            "-show_entries", "stream=codec_name",
-            "-of", "csv=p=0",
+            "-show_entries", "stream=codec_name,width,height:format=bit_rate,duration",
+            "-of", "default=noprint_wrappers=1",
             file_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
         stdout, _ = await proc.communicate()
-        return stdout.decode().strip() or None
+        info = {}
+        for line in stdout.decode().splitlines():
+            if "=" in line:
+                k, _, v = line.partition("=")
+                info[k.strip()] = v.strip()
+        codec = info.get("codec_name") or None
+        width = int(info["width"]) if info.get("width", "").isdigit() else None
+        height = int(info["height"]) if info.get("height", "").isdigit() else None
+        bitrate = int(info["bit_rate"]) if info.get("bit_rate", "").isdigit() else None
+        dur_s = info.get("duration", "")
+        duration = float(dur_s) if dur_s.replace(".", "", 1).isdigit() else None
+        return codec, width, height, bitrate, duration
     except Exception:
-        return None
+        return None, None, None, None, None
 
 
 _MIN_FREE_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB
@@ -221,6 +217,10 @@ async def _report_result_to_master(
     encoder: str | None = None,
     avg_fps: float | None = None,
     avg_speed: float | None = None,
+    width: int | None = None,
+    height: int | None = None,
+    bitrate: int | None = None,
+    duration: float | None = None,
 ) -> None:
     if not worker_state.master_url:
         return
@@ -242,6 +242,14 @@ async def _report_result_to_master(
         body["avg_fps"] = round(avg_fps, 1)
     if avg_speed is not None:
         body["avg_speed"] = round(avg_speed, 2)
+    if width is not None:
+        body["width"] = width
+    if height is not None:
+        body["height"] = height
+    if bitrate is not None:
+        body["bitrate"] = bitrate
+    if duration is not None:
+        body["duration"] = round(duration, 3)
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.patch(url, json=body)
@@ -277,6 +285,7 @@ async def _monitor_output_size(output_path: str, source_size: int, proc: asyncio
 
 async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) -> None:
     output_path = str(Path(output_dir) / Path(job.file_path).name)
+    encoder = worker_state.encoder  # snapshot — user may change encoder mid-conversion
     db = SessionLocal()
     try:
         if worker_state.should_skip(job.record_id):
@@ -296,12 +305,9 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
             return
 
         ffprobe = _ffprobe_bin(ffmpeg_bin)
-        duration_s, video_codec = await asyncio.gather(
-            _get_duration(ffprobe, job.file_path),
-            _get_video_codec(ffprobe, job.file_path),
-        )
+        video_codec, width, height, bitrate, duration_s = await _get_video_info(ffprobe, job.file_path)
         already_hevc = (video_codec or "").lower() == "hevc"
-        print(f"[worker] record {job.record_id} codec={video_codec!r}")
+        print(f"[worker] record {job.record_id} codec={video_codec!r} {width}x{height} {bitrate}bps {duration_s}s")
 
         if already_hevc:
             update_conversion_result(
@@ -309,15 +315,17 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                 status=FileStatus.DISCARDED,
                 pid=None, output_size=None,
                 started_at=None, finished_at=_utcnow(),
+                width=width, height=height, bitrate=bitrate, duration=duration_s,
             )
             print(f"[worker] record {job.record_id} discarded — already HEVC")
-            await _report_result_to_master(job.record_id, FileStatus.DISCARDED)
+            await _report_result_to_master(job.record_id, FileStatus.DISCARDED,
+                                           width=width, height=height, bitrate=bitrate, duration=duration_s)
             return
 
         cmd = _build_cmd(ffmpeg_bin, job.file_path, output_path, extra_args,
-                         worker_state.encoder, worker_state.presets)
+                         encoder, worker_state.presets)
         worker_state.current_cmd = ' '.join(cmd)
-        print(f"[worker] record {job.record_id} encoder={worker_state.encoder!r} → {worker_state.current_cmd}")
+        print(f"[worker] record {job.record_id} encoder={encoder!r} → {worker_state.current_cmd}")
 
         started_at = _utcnow()
         proc = await asyncio.create_subprocess_exec(
@@ -332,7 +340,7 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
         if record:
             record.pid = proc.pid
             record.status = FileStatus.PROCESSING
-            record.encoder = worker_state.encoder
+            record.encoder = encoder
             record.started_at = started_at
             db.commit()
         print(f"[worker] record {job.record_id} pid={proc.pid}  duration={duration_s}s  source={source_size}B")
@@ -364,15 +372,15 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                     pid=proc.pid, output_size=None,
                     started_at=started_at, finished_at=finished_at,
                     cancel_reason=cancel_reason,
-                    encoder=worker_state.encoder,
-                    avg_fps=avg_fps, avg_speed=avg_speed,
+                    encoder=encoder,
+                    avg_fps=avg_fps, avg_speed=avg_speed, width=width, height=height, bitrate=bitrate, duration=duration_s,
                 )
                 print(f"[worker] record {job.record_id} cancelled ({cancel_reason})")
                 await _report_result_to_master(
                     job.record_id, FileStatus.CANCELLED,
                     pid=proc.pid, started_at=started_at, finished_at=finished_at,
-                    cancel_reason=cancel_reason, encoder=worker_state.encoder,
-                    avg_fps=avg_fps, avg_speed=avg_speed,
+                    cancel_reason=cancel_reason, encoder=encoder,
+                    avg_fps=avg_fps, avg_speed=avg_speed, width=width, height=height, bitrate=bitrate, duration=duration_s,
                 )
             else:
                 update_conversion_result(
@@ -380,8 +388,8 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                     status=FileStatus.ERROR,
                     pid=proc.pid, output_size=None,
                     started_at=started_at, finished_at=finished_at,
-                    encoder=worker_state.encoder,
-                    avg_fps=avg_fps, avg_speed=avg_speed,
+                    encoder=encoder,
+                    avg_fps=avg_fps, avg_speed=avg_speed, width=width, height=height, bitrate=bitrate, duration=duration_s,
                 )
                 print(f"[worker] record {job.record_id} error (exit {proc.returncode}):")
                 for line in stderr_output.splitlines():
@@ -389,8 +397,8 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                 await _report_result_to_master(
                     job.record_id, FileStatus.ERROR,
                     pid=proc.pid, started_at=started_at, finished_at=finished_at,
-                    encoder=worker_state.encoder,
-                    avg_fps=avg_fps, avg_speed=avg_speed,
+                    encoder=encoder,
+                    avg_fps=avg_fps, avg_speed=avg_speed, width=width, height=height, bitrate=bitrate, duration=duration_s,
                 )
             return
 
@@ -404,8 +412,8 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                 pid=proc.pid, output_size=output_size,
                 started_at=started_at, finished_at=finished_at,
                 cancel_reason="auto",
-                encoder=worker_state.encoder,
-                avg_fps=avg_fps, avg_speed=avg_speed,
+                encoder=encoder,
+                avg_fps=avg_fps, avg_speed=avg_speed, width=width, height=height, bitrate=bitrate, duration=duration_s,
             )
             print(
                 f"[worker] record {job.record_id} cancelled — "
@@ -415,8 +423,8 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                 job.record_id, FileStatus.CANCELLED,
                 pid=proc.pid, output_size=output_size,
                 started_at=started_at, finished_at=finished_at,
-                cancel_reason="auto", encoder=worker_state.encoder,
-                avg_fps=avg_fps, avg_speed=avg_speed,
+                cancel_reason="auto", encoder=encoder,
+                avg_fps=avg_fps, avg_speed=avg_speed, width=width, height=height, bitrate=bitrate, duration=duration_s,
             )
         else:
             if worker_state.replace_original:
@@ -430,15 +438,15 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                         status=FileStatus.ERROR,
                         pid=proc.pid, output_size=output_size,
                         started_at=started_at, finished_at=finished_at,
-                        encoder=worker_state.encoder,
-                        avg_fps=avg_fps, avg_speed=avg_speed,
+                        encoder=encoder,
+                        avg_fps=avg_fps, avg_speed=avg_speed, width=width, height=height, bitrate=bitrate, duration=duration_s,
                     )
                     await _report_result_to_master(
                         job.record_id, FileStatus.ERROR,
                         pid=proc.pid, output_size=output_size,
                         started_at=started_at, finished_at=finished_at,
-                        encoder=worker_state.encoder,
-                        avg_fps=avg_fps, avg_speed=avg_speed,
+                        encoder=encoder,
+                        avg_fps=avg_fps, avg_speed=avg_speed, width=width, height=height, bitrate=bitrate, duration=duration_s,
                     )
                     return
 
@@ -447,8 +455,8 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                 status=FileStatus.COMPLETE,
                 pid=proc.pid, output_size=output_size,
                 started_at=started_at, finished_at=finished_at,
-                encoder=worker_state.encoder,
-                avg_fps=avg_fps, avg_speed=avg_speed,
+                encoder=encoder,
+                avg_fps=avg_fps, avg_speed=avg_speed, width=width, height=height, bitrate=bitrate, duration=duration_s,
             )
             print(
                 f"[worker] record {job.record_id} complete — "
@@ -459,8 +467,8 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
                 job.record_id, FileStatus.COMPLETE,
                 pid=proc.pid, output_size=output_size,
                 started_at=started_at, finished_at=finished_at,
-                encoder=worker_state.encoder,
-                avg_fps=avg_fps, avg_speed=avg_speed,
+                encoder=encoder,
+                avg_fps=avg_fps, avg_speed=avg_speed, width=width, height=height, bitrate=bitrate, duration=duration_s,
             )
 
     except Exception as exc:
