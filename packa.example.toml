@@ -40,6 +40,13 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 # Env: PACKA_MASTER_CHECKSUM_BYTES
 # checksum_bytes = 4194304
 
+# Probe loop — analyzes PENDING files via ffprobe before they become claimable by workers.
+# probe_batch_size: how many files to probe concurrently per tick (default 20)
+# probe_interval:   seconds to sleep when no pending files remain (default 60)
+# Env: PACKA_MASTER_PROBE_BATCH_SIZE, PACKA_MASTER_PROBE_INTERVAL
+# probe_batch_size = 20
+# probe_interval   = 60
+
 # ---------------------------------------------------------------------------
 # Worker
 # ---------------------------------------------------------------------------

@@ -112,12 +112,12 @@ async def _hevc_check_loop() -> None:
                     FileRecord.id > _hevc_cursor,
                 )
                 .order_by(FileRecord.id)
-                .limit(20)
+                .limit(_config.scan.probe_batch_size)
                 .all()
             )
             if not records:
                 _hevc_cursor = 0
-                await asyncio.sleep(60)
+                await asyncio.sleep(_config.scan.probe_interval)
                 continue
             probes = await asyncio.gather(*[_probe_codec(r.file_path) for r in records])
             for record, (codec, width, height, bitrate, duration) in zip(records, probes):

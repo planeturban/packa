@@ -33,6 +33,8 @@ class ScanConfig:
     min_size: int = 0         # bytes (converted from MB at load time) — 0 = no limit
     max_size: int = 0         # bytes (converted from MB at load time) — 0 = no limit
     checksum_bytes: int = 4194304  # bytes to read from middle of file for content hash (default 4 MB)
+    probe_batch_size: int = 20    # files probed concurrently per tick
+    probe_interval: int = 60      # seconds to sleep when no pending files remain
 
 
 @dataclass
@@ -130,6 +132,8 @@ def load_master(config_path: str | None) -> Config:
             min_size=_env_int("PACKA_MASTER_MIN_SIZE", scan_data.get("min_size", 0)) * 1024 * 1024,
             max_size=_env_int("PACKA_MASTER_MAX_SIZE", scan_data.get("max_size", 0)) * 1024 * 1024,
             checksum_bytes=_env_int("PACKA_MASTER_CHECKSUM_BYTES", scan_data.get("checksum_bytes", 4194304)),
+            probe_batch_size=_env_int("PACKA_MASTER_PROBE_BATCH_SIZE", scan_data.get("probe_batch_size", 20)),
+            probe_interval=_env_int("PACKA_MASTER_PROBE_INTERVAL", scan_data.get("probe_interval", 60)),
         ),
     )
 
