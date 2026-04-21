@@ -1083,7 +1083,7 @@ function renderWorkerCard(s) {
     <div class="worker-controls">
       ${isProcessing ? `
         ${s.drain
-          ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')">${svgIcon('play',12)} Wake</button>`
+          ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')">${svgIcon('play',12)} Resume</button>`
           : isPaused
             ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')">${svgIcon('play',12)} Resume</button>`
             : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'pause')">${svgIcon('pause',12)} Pause</button>`
