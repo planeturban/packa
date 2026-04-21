@@ -120,6 +120,8 @@ body {
 .status-dot.connected { background: var(--green); animation: none; }
 .status-dot.connecting { background: var(--yellow); animation: pulse 1s infinite; }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+@keyframes pulse-slow { 0%,100%{opacity:1} 50%{opacity:0.4} }
+.pulse-slow { animation: pulse-slow 3s ease-in-out infinite; }
 
 .icon-btn {
   width: 32px; height: 32px;
@@ -228,6 +230,7 @@ body {
 .badge-cancelled  { background: var(--surface3);  color: var(--text-dim); }
 .badge-assigned   { background: var(--yellow-bg); color: var(--yellow); }
 .badge-sleeping   { background: var(--surface3);  color: var(--text-dim); }
+.badge-paused     { background: var(--surface3);  color: var(--text-dim); }
 .badge-draining   { background: var(--yellow-bg); color: var(--yellow); }
 .badge-online     { background: var(--green-bg);  color: var(--green); }
 .badge-offline    { background: var(--red-bg);    color: var(--red); }
