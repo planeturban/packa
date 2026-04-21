@@ -50,6 +50,8 @@ The search box filters by filename, full path, or worker ID.
 
 Clicking any status chip opens a modal listing all files with that status. The modal supports the same bulk actions as the Files tab. After any action the modal refreshes in place without closing.
 
+The worker summary list shows each worker's name, status badge, encoder info, and — when processing — the current filename, progress bar and percentage. Pause, Drain and Stop controls are always visible; they are active when the worker is processing, Wake is active when sleeping, and all are disabled when idle.
+
 ---
 
 ## Workers tab
@@ -60,7 +62,7 @@ Each registered worker has a card showing:
 - **Progress section** (when processing) — filename (truncated; hover for full path), percent, FPS, speed, progress bar, ETA, queue depth, current output size → projected output size, bitrate
 - **CMD button** — appears when a conversion is running; toggles a panel showing the full ffmpeg command
 - **Stats** — converted count, error count, encoder, batch size (both editable inline)
-- **Controls** — Pause / Resume / Stop / Drain / Sleep / Wake / Settings / Deregister
+- **Controls** — always visible; Pause/Resume/Stop/Drain are active when processing, Wake is active when sleeping, all disabled when idle. Pause switches to Resume when paused; Drain highlights when active and switches to Resume to cancel.
 
 ### Inline editing
 
@@ -72,7 +74,7 @@ Click **Settings** to expand a panel with the Replace Original toggle and a Save
 
 ### Drain mode
 
-Drain finishes the current job then stops polling. The worker goes to sleep after the job completes. Use Wake to resume.
+Drain finishes the current job then stops polling. The worker goes to sleep after the job completes. Click Resume (replaces the Drain button while active) to cancel drain and continue polling.
 
 ---
 
@@ -89,4 +91,8 @@ This prevents in-progress edits from being wiped by a poll.
 
 ## Themes
 
-The theme (dark / light) is stored in `localStorage` and applied before first render to avoid a flash. Toggle via the theme button in the top bar.
+The theme cycles **dark → light → system** via the button in the top bar. In system mode the OS `prefers-color-scheme` setting is followed and updates live. The preference is stored in `localStorage` and applied before first render to avoid a flash.
+
+## Tabs
+
+The tab bar scrolls horizontally on narrow screens (scrollbar hidden). Swipe to reach tabs that don't fit.
