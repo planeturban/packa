@@ -43,6 +43,7 @@ class WorkerState:
         self.cancel_reason: str | None = None
         self.encoder: str = "libx265"
         self.batch_size: int = 1
+        self.current_file: str = ""
         self.current_cmd: str = ""
         self.replace_original: bool = False
         self.cancel_thresholds: list[tuple[float, float]] = []
@@ -74,6 +75,7 @@ class WorkerState:
         self.proc = None
         self.paused = False
         self.cancel_reason = None
+        self.current_file = ""
         self.current_cmd = ""
 
     @property
