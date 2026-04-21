@@ -368,10 +368,12 @@ function renderOverview() {
         const statusStr = s.disk_full ? 'disk full' : s.sleeping ? 'sleeping' : s.drain ? 'draining' : s.state === 'processing' ? (s.paused ? 'paused' : 'processing') : 'online';
         return `
         <div style="padding:10px 0;border-bottom:1px solid var(--border-subtle)">
-          <div style="font-size:13px;font-weight:500;margin-bottom:5px">${esc(s.hostname)}</div>
-          <div style="display:flex;align-items:center;gap:12px;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px">
             <div style="width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0"></div>
-            <div style="font-size:11px;color:var(--text-faint);font-family:'IBM Plex Mono',monospace;white-space:nowrap">${s.unconfigured ? 'SETUP REQUIRED' : esc((s.encoder||'').toUpperCase())} · batch ${s.batch_size||1} · ${s.converted||0} converted</div>
+            <div style="font-size:13px;font-weight:500">${esc(s.hostname)}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;min-width:0">
+            <div style="font-size:11px;color:var(--text-faint);font-family:'IBM Plex Mono',monospace;white-space:nowrap;padding-left:16px">${s.unconfigured ? 'SETUP REQUIRED' : esc((s.encoder||'').toUpperCase())} · batch ${s.batch_size||1} · ${s.converted||0} converted</div>
             ${s.state === 'processing' && p ? `
             <div style="flex:1;min-width:0;display:flex;align-items:center;gap:8px">
               <span style="font-size:11px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1" title="${esc(s.current_file||'')}">${esc((s.current_file||'…').split('/').pop())}</span>
