@@ -980,7 +980,7 @@ function renderWorkerCard(s) {
       </div>
       ${p.current_size_bytes != null ? `
       <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-faint);margin-top:3px;font-family:'IBM Plex Mono',monospace">
-        <span>${fmtBytes(p.current_size_bytes)}${p.projected_size_bytes ? ` → ${fmtBytes(p.projected_size_bytes)}` : ''}</span>
+        <span>${fmtBytes(p.current_size_bytes)}${p.projected_size_bytes != null ? ` → ${fmtBytes(p.projected_size_bytes)}` : ''}</span>
         ${p.bitrate ? `<span>${esc(p.bitrate)}</span>` : ''}
       </div>` : ''}
     </div>` : ''}

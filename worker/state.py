@@ -19,6 +19,7 @@ class FfmpegProgress:
     out_time: str | None = None
     eta_seconds: int | None = None
     bitrate: str | None = None
+    source_size_bytes: int | None = None
     current_size_bytes: int | None = None
     projected_size_bytes: int | None = None
 

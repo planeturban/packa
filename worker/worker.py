@@ -79,8 +79,8 @@ def _safe_float(val: str | None) -> float:
         return 0.0
 
 
-def _parse_progress(frame: dict[str, str], duration_s: float | None) -> FfmpegProgress:
-    p = FfmpegProgress()
+def _parse_progress(frame: dict[str, str], duration_s: float | None, source_size: int = 0) -> FfmpegProgress:
+    p = FfmpegProgress(source_size_bytes=source_size or None)
 
     out_time_us = _safe_int(frame.get("out_time_us"))
     out_time_s = out_time_us / 1_000_000
@@ -128,7 +128,7 @@ async def _stream_progress(
         key, _, value = line.partition("=")
         frame[key.strip()] = value.strip()
         if key.strip() == "progress":
-            p = _parse_progress(frame, duration_s)
+            p = _parse_progress(frame, duration_s, source_size)
             worker_state.progress = p
             if p.fps:
                 fps_samples.append(p.fps)
@@ -206,8 +206,6 @@ async def _report_result_to_master(
         body["avg_fps"] = round(avg_fps, 1)
     if avg_speed is not None:
         body["avg_speed"] = round(avg_speed, 2)
-    if width is not None:
-        body["width"] = width
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.patch(url, json=body)
@@ -263,6 +261,7 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
             return
 
         duration_s = job.duration
+        worker_state.progress = FfmpegProgress(source_size_bytes=source_size)
         cmd = _build_cmd(ffmpeg_bin, job.file_path, output_path, extra_args,
                          encoder, worker_state.presets)
         worker_state.current_cmd = ' '.join(cmd)
