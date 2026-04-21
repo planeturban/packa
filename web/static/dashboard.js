@@ -36,6 +36,7 @@ function fmtDuration(s) {
 
 function badge(status) {
   const map = {
+    scanning:'badge-discarded',
     pending:'badge-pending', assigned:'badge-assigned',
     processing:'badge-processing', complete:'badge-done', done:'badge-done',
     discarded:'badge-discarded', cancelled:'badge-cancelled',
@@ -287,6 +288,7 @@ function renderOverview() {
   const activeTotal = (fc.pending||0) + (fc.assigned||0) + (fc.processing||0) + (fc.complete||0);
   const donePct = activeTotal ? Math.round(((fc.complete||0) / activeTotal) * 100) : 0;
   const statusChips = [
+    { key:'scanning',   label:'Scanning',   color:'var(--text-dim)' },
     { key:'pending',    label:'Pending',    color:'var(--yellow)' },
     { key:'assigned',   label:'Assigned',   color:'var(--blue)' },
     { key:'processing', label:'Processing', color:'var(--blue)' },
@@ -391,7 +393,7 @@ function renderFiles() {
   const files = (ST.data && ST.data.files) || [];
   const workers = (ST.data && ST.data.workers) || [];
 
-  const statuses = ['all','pending','assigned','processing','complete','error','duplicate','discarded','cancelled'];
+  const statuses = ['all','scanning','pending','assigned','processing','complete','error','duplicate','discarded','cancelled'];
   const counts = {};
   statuses.forEach(s => counts[s] = s === 'all' ? files.length : files.filter(f => f.status === s).length);
 
@@ -412,11 +414,11 @@ function renderFiles() {
   const nSel = ST.fileSelected.size;
 
   const chipLabels = {
-    all: 'All', pending: 'Pending', assigned: 'Assigned',
+    all: 'All', scanning: 'Scanning', pending: 'Pending', assigned: 'Assigned',
     processing: 'Processing', complete: 'Done', error: 'Error',
     duplicate: 'Duplicate', discarded: 'Discarded', cancelled: 'Cancelled',
   };
-  const visibleChips = ['all','pending','processing','complete','error','duplicate','discarded','cancelled'];
+  const visibleChips = ['all','scanning','pending','processing','complete','error','duplicate','discarded','cancelled'];
 
   el.innerHTML = `
     <div class="section-header">

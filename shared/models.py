@@ -10,6 +10,7 @@ class Base(DeclarativeBase):
 
 
 class FileStatus(str, enum.Enum):
+    SCANNING = "scanning"     # Discovered but not yet probed by master
     PENDING = "pending"
     ASSIGNED = "assigned"     # Claimed by a worker, not yet processing
     PROCESSING = "processing"
