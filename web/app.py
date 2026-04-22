@@ -146,25 +146,6 @@ async def _worker_action(request: Request, host: str, api_port: int, endpoint: s
     return RedirectResponse("/", status_code=303)
 
 
-@app.post("/actions/scan/settings")
-async def action_scan_settings(
-    request: Request,
-    interval: int = Form(),
-    enabled: str = Form(default=""),
-):
-    if not _logged_in(request):
-        return _redirect_login()
-    async with httpx.AsyncClient(timeout=5) as client:
-        try:
-            await client.post(
-                f"{_master_url()}/scan/settings",
-                json={"interval": interval, "enabled": enabled == "on"},
-            )
-        except Exception:
-            pass
-    return RedirectResponse("/", status_code=303)
-
-
 @app.post("/actions/scan/start")
 async def action_scan_start(request: Request):
     if not _logged_in(request):
@@ -491,25 +472,6 @@ async def data_scan_stop(request: Request):
     return JSONResponse({"ok": True})
 
 
-@app.post("/data/scan/settings")
-async def data_scan_settings_save(request: Request):
-    if not _logged_in(request):
-        return JSONResponse({"error": "unauthorized"}, status_code=401)
-    body = await request.json()
-    interval_minutes = max(1, int(body.get("interval_minutes", 1)))
-    enabled = bool(body.get("enabled", False))
-    async with httpx.AsyncClient(timeout=5) as client:
-        try:
-            r = await client.post(
-                f"{_master_url()}/scan/settings",
-                json={"interval": interval_minutes * 60, "enabled": enabled},
-            )
-            r.raise_for_status()
-        except Exception as exc:
-            return JSONResponse({"error": str(exc)}, status_code=502)
-    return JSONResponse({"ok": True})
-
-
 @app.post("/data/transfer")
 async def data_transfer(request: Request):
     if not _logged_in(request):
@@ -570,6 +532,129 @@ async def data_worker_action(request: Request):
     return JSONResponse({"ok": True})
 
 
+@app.post("/data/master/restart")
+async def data_master_restart(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            r = await client.post(f"{_master_url()}/restart")
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+@app.post("/data/worker/restart")
+async def data_worker_restart(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    host = body.get("host")
+    port = body.get("port")
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            r = await client.post(f"{_worker_url(host, port)}/restart")
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+@app.patch("/data/master/config/{key}")
+async def data_master_config_set(request: Request, key: str):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            r = await client.patch(f"{_master_url()}/master/config/{key}", json=body)
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except httpx.HTTPStatusError as exc:
+            return JSONResponse({"error": exc.response.text}, status_code=exc.response.status_code)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+@app.delete("/data/master/config/{key}")
+async def data_master_config_clear(request: Request, key: str):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            r = await client.delete(f"{_master_url()}/master/config/{key}")
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except httpx.HTTPStatusError as exc:
+            return JSONResponse({"error": exc.response.text}, status_code=exc.response.status_code)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+@app.post("/data/master/config/{key}/restore")
+async def data_master_config_restore(request: Request, key: str):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            r = await client.post(f"{_master_url()}/master/config/{key}/restore", json=body)
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except httpx.HTTPStatusError as exc:
+            return JSONResponse({"error": exc.response.text}, status_code=exc.response.status_code)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+@app.patch("/data/worker/config/{key}")
+async def data_worker_config_set(request: Request, key: str, host: str = Query(), port: int = Query()):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            r = await client.patch(f"{_worker_url(host, port)}/config/{key}", json=body)
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except httpx.HTTPStatusError as exc:
+            return JSONResponse({"error": exc.response.text}, status_code=exc.response.status_code)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+@app.delete("/data/worker/config/{key}")
+async def data_worker_config_clear(request: Request, key: str, host: str = Query(), port: int = Query()):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            r = await client.delete(f"{_worker_url(host, port)}/config/{key}")
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except httpx.HTTPStatusError as exc:
+            return JSONResponse({"error": exc.response.text}, status_code=exc.response.status_code)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+@app.post("/data/worker/config/{key}/restore")
+async def data_worker_config_restore(request: Request, key: str, host: str = Query(), port: int = Query()):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            r = await client.post(f"{_worker_url(host, port)}/config/{key}/restore", json=body)
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except httpx.HTTPStatusError as exc:
+            return JSONResponse({"error": exc.response.text}, status_code=exc.response.status_code)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
 @app.get("/data/stats")
 async def data_stats(request: Request):
     if not _logged_in(request):
@@ -605,8 +690,6 @@ async def data_worker_encoder(request: Request):
     port = body.get("port")
     encoder = body.get("encoder")
     payload: dict = {"encoder": encoder}
-    if body.get("batch_size") is not None:
-        payload["batch_size"] = max(1, int(body["batch_size"]))
     if body.get("replace_original") is not None:
         payload["replace_original"] = bool(body["replace_original"])
     async with httpx.AsyncClient(timeout=5) as client:

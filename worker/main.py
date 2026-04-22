@@ -45,8 +45,9 @@ import uvicorn
 from shared.config import load_worker
 from shared.log import UVICORN_LOG_CONFIG
 
-from .api import app, set_config, set_registration_params
-from .store import get_or_create_worker_id, get_stored_worker_id, set_setting
+from . import config_store
+from .api import app, set_config, set_config_layers, set_registration_params
+from .store import get_stored_worker_id, set_setting
 
 
 def _detect_host() -> str:
@@ -59,7 +60,12 @@ def _detect_host() -> str:
 
 
 async def _main(bind: str, api_port: int, advertise_host: str | None, worker_id: str) -> None:
-    effective_host = advertise_host or _detect_host()
+    if advertise_host:
+        effective_host = advertise_host
+    elif bind == "0.0.0.0":
+        effective_host = _detect_host()
+    else:
+        effective_host = bind
     set_registration_params(effective_host, worker_id)
     uvi_config = uvicorn.Config(app, host=bind, port=api_port, log_level="info",
                                 log_config=UVICORN_LOG_CONFIG)
@@ -80,6 +86,8 @@ def main() -> None:
 
     config = load_worker(args.config)
 
+    # CLI overrides for config_store layer tracking (network identity fields excluded)
+    cli_values: dict = {}
     bind_raw = args.bind if args.bind is not None else config.bind
     bind = "0.0.0.0" if bind_raw == "any" else bind_raw
     api_port = args.api_port if args.api_port is not None else config.api_port
@@ -92,7 +100,18 @@ def main() -> None:
         else config.advertise_host or None
     )
 
+    # Seed/load worker config store (DB layer)
+    file_values = config_store.read_file_values(args.config)
+    env_values = config_store.read_env_values()
+    if not config_store.is_initialized():
+        config_store.initialize_from_layers(file_values, env_values)
+        print("[worker] config store initialized")
+    db_values = config_store.read_db_values()
+    effective, _ = config_store.compute_effective(file_values, env_values, db_values, cli_values)
+    config_store.apply_to_config(effective, config)
+
     set_config(config)
+    set_config_layers(args.config, cli_values)
 
     db_id = get_stored_worker_id()
     is_new = db_id is None
@@ -103,12 +122,14 @@ def main() -> None:
         elif db_id:
             print(f"[worker] id from config: {config.worker_id!r} (matches db)")
         worker_id = config.worker_id
+        set_setting("worker_id", worker_id)
+    elif db_id:
+        worker_id = db_id
+        print(f"[worker] id from db: {worker_id!r}")
     else:
-        worker_id = get_or_create_worker_id()
-        source = "db" if db_id else "generated"
-        print(f"[worker] id {source}: {worker_id!r}")
+        worker_id = ""
+        print("[worker] no id configured — will be assigned by master on registration")
 
-    set_setting("worker_id", worker_id)
     if is_new:
         set_setting("first_run", "true")
 

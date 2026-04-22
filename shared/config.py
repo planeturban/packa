@@ -35,6 +35,8 @@ class ScanConfig:
     checksum_bytes: int = 4194304  # bytes to read from middle of file for content hash (default 4 MB)
     probe_batch_size: int = 20    # files probed concurrently per tick
     probe_interval: int = 60      # seconds to sleep when no pending files remain
+    periodic_enabled: bool = False
+    periodic_interval: int = 60   # seconds between periodic scans (min 10)
 
 
 @dataclass

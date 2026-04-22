@@ -5,8 +5,6 @@ Backed by the `worker_settings` table (raw SQL, no ORM).
 Provides general get/set and worker-ID management.
 """
 
-import uuid
-
 from sqlalchemy import text
 
 from .database import engine
@@ -49,11 +47,22 @@ def get_stored_worker_id() -> str | None:
     return get_setting("worker_id")
 
 
-def get_or_create_worker_id() -> str:
-    """Return the stored worker ID, generating and persisting a new UUID if absent."""
-    stored = get_setting("worker_id")
-    if stored:
-        return stored
-    new_id = str(uuid.uuid4())
-    set_setting("worker_id", new_id)
-    return new_id
+def get_settings_with_prefix(prefix: str) -> dict[str, str]:
+    """Return all key/value pairs whose key starts with prefix."""
+    with engine.begin() as conn:
+        _ensure_table(conn)
+        rows = conn.execute(
+            text("SELECT key, value FROM worker_settings WHERE key LIKE :p"),
+            {"p": f"{prefix}%"},
+        ).fetchall()
+    return {row[0]: row[1] for row in rows}
+
+
+def delete_setting(key: str) -> bool:
+    """Delete a key; return True if it existed."""
+    with engine.begin() as conn:
+        _ensure_table(conn)
+        result = conn.execute(
+            text("DELETE FROM worker_settings WHERE key = :k"), {"k": key}
+        )
+        return result.rowcount > 0

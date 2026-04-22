@@ -51,6 +51,13 @@ class WorkerState:
         self.presets: dict[str, EncoderPreset] = {}
         self.available_encoders: list[str] = ["libx265", "nvenc", "vaapi", "videotoolbox"]
 
+        # live-editable runtime config (updated by config_store._reapply_config)
+        self.ffmpeg_bin: str = "ffmpeg"
+        self.output_dir: str = ""
+        self.extra_args: str = ""
+        self.poll_interval: int = 5
+        self.path_prefix: str = ""
+
         self._skip_ids: set[int] = set()
 
     def cancel_queued(self, record_id: int) -> None:

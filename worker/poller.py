@@ -23,17 +23,16 @@ from .state import Job, worker_state
 async def poller_loop(
     master_url: str,
     worker_config_id: str,
-    path_prefix: str,
-    batch_size: int,
-    poll_interval: int,
-    output_dir: str,
 ) -> None:
-    print(f"[poller] started (batch_size={batch_size}, poll_interval={poll_interval}s)")
+    print(f"[poller] started (batch_size={worker_state.batch_size}, poll_interval={worker_state.poll_interval}s)")
     while True:
-        await asyncio.sleep(poll_interval)
+        await asyncio.sleep(worker_state.poll_interval)
         if worker_state.sleeping or worker_state.queued > 0 or worker_state.active or worker_state.drain:
             continue
-        await _claim_and_enqueue(master_url, worker_config_id, path_prefix, worker_state.batch_size, output_dir)
+        await _claim_and_enqueue(
+            master_url, worker_config_id,
+            worker_state.path_prefix, worker_state.batch_size, worker_state.output_dir,
+        )
 
 
 async def _claim_and_enqueue(

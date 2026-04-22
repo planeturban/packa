@@ -28,12 +28,16 @@ def _ts_print(*args, **kwargs):
     _orig_print(datetime.now().strftime('%H:%M:%S'), *args, **kwargs)
 builtins.print = _ts_print
 
+import tomllib
 import uvicorn
 
-from shared.config import load_master
+from shared.config import Config, _env, _env_int
 from shared.log import UVICORN_LOG_CONFIG
 
-from .api import app, set_config
+from . import config_store
+from .api import app, set_config, set_config_layers
+from .database import SessionLocal
+from .settings import MasterSetting  # noqa: F401 — ensure table is registered
 
 
 async def _main(bind: str, api_port: int) -> None:
@@ -50,15 +54,52 @@ def main() -> None:
     parser.add_argument("--config", help="Path to TOML config file")
     args = parser.parse_args()
 
-    config = load_master(args.config)
-    set_config(config)
-
-    bind_raw = args.bind if args.bind is not None else config.bind
+    # Read bind/api_port from file+env+CLI directly (not via config store).
+    _file_data: dict = {}
+    if args.config:
+        try:
+            with open(args.config, "rb") as _f:
+                _file_data = tomllib.load(_f).get("master", {})
+        except (OSError, tomllib.TOMLDecodeError):
+            pass
+    bind_raw = (
+        args.bind if args.bind is not None
+        else _env("PACKA_MASTER_BIND", _file_data.get("bind", "localhost"))
+    )
     bind = "0.0.0.0" if bind_raw == "any" else bind_raw
-    api_port = args.api_port if args.api_port is not None else config.api_port
+    api_port = (
+        args.api_port if args.api_port is not None
+        else _env_int("PACKA_MASTER_API_PORT", _file_data.get("api_port", 9000))
+    )
+
+    # Load config store layers for all other settings.
+    cli_values: dict = {}
+    file_values = config_store.read_file_values(args.config)
+    env_values = config_store.read_env_values()
+
+    # master/api.py creates the DB and tables at import time; safe to open a session.
+    db = SessionLocal()
+    try:
+        if not config_store.is_initialized(db):
+            config_store.initialize_from_layers(db, file_values, env_values)
+            print(f"[master] initialised master_settings from file+env+defaults")
+        moved = config_store.migrate_legacy_keys(db)
+        if moved:
+            print(f"[master] migrated {moved} legacy setting(s) into config.* namespace")
+        db_values = config_store.read_db_values(db)
+    finally:
+        db.close()
+
+    effective, sources = config_store.compute_effective(file_values, env_values, db_values, cli_values)
+    config = Config(bind=bind_raw, api_port=api_port)
+    config_store.apply_to_config(effective, config)
+    set_config(config)
+    set_config_layers(args.config, cli_values)
 
     print(f"[master] bind: {bind}:{api_port}")
     print(f"[master] path_prefix: {config.path_prefix!r}")
+    print(f"[master] config sources: "
+          + ", ".join(f"{k}={v}" for k, v in sources.items() if v != "default"))
 
     asyncio.run(_main(bind=bind, api_port=api_port))
 

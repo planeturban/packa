@@ -2,13 +2,6 @@
 Petname assignment for workers that register without a human-readable ID.
 """
 
-import re
-
-_UUID_RE = re.compile(
-    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
-    re.IGNORECASE,
-)
-
 _WORDS = [
     "badger", "bat", "bear", "beaver", "bison", "boar", "buck", "bull",
     "capybara", "cheetah", "chipmunk", "cobra", "condor", "coyote", "crane",
@@ -25,19 +18,14 @@ _WORDS = [
 ]
 
 
-def is_uuid(s: str) -> bool:
-    return bool(_UUID_RE.match(s))
-
-
 def pick(used: set[str]) -> str:
-    for word in _WORDS:
-        if word not in used:
-            return word
-    # All exhausted — append a number suffix
+    import random
+    available = [w for w in _WORDS if w not in used]
+    if available:
+        return random.choice(available)
     i = 2
-    for word in _WORDS:
-        candidate = f"{word}{i}"
-        if candidate not in used:
-            return candidate
+    while True:
+        candidates = [f"{w}{i}" for w in _WORDS if f"{w}{i}" not in used]
+        if candidates:
+            return random.choice(candidates)
         i += 1
-    return f"worker{len(used) + 1}"

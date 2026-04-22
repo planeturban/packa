@@ -19,10 +19,13 @@
 | `POST` | `/scan/start` | Start a background directory scan |
 | `POST` | `/scan/stop` | Cancel a running scan |
 | `GET` | `/scan/status` | Scan progress and current path |
-| `GET` | `/scan/settings` | Get periodic scan settings |
-| `POST` | `/scan/settings` | Update periodic scan settings |
 | `GET` | `/stats` | Aggregated conversion statistics (overall + per-worker + per-day) |
 | `GET` | `/stats/worker/{id}` | Per-encoder statistics for a specific worker |
+| `GET` | `/master/stats` | Probe rate, scan rate, probe queue depth, average conversion time |
+| `GET` | `/master/config` | Layered master config: `fields`, effective `values`, per-key `sources`, and each layer (`file`, `env`, `db`, `cli`) |
+| `PATCH` | `/master/config/{key}` | Write a database override `{"value": ...}`; returns `{ok, requires_restart}` |
+| `DELETE` | `/master/config/{key}` | Clear the database override for `{key}`; value reverts via the priority chain |
+| `POST` | `/master/config/{key}/restore` | Copy a layer's value into the database `{"source": "file"\|"env"\|"default"}` |
 
 ---
 
@@ -44,3 +47,7 @@
 | `POST` | `/conversion/wake` | Leave sleep mode |
 | `GET` | `/settings` | Get current encoder, batch size, and replace_original flag |
 | `POST` | `/settings` | Update encoder, batch size, and/or replace_original flag |
+| `GET` | `/config` | Layered worker config: `fields`, effective `values`, per-key `sources`, and each layer (`file`, `env`, `db`, `cli`) |
+| `PATCH` | `/config/{key}` | Write a database override `{"value": ...}`; returns `{ok, requires_restart}` |
+| `DELETE` | `/config/{key}` | Clear the database override for `{key}`; value reverts via the priority chain |
+| `POST` | `/config/{key}/restore` | Copy a layer's value into the database `{"source": "file"\|"env"\|"default"}` |
