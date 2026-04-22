@@ -33,6 +33,7 @@ class WorkerState:
         self.proc: asyncio.subprocess.Process | None = None
         self.worker_id: int | None = None
         self.worker_config_id: str | None = None
+        self.petname: str = ""
         self.master_url: str | None = None
 
         self.paused: bool = False

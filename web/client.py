@@ -16,18 +16,22 @@ async def fetch_dashboard(master_url: str) -> dict:
     """
     async with httpx.AsyncClient(timeout=5.0) as client:
         try:
-            workers_r, scan_r, files_r, settings_r, stats_r = await asyncio.gather(
+            workers_r, scan_r, files_r, settings_r, stats_r, meta_r, cfg_r = await asyncio.gather(
                 client.get(f"{master_url}/workers"),
                 client.get(f"{master_url}/scan/status"),
                 client.get(f"{master_url}/files"),
                 client.get(f"{master_url}/scan/settings"),
                 client.get(f"{master_url}/stats"),
+                client.get(f"{master_url}/master/stats"),
+                client.get(f"{master_url}/master/config"),
             )
             workers_list: list = workers_r.json()
             scan: dict = scan_r.json()
             files: list = files_r.json()
             scan_settings: dict = settings_r.json()
             master_stats: dict = stats_r.json()
+            master_meta: dict = meta_r.json()
+            master_config: dict = cfg_r.json()
             master_error = None
         except Exception as exc:
             return {
@@ -40,6 +44,8 @@ async def fetch_dashboard(master_url: str) -> dict:
                 "stats": {"total": 0, "converted": 0, "pending": 0, "processing": 0,
                           "error": 0, "duplicate": 0, "saved_bytes": 0},
                 "master_stats": {},
+                "master_meta": {},
+                "master_config": {},
             }
 
         file_counts = {s: 0 for s in _STATUSES}
@@ -79,6 +85,7 @@ async def fetch_dashboard(master_url: str) -> dict:
                 pass
 
         config_id = info["config_id"]
+        petname = info.get("petname", "") or (st or {}).get("petname", "")
         converted = sum(
             1 for f in files
             if f.get("worker_id") == config_id and f.get("status") == "complete"
@@ -91,7 +98,8 @@ async def fetch_dashboard(master_url: str) -> dict:
         workers.append({
             "id": info["id"],
             "config_id": config_id,
-            "hostname": config_id,
+            "petname": petname,
+            "hostname": petname or config_id,
             "url": f"http://{info['host']}:{info['api_port']}",
             "host": info["host"],
             "api_port": info["api_port"],
@@ -124,4 +132,6 @@ async def fetch_dashboard(master_url: str) -> dict:
         "workers": workers,
         "stats": stats,
         "master_stats": master_stats,
+        "master_meta": master_meta,
+        "master_config": master_config,
     }
