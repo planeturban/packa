@@ -75,6 +75,10 @@ Click **Settings** to expand a panel with:
 - The **Replace original** toggle and **Save settings** button.
 - A **Worker Configuration** section — same layered editor as the Master tab. Fields: path prefix, output directory, ffmpeg binary, extra ffmpeg args, poll interval. All changes take effect on the next job or poll cycle without a restart. Network identity settings (`bind`, `api_port`, `master_host`, `master_port`) are set via config file, environment variables, or CLI flags only.
 
+### TLS onboarding
+
+When master has TLS active, worker cards for workers that have not yet been onboarded show an **Onboard TLS** button. All other controls on that card are disabled until the worker is onboarded. Clicking **Onboard TLS** generates a new bootstrap token, sends it to the worker, and triggers a worker restart. Once the worker restarts with its new cert, normal controls become available.
+
 ### Drain mode
 
 Drain finishes the current job then stops polling. The worker goes to sleep after the job completes. Click Resume (replaces the Drain button while active) to cancel drain and continue polling.
@@ -104,6 +108,10 @@ Every master setting is rendered as its own row with an input and action buttons
 
 Fields flagged **restart required on change** (`bind`, `api_port`) are persisted immediately but only take effect after the master restarts. A toast confirms each save and surfaces the restart flag.
 
+### TLS card
+
+The Master tab includes a TLS card showing the CA fingerprint, whether TLS is active, and the current bootstrap token with its expiry time. A **New token** button generates a fresh token (invalidating the old one). Use this to onboard new workers or re-onboard workers after cert expiry.
+
 If a value is currently overridden by a CLI flag (`--bind`, `--api-port`) the row shows a note explaining that database edits take effect only after a restart without the flag.
 
 ---
@@ -116,6 +124,12 @@ Live refresh is paused automatically when:
 - Any files are selected in the modal
 
 This prevents in-progress edits from being wiped by a poll.
+
+---
+
+## Login page
+
+When authentication is enabled, an email/password form is shown. If the web process has not yet bootstrapped its TLS certificate, a **Bootstrap token** input appears above the login form. Paste the token printed by master on startup, click **Bootstrap TLS**, and the web process will fetch its client cert from master and restart with TLS enabled. After restart the bootstrap input disappears.
 
 ---
 

@@ -168,7 +168,7 @@ async def _update_master_status(record_id: int, status: str) -> None:
         return
     url = f"{worker_state.master_url}/files/{record_id}/status"
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(timeout=5, **worker_state.tls.httpx_kwargs()) as client:
             await client.patch(url, json={"status": status})
     except Exception as exc:
         print(f"[worker] failed to update master status for record {record_id}: {exc}")
@@ -207,7 +207,7 @@ async def _report_result_to_master(
     if avg_speed is not None:
         body["avg_speed"] = round(avg_speed, 2)
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, **worker_state.tls.httpx_kwargs()) as client:
             response = await client.patch(url, json=body)
             response.raise_for_status()
         print(f"[worker] master updated record {record_id} → {status.value}")

@@ -21,8 +21,10 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from shared.config import WebConfig
+from shared.tls import scheme
 
 from .client import fetch_dashboard
+from .store import set_setting
 
 _config: WebConfig = WebConfig()
 _VERSION = os.environ.get("PACKA_VERSION", "dev")
@@ -77,21 +79,43 @@ _templates.env.filters["filesize"] = _fmt_bytes
 # ---------------------------------------------------------------------------
 
 def _auth_enabled() -> bool:
+    # TLS active forces auth even if credentials aren't set in config
+    if _config.tls.enabled:
+        return True
     return bool(_config.username and _config.password)
 
 
 def _logged_in(request: Request) -> bool:
     if not _auth_enabled():
         return True
-    return bool(request.session.get("user"))
+    if request.session.get("user"):
+        return True
+    # Basic auth (for Authentik proxy and similar)
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Basic ") and _config.username and _config.password:
+        import base64
+        try:
+            decoded = base64.b64decode(auth[6:]).decode("utf-8")
+            username, _, password = decoded.partition(":")
+            if (username == _config.username
+                    and secrets.compare_digest(password, _config.password)):
+                return True
+        except Exception:
+            pass
+    return False
 
 
 def _master_url() -> str:
-    return f"http://{_config.master_host}:{_config.master_port}"
+    return f"{scheme(_config.tls)}://{_config.master_host}:{_config.master_port}"
 
 
-def _worker_url(host: str, api_port: int) -> str:
-    return f"http://{host}:{api_port}"
+def _worker_url(host: str, api_port: int, worker_scheme: str | None = None) -> str:
+    return f"{worker_scheme or scheme(_config.tls)}://{host}:{api_port}"
+
+
+def _httpx_kw() -> dict:
+    """TLS kwargs for httpx.AsyncClient when connecting to master/workers."""
+    return _config.tls.httpx_kwargs()
 
 
 def _redirect_login():
@@ -106,7 +130,10 @@ def _redirect_login():
 def login_page(request: Request):
     if not _auth_enabled() or _logged_in(request):
         return RedirectResponse("/", status_code=303)
-    return _templates.TemplateResponse(request, "login.html")
+    return _templates.TemplateResponse(
+        request, "login.html",
+        {"needs_bootstrap": not _config.tls.enabled},
+    )
 
 
 @app.post("/login")
@@ -131,6 +158,68 @@ def logout(request: Request):
     return _redirect_login()
 
 
+@app.get("/setup/bootstrap")
+def setup_bootstrap_page(request: Request):
+    if _config.tls.enabled:
+        return RedirectResponse("/", status_code=303)
+    return _templates.TemplateResponse(request, "login.html", {"needs_bootstrap": True})
+
+
+@app.post("/setup/bootstrap")
+async def setup_bootstrap(request: Request, token: str = Form()):
+    if _config.tls.enabled:
+        return RedirectResponse("/login", status_code=303)
+    r = None
+    master_host = _config.master_host
+    master_port = _config.master_port
+    for s, verify in (("https", False), ("http", True)):
+        try:
+            r = httpx.post(
+                f"{s}://{master_host}:{master_port}/bootstrap",
+                json={"token": token, "cn": "web"},
+                verify=verify,
+                timeout=10,
+            )
+            r.raise_for_status()
+            break
+        except Exception:
+            r = None
+    if r is None:
+        return _templates.TemplateResponse(
+            request, "login.html",
+            {"needs_bootstrap": True,
+             "bootstrap_error": "Could not reach master — check the token and master address."},
+        )
+    try:
+        bundle = r.json()
+        set_setting("tls.cert", bundle["cert_pem"])
+        set_setting("tls.key",  bundle["key_pem"])
+        set_setting("tls.ca",   bundle["ca_pem"])
+        _config.tls.cert_pem = bundle["cert_pem"]
+        _config.tls.key_pem  = bundle["key_pem"]
+        _config.tls.ca_pem   = bundle["ca_pem"]
+    except Exception as exc:
+        return _templates.TemplateResponse(
+            request, "login.html",
+            {"needs_bootstrap": True, "bootstrap_error": f"Bootstrap failed: {exc}"},
+        )
+    _schedule_restart()
+    return _templates.TemplateResponse(request, "login.html", {"bootstrap_restarting": True})
+
+
+def _schedule_restart() -> None:
+    import os as _os, sys as _sys, threading as _threading
+    main_spec = getattr(_sys.modules.get('__main__'), '__spec__', None)
+    if main_spec and main_spec.name:
+        cmd = [_sys.executable, '-m', main_spec.name] + _sys.argv[1:]
+    else:
+        cmd = [_sys.executable] + _sys.argv
+    def _do():
+        __import__('time').sleep(0.2)
+        _os.execv(_sys.executable, cmd)
+    _threading.Thread(target=_do, daemon=True).start()
+
+
 # ---------------------------------------------------------------------------
 # Action routes — proxy commands to master / workers
 # ---------------------------------------------------------------------------
@@ -138,7 +227,7 @@ def logout(request: Request):
 async def _worker_action(request: Request, host: str, api_port: int, endpoint: str) -> RedirectResponse:
     if not _logged_in(request):
         return _redirect_login()
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             await client.post(f"{_worker_url(host, api_port)}/{endpoint}")
         except Exception:
@@ -150,7 +239,7 @@ async def _worker_action(request: Request, host: str, api_port: int, endpoint: s
 async def action_scan_start(request: Request):
     if not _logged_in(request):
         return _redirect_login()
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             await client.post(f"{_master_url()}/scan/start")
         except Exception:
@@ -162,7 +251,7 @@ async def action_scan_start(request: Request):
 async def action_scan_stop(request: Request):
     if not _logged_in(request):
         return _redirect_login()
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             await client.post(f"{_master_url()}/scan/stop")
         except Exception:
@@ -208,7 +297,7 @@ async def action_worker_wake(request: Request, host: str = Form(), api_port: int
 async def data_dashboard(request: Request):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    data = await fetch_dashboard(_master_url())
+    data = await fetch_dashboard(_master_url(), _httpx_kw())
     return JSONResponse(data)
 
 
@@ -219,7 +308,7 @@ async def data_files(request: Request, status: str | None = Query(default=None))
     url = f"{_master_url()}/files"
     if status:
         url += f"?status={status}"
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
         try:
             r = await client.get(url)
             r.raise_for_status()
@@ -234,7 +323,7 @@ async def data_files_delete(request: Request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
     ids: list[int] = body.get("ids", [])
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
         try:
             workers_r = await client.get(f"{_master_url()}/workers")
             workers_map = {s["config_id"]: s for s in workers_r.json()}
@@ -276,7 +365,7 @@ async def data_files_pending(request: Request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
     ids: list[int] = body.get("ids", [])
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
         try:
             workers_r = await client.get(f"{_master_url()}/workers")
             workers_map = {s["config_id"]: s for s in workers_r.json()}
@@ -318,7 +407,7 @@ async def data_worker_delete(request: Request, host: str = Query(), port: int = 
     body = await request.json()
     ids: list[int] = body.get("ids", [])
     base = _worker_url(host, port)
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
         await asyncio.gather(
             *[client.delete(f"{base}/files/{i}") for i in ids],
             *[client.delete(f"{_master_url()}/files/{i}") for i in ids],
@@ -333,7 +422,7 @@ async def data_files_cancel(request: Request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
     ids: list[int] = body.get("ids", [])
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
         try:
             workers_r = await client.get(f"{_master_url()}/workers")
             workers_map = {s["config_id"]: s for s in workers_r.json()}
@@ -375,7 +464,7 @@ async def data_worker_pending(request: Request, host: str = Query(), port: int =
     body = await request.json()
     ids: list[int] = body.get("ids", [])
     base = _worker_url(host, port)
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
         await asyncio.gather(
             *[client.patch(f"{base}/files/{i}/status", json={"status": "pending"}) for i in ids],
             *[client.patch(f"{_master_url()}/files/{i}/status", json={"status": "pending"}) for i in ids],
@@ -391,7 +480,7 @@ async def data_worker_cancel(request: Request, host: str = Query(), port: int = 
     body = await request.json()
     ids: list[int] = body.get("ids", [])
     base = _worker_url(host, port)
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
         await asyncio.gather(
             *[client.patch(f"{base}/files/{i}/status", json={"status": "cancelled"}) for i in ids],
             *[client.patch(f"{_master_url()}/files/{i}/status", json={"status": "cancelled"}) for i in ids],
@@ -407,7 +496,7 @@ async def data_files_assign(request: Request):
     body = await request.json()
     ids: list[int] = body.get("ids", [])
     worker_config_id: str = body.get("worker_config_id", "")
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
         try:
             workers_r = await client.get(f"{_master_url()}/workers")
             worker_info = next((s for s in workers_r.json() if s["config_id"] == worker_config_id), None)
@@ -437,7 +526,7 @@ async def data_files_assign(request: Request):
 async def data_duplicate_pairs(request: Request):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
         try:
             r = await client.get(f"{_master_url()}/files/duplicate-pairs")
             r.raise_for_status()
@@ -450,7 +539,7 @@ async def data_duplicate_pairs(request: Request):
 async def data_scan_start(request: Request):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.post(f"{_master_url()}/scan/start")
             r.raise_for_status()
@@ -463,7 +552,7 @@ async def data_scan_start(request: Request):
 async def data_scan_stop(request: Request):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.post(f"{_master_url()}/scan/stop")
             r.raise_for_status()
@@ -477,7 +566,7 @@ async def data_transfer(request: Request):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
         try:
             r = await client.post(f"{_master_url()}/transfer", json={"file_path": body["file_path"]})
             r.raise_for_status()
@@ -491,7 +580,7 @@ async def data_workers_register(request: Request):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.post(f"{_master_url()}/workers", json=body)
             r.raise_for_status()
@@ -504,7 +593,7 @@ async def data_workers_register(request: Request):
 async def data_workers_deregister(request: Request, worker_id: str):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.delete(f"{_master_url()}/workers/{worker_id}")
             r.raise_for_status()
@@ -523,7 +612,7 @@ async def data_worker_action(request: Request):
     action = body.get("action")
     if action not in ("pause", "resume", "stop", "drain", "sleep", "wake"):
         return JSONResponse({"error": "invalid action"}, status_code=400)
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.post(f"{_worker_url(host, port)}/conversion/{action}")
             r.raise_for_status()
@@ -532,17 +621,53 @@ async def data_worker_action(request: Request):
     return JSONResponse({"ok": True})
 
 
+@app.post("/restart")
+def web_restart(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    _schedule_restart()
+    return JSONResponse({"ok": True})
+
+
 @app.post("/data/master/restart")
 async def data_master_restart(request: Request):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.post(f"{_master_url()}/restart")
             r.raise_for_status()
             return JSONResponse(r.json())
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+@app.post("/data/worker/tls/onboard")
+async def data_worker_tls_onboard(request: Request):
+    """Generate a bootstrap token and send it to a worker that has no TLS yet, then restart it."""
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    host = body.get("host")
+    port = body.get("port")
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
+        # Ensure a valid token exists
+        token_r = await client.get(f"{_master_url()}/tls/token")
+        token_info = token_r.json() if token_r.is_success else {}
+        if not token_info.get("token"):
+            gen_r = await client.post(f"{_master_url()}/tls/token")
+            gen_r.raise_for_status()
+            token_info = gen_r.json()
+        token = token_info["token"]
+    # Worker has no TLS yet — talk to it over HTTP directly
+    worker_base = f"http://{host}:{port}"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(f"{worker_base}/tls/bootstrap", json={"token": token})
+            r.raise_for_status()
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    return JSONResponse({"ok": True})
 
 
 @app.post("/data/worker/restart")
@@ -552,7 +677,7 @@ async def data_worker_restart(request: Request):
     body = await request.json()
     host = body.get("host")
     port = body.get("port")
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.post(f"{_worker_url(host, port)}/restart")
             r.raise_for_status()
@@ -566,7 +691,7 @@ async def data_master_config_set(request: Request, key: str):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.patch(f"{_master_url()}/master/config/{key}", json=body)
             r.raise_for_status()
@@ -581,7 +706,7 @@ async def data_master_config_set(request: Request, key: str):
 async def data_master_config_clear(request: Request, key: str):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.delete(f"{_master_url()}/master/config/{key}")
             r.raise_for_status()
@@ -597,7 +722,7 @@ async def data_master_config_restore(request: Request, key: str):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.post(f"{_master_url()}/master/config/{key}/restore", json=body)
             r.raise_for_status()
@@ -613,7 +738,7 @@ async def data_worker_config_set(request: Request, key: str, host: str = Query()
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.patch(f"{_worker_url(host, port)}/config/{key}", json=body)
             r.raise_for_status()
@@ -628,7 +753,7 @@ async def data_worker_config_set(request: Request, key: str, host: str = Query()
 async def data_worker_config_clear(request: Request, key: str, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.delete(f"{_worker_url(host, port)}/config/{key}")
             r.raise_for_status()
@@ -644,7 +769,7 @@ async def data_worker_config_restore(request: Request, key: str, host: str = Que
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.post(f"{_worker_url(host, port)}/config/{key}/restore", json=body)
             r.raise_for_status()
@@ -655,11 +780,50 @@ async def data_worker_config_restore(request: Request, key: str, host: str = Que
             return JSONResponse({"error": str(exc)}, status_code=502)
 
 
+@app.get("/data/tls/token")
+async def data_tls_token(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
+        try:
+            r = await client.get(f"{_master_url()}/tls/token")
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+@app.post("/data/tls/token")
+async def data_tls_token_create(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
+        try:
+            r = await client.post(f"{_master_url()}/tls/token")
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+@app.get("/data/tls/status")
+async def data_tls_status(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
+        try:
+            r = await client.get(f"{_master_url()}/tls/status")
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
 @app.get("/data/stats")
 async def data_stats(request: Request):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
         try:
             r = await client.get(f"{_master_url()}/stats")
             r.raise_for_status()
@@ -672,7 +836,7 @@ async def data_stats(request: Request):
 async def data_stats_worker(request: Request, worker_id: str = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
         try:
             r = await client.get(f"{_master_url()}/stats/worker/{worker_id}")
             r.raise_for_status()
@@ -692,7 +856,7 @@ async def data_worker_encoder(request: Request):
     payload: dict = {"encoder": encoder}
     if body.get("replace_original") is not None:
         payload["replace_original"] = bool(body["replace_original"])
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.post(f"{_worker_url(host, port)}/settings", json=payload)
             r.raise_for_status()
@@ -706,7 +870,7 @@ async def data_worker(request: Request, host: str = Query(), port: int = Query()
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     base = _worker_url(host, port)
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         results = await asyncio.gather(
             client.get(f"{base}/status"),
             client.get(f"{base}/files"),
@@ -725,7 +889,7 @@ async def data_worker(request: Request, host: str = Query(), port: int = Query()
 async def dashboard(request: Request):
     if not _logged_in(request):
         return _redirect_login()
-    data = await fetch_dashboard(_master_url())
+    data = await fetch_dashboard(_master_url(), _httpx_kw())
     return _templates.TemplateResponse(
         request, "dashboard.html",
         {"data": data, "auth_enabled": _auth_enabled(), "version": _VERSION, "commit": _COMMIT},

@@ -2,10 +2,23 @@
 # Copy to packa.toml and adjust values, then start with:
 #   python -m master.master --config packa.toml
 #   python -m worker.main   --config packa.toml
-#   python -m web.main     --config packa.toml
+#   python -m web.main      --config packa.toml
 #
 # Configuration priority: config file < environment variables < CLI flags.
 # Every setting below has a corresponding environment variable (see each section).
+#
+# ── mTLS quickstart ──────────────────────────────────────────────────────────
+# TLS is enabled by default. On first start, master generates a self-signed CA
+# and prints a bootstrap token (valid 10 min). Workers and web exchange that
+# token for a client certificate on their first start. Certs are stored in each
+# node's local database and renewed automatically.
+#
+# 1. Start master → note the bootstrap token in the log.
+# 2. Set bootstrap_token below in [worker] and [web].
+# 3. Start worker and web — they obtain certs and use HTTPS from that point on.
+#
+# To disable TLS entirely (plain HTTP): uncomment [master.tls] disabled = true
+# and remove the bootstrap_token lines from worker and web.
 
 # ---------------------------------------------------------------------------
 # Master
@@ -15,6 +28,19 @@
 [master]
 bind     = "localhost"   # use "any" for 0.0.0.0
 api_port = 9000
+
+# TLS — master generates its own CA and cert on first start.
+# Uncomment to disable TLS and use plain HTTP instead.
+# Env: (no env var — use this flag or bring-your-own certs below)
+# [master.tls]
+# disabled = true
+
+# Bring-your-own certificates (overrides auto-generated certs).
+# Env: PACKA_MASTER_TLS_CERT, PACKA_MASTER_TLS_KEY, PACKA_TLS_CA
+# [master.tls]
+# cert = "/etc/packa/master.crt"
+# key  = "/etc/packa/master.key"
+# ca   = "/etc/packa/ca.crt"
 
 [master.paths]
 # Root path for the master node.
@@ -77,6 +103,20 @@ master_port    = 9000
 # database (worker.db). If none exists, a UUID is generated and stored there
 # so the same ID is reused on subsequent restarts.
 id = "storage-01"
+
+# Bootstrap token — copy from the master startup log on first run.
+# The worker exchanges this token for a TLS client certificate.
+# Once the cert is stored in worker.db, this field is no longer needed
+# (remove it or leave it; it won't re-bootstrap if a cert is already stored).
+# Env: PACKA_WORKER_BOOTSTRAP_TOKEN
+# bootstrap_token = ""
+
+# Bring-your-own certificates (overrides auto-bootstrapped certs).
+# Env: PACKA_WORKER_TLS_CERT, PACKA_WORKER_TLS_KEY, PACKA_TLS_CA
+# [worker.tls]
+# cert = "/etc/packa/worker.crt"
+# key  = "/etc/packa/worker.key"
+# ca   = "/etc/packa/ca.crt"
 
 [worker.paths]
 # Prefix prepended to relative paths received from master.
@@ -158,12 +198,24 @@ bind = "localhost"   # use "any" for 0.0.0.0
 port = 8080
 
 # Credentials for the login page.
+# When TLS is active, login is always required even if these are not set.
+# Env: PACKA_WEB_USERNAME, PACKA_WEB_PASSWORD
 username = "admin"
 password = "change-me"
-
-# Secret key used to sign session cookies. Must be a long random string.
-secret_key = "change-me-use-a-long-random-string"
 
 # Which master to connect to.
 master_host = "localhost"
 master_port = 9000
+
+# Bootstrap token — copy from the master startup log on first run.
+# The web server exchanges this token for a TLS client certificate.
+# Once the cert is stored in web.db, this field is no longer needed.
+# Env: PACKA_WEB_BOOTSTRAP_TOKEN
+# bootstrap_token = ""
+
+# Bring-your-own certificates (overrides auto-bootstrapped certs).
+# Env: PACKA_WEB_TLS_CERT, PACKA_WEB_TLS_KEY, PACKA_TLS_CA
+# [web.tls]
+# cert = "/etc/packa/web.crt"
+# key  = "/etc/packa/web.key"
+# ca   = "/etc/packa/ca.crt"

@@ -26,6 +26,10 @@
 | `PATCH` | `/master/config/{key}` | Write a database override `{"value": ...}`; returns `{ok, requires_restart}` |
 | `DELETE` | `/master/config/{key}` | Clear the database override for `{key}`; value reverts via the priority chain |
 | `POST` | `/master/config/{key}/restore` | Copy a layer's value into the database `{"source": "file"\|"env"\|"default"}` |
+| `POST` | `/bootstrap` | Exchange a bootstrap token for a signed client cert bundle `{cert_pem, key_pem, ca_pem}` |
+| `GET` | `/tls/status` | CA fingerprint and `enabled` flag |
+| `GET` | `/tls/token` | Current token info `{token, expires_at}` |
+| `POST` | `/tls/token` | Generate a new bootstrap token |
 
 ---
 
@@ -51,3 +55,21 @@
 | `PATCH` | `/config/{key}` | Write a database override `{"value": ...}`; returns `{ok, requires_restart}` |
 | `DELETE` | `/config/{key}` | Clear the database override for `{key}`; value reverts via the priority chain |
 | `POST` | `/config/{key}/restore` | Copy a layer's value into the database `{"source": "file"\|"env"\|"default"}` |
+| `POST` | `/tls/bootstrap` | Fetch cert bundle from master using a bootstrap token and self-restart |
+| `POST` | `/restart` | Restart worker process in-place (`os.execv`) |
+
+---
+
+## Web BFF (default port 8080)
+
+The web process proxies most calls to master and workers. TLS-related BFF endpoints:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/data/tls/status` | Proxy to `GET /tls/status` on master |
+| `GET` | `/data/tls/token` | Proxy to `GET /tls/token` on master |
+| `POST` | `/data/tls/token` | Proxy to `POST /tls/token` on master |
+| `POST` | `/data/worker/tls/onboard` | Generate token, send to worker, trigger worker restart |
+| `POST` | `/restart` | Restart web process in-place (`os.execv`) |
+| `GET` | `/setup/bootstrap` | Standalone bootstrap token form (shown when web has no TLS certs) |
+| `POST` | `/setup/bootstrap` | Submit token, bootstrap TLS, restart |

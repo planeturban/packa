@@ -27,7 +27,7 @@ async def poller_loop(
     print(f"[poller] started (batch_size={worker_state.batch_size}, poll_interval={worker_state.poll_interval}s)")
     while True:
         await asyncio.sleep(worker_state.poll_interval)
-        if worker_state.sleeping or worker_state.queued > 0 or worker_state.active or worker_state.drain:
+        if worker_state.unconfigured or worker_state.sleeping or worker_state.queued > 0 or worker_state.active or worker_state.drain:
             continue
         await _claim_and_enqueue(
             master_url, worker_config_id,
@@ -44,7 +44,7 @@ async def _claim_and_enqueue(
 ) -> None:
     url = f"{master_url}/jobs/claim"
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, **worker_state.tls.httpx_kwargs()) as client:
             response = await client.post(url, json={"worker_id": worker_config_id, "count": batch_size})
             response.raise_for_status()
             jobs = response.json()

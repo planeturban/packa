@@ -33,6 +33,7 @@ from shared.config import Config
 from shared.db import migrate
 from shared.models import Base, FileStatus
 from shared.schemas import FileRecordCreate, FileRecordOut, StatusUpdate
+from shared.tls import scheme
 
 from . import config_store
 from .database import engine, get_db
@@ -68,20 +69,47 @@ def set_registration_params(advertise_host: str, worker_config_id: str) -> None:
     _worker_config_id = worker_config_id
 
 
+async def _try_register(payload: dict, master_base: str, tls_kw: dict) -> dict | None:
+    """Attempt one registration POST. Returns parsed JSON on success, None on failure."""
+    async with httpx.AsyncClient(timeout=10, **tls_kw) as client:
+        r = await client.post(f"{master_base}/workers", json=payload)
+        r.raise_for_status()
+        return r.json()
+
+
 async def _register_and_poll() -> None:
     """Retry registration until master is reachable, then keep registration fresh and run the poller."""
     global _worker_config_id
-    master_base = f"http://{_config.master_host}:{_config.master_port}"
-    url = f"{master_base}/workers"
-    payload = {"config_id": _worker_config_id, "host": _advertise_host, "api_port": _config.api_port}
+    payload = {"config_id": _worker_config_id, "host": _advertise_host, "api_port": _config.api_port,
+               "scheme": scheme(_config.tls)}
+
+    # Build candidate (master_base, tls_kw) pairs to try.
+    # When we have a cert, use it over HTTPS. Otherwise probe both schemes so
+    # the worker can reach a master that upgraded to TLS without a local cert yet.
+    if _config.tls.enabled:
+        candidates = [(f"https://{_config.master_host}:{_config.master_port}", _config.tls.httpx_kwargs())]
+    else:
+        candidates = [
+            (f"https://{_config.master_host}:{_config.master_port}", {"verify": False}),
+            (f"http://{_config.master_host}:{_config.master_port}",  {}),
+        ]
+
+    master_base: str = candidates[0][0]
+    tls_kw: dict     = candidates[0][1]
 
     attempt = 0
     while True:
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                r = await client.post(url, json=payload)
-                r.raise_for_status()
-                record = r.json()
+        last_exc: Exception | None = None
+        for base, kw in candidates:
+            try:
+                record = await _try_register(payload, base, kw)
+                master_base = base
+                tls_kw      = kw
+                last_exc    = None
+                break
+            except Exception as exc:
+                last_exc = exc
+        if last_exc is None:
             assigned_id = record["config_id"]
             worker_state.worker_id = record["id"]
             worker_state.worker_config_id = assigned_id
@@ -93,18 +121,17 @@ async def _register_and_poll() -> None:
                 print(f"[worker] assigned id {assigned_id!r} by master")
             print(f"[worker] registered as worker-{record['id']} ({assigned_id!r})")
             break
-        except Exception as exc:
-            attempt += 1
-            wait = min(5 * attempt, 30)
-            print(f"[worker] registration failed (attempt {attempt}): {exc} — retrying in {wait}s")
-            await asyncio.sleep(wait)
+        attempt += 1
+        wait = min(5 * attempt, 30)
+        print(f"[worker] registration failed (attempt {attempt}): {last_exc} — retrying in {wait}s")
+        await asyncio.sleep(wait)
 
     async def _reregister_loop() -> None:
         while True:
             await asyncio.sleep(60)
             try:
-                async with httpx.AsyncClient(timeout=10) as client:
-                    r = await client.post(url, json=payload)
+                async with httpx.AsyncClient(timeout=10, **tls_kw) as client:
+                    r = await client.post(f"{master_base}/workers", json=payload)
                     r.raise_for_status()
                     record = r.json()
                 worker_state.worker_id = record["id"]
@@ -141,6 +168,7 @@ def _reapply_config() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tasks: list[asyncio.Task] = []
+    worker_state.tls = _config.tls
     worker_state.presets = _config.ffmpeg.presets
     worker_state.available_encoders = _config.ffmpeg.available_encoders
     worker_state.replace_original = get_setting("replace_original") == "true"
@@ -219,6 +247,7 @@ class WorkerStatus(BaseModel):
     current_cmd: str | None
     batch_size: int
     replace_original: bool
+    tls_enabled: bool = False
     petname: str = ""
 
 
@@ -250,6 +279,7 @@ def get_status():
         current_cmd=worker_state.current_cmd or None,
         batch_size=worker_state.batch_size,
         replace_original=worker_state.replace_original,
+        tls_enabled=_config.tls.enabled,
         petname=worker_state.petname,
         progress=ProgressOut(
             percent=p.percent,
@@ -429,14 +459,58 @@ class ConfigRestore(BaseModel):
     source: str  # "file" | "env" | "default"
 
 
+class TlsBootstrapRequest(BaseModel):
+    token: str
+
+
+@app.post("/tls/bootstrap")
+async def tls_bootstrap(body: TlsBootstrapRequest):
+    """Fetch a TLS cert bundle from master using a bootstrap token. Restart required after."""
+    r = None
+    for s, verify in (("https", False), ("http", True)):
+        try:
+            async with httpx.AsyncClient(timeout=10, verify=verify) as client:
+                resp = await client.post(
+                    f"{s}://{_config.master_host}:{_config.master_port}/bootstrap",
+                    json={"token": body.token, "cn": _worker_config_id or "worker"},
+                )
+                resp.raise_for_status()
+                r = resp
+                break
+        except Exception:
+            r = None
+    if r is None:
+        raise HTTPException(status_code=502, detail="Could not reach master for TLS bootstrap")
+    bundle = r.json()
+    set_setting("tls.cert", bundle["cert_pem"])
+    set_setting("tls.key",  bundle["key_pem"])
+    set_setting("tls.ca",   bundle["ca_pem"])
+    _config.tls.cert_pem = bundle["cert_pem"]
+    _config.tls.key_pem  = bundle["key_pem"]
+    _config.tls.ca_pem   = bundle["ca_pem"]
+    worker_state.tls = _config.tls
+    print("[worker] TLS onboarded — restarting")
+    _schedule_restart()
+    return {"ok": True}
+
+
 @app.post("/restart")
 def restart_worker():
-    import os, signal, threading
-    threading.Thread(target=lambda: (
-        __import__('time').sleep(0.2),
-        os.kill(os.getpid(), signal.SIGTERM)
-    ), daemon=True).start()
+    _schedule_restart()
     return {"ok": True}
+
+
+def _schedule_restart() -> None:
+    import os as _os, sys as _sys, threading as _threading
+    main_spec = getattr(_sys.modules.get('__main__'), '__spec__', None)
+    if main_spec and main_spec.name:
+        cmd = [_sys.executable, '-m', main_spec.name] + _sys.argv[1:]
+    else:
+        cmd = [_sys.executable] + _sys.argv
+    def _do():
+        __import__('time').sleep(0.2)
+        _os.execv(_sys.executable, cmd)
+    _threading.Thread(target=_do, daemon=True).start()
 
 
 @app.get("/config")

@@ -33,16 +33,19 @@ import uvicorn
 
 from shared.config import Config, _env, _env_int
 from shared.log import UVICORN_LOG_CONFIG
+from shared.tls import TlsConfig
 
 from . import config_store
 from .api import app, set_config, set_config_layers
 from .database import SessionLocal
 from .settings import MasterSetting  # noqa: F401 — ensure table is registered
+from .tls_manager import ensure_ca, ensure_server_cert, generate_token, get_token_info
 
 
-async def _main(bind: str, api_port: int) -> None:
+async def _main(bind: str, api_port: int, tls: TlsConfig) -> None:
+    tls_kwargs = tls.uvicorn_tls_kwargs()
     uvi_config = uvicorn.Config(app, host=bind, port=api_port, log_level="info",
-                                log_config=UVICORN_LOG_CONFIG)
+                                log_config=UVICORN_LOG_CONFIG, **tls_kwargs)
     await uvicorn.Server(uvi_config).serve()
 
 
@@ -93,15 +96,38 @@ def main() -> None:
     effective, sources = config_store.compute_effective(file_values, env_values, db_values, cli_values)
     config = Config(bind=bind_raw, api_port=api_port)
     config_store.apply_to_config(effective, config)
+
+    # --- PKI setup ---
+    db2 = SessionLocal()
+    try:
+        if not config.tls.disabled:
+            ca_cert, ca_key = ensure_ca(db2)
+            # SANs: advertise bind address or localhost
+            sans = [bind] if bind != "0.0.0.0" else ["localhost"]
+            server_cert, server_key = ensure_server_cert(db2, ca_cert, ca_key, sans=sans)
+            if config.tls.cert_pem:
+                pass  # manual override already set by load_master
+            else:
+                config.tls.cert_pem = server_cert
+                config.tls.key_pem  = server_key
+                config.tls.ca_pem   = ca_cert
+            # Generate bootstrap token if none exists
+            if not get_token_info(db2):
+                token = generate_token(db2)
+                print(f"[tls] bootstrap token: {token}  (valid {10} min)")
+    finally:
+        db2.close()
+
     set_config(config)
     set_config_layers(args.config, cli_values)
 
     print(f"[master] bind: {bind}:{api_port}")
     print(f"[master] path_prefix: {config.path_prefix!r}")
+    print(f"[master] tls: {'disabled' if config.tls.disabled else 'enabled'}")
     print(f"[master] config sources: "
           + ", ".join(f"{k}={v}" for k, v in sources.items() if v != "default"))
 
-    asyncio.run(_main(bind=bind, api_port=api_port))
+    asyncio.run(_main(bind=bind, api_port=api_port, tls=config.tls))
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 
+from .tls import TlsConfig
+
 
 # ---------------------------------------------------------------------------
 # Environment variable helpers
@@ -84,9 +86,11 @@ class Config:
     advertise_host: str = ""
     worker_id: str = ""
     path_prefix: str = ""
+    bootstrap_token: str = ""
     ffmpeg: FfmpegConfig = field(default_factory=FfmpegConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     scan: ScanConfig = field(default_factory=ScanConfig)
+    tls: TlsConfig = field(default_factory=TlsConfig)
 
     def __post_init__(self) -> None:
         if self.path_prefix and not self.path_prefix.endswith("/"):
@@ -102,6 +106,8 @@ class WebConfig:
     master_port: int = 9000
     bind: str = "localhost"
     port: int = 8080
+    bootstrap_token: str = ""
+    tls: TlsConfig = field(default_factory=TlsConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -125,10 +131,17 @@ def load_master(config_path: str | None) -> Config:
         else scan_data.get("extensions", [".mkv", ".mp4", ".avi", ".mov"])
     )
 
+    tls_data = master.get("tls", {})
     return Config(
         bind=_env("PACKA_MASTER_BIND", master.get("bind", "localhost")),
         api_port=_env_int("PACKA_MASTER_API_PORT", master.get("api_port", 9000)),
         path_prefix=_env("PACKA_MASTER_PREFIX", paths.get("prefix", "")),
+        tls=TlsConfig(
+            disabled=tls_data.get("disabled", False),
+            cert=tls_data.get("cert", ""),
+            key=tls_data.get("key", ""),
+            ca=tls_data.get("ca", ""),
+        ),
         scan=ScanConfig(
             extensions=extensions,
             min_size=_env_int("PACKA_MASTER_MIN_SIZE", scan_data.get("min_size", 0)) * 1024 * 1024,
@@ -187,6 +200,8 @@ def load_worker(config_path: str | None) -> Config:
     else:
         _cancel_thresholds = []
 
+    shared_tls = data.get("tls", {})
+    worker_tls = worker.get("tls", {})
     return Config(
         bind=_env("PACKA_WORKER_BIND", worker.get("bind", "localhost")),
         api_port=_env_int("PACKA_WORKER_API_PORT", worker.get("api_port", 8000)),
@@ -202,10 +217,17 @@ def load_worker(config_path: str | None) -> Config:
             presets=presets,
             available_encoders=available_encoders,
         ),
+        bootstrap_token=_env("PACKA_WORKER_BOOTSTRAP_TOKEN", worker.get("bootstrap_token", "")),
         worker=WorkerConfig(
             batch_size=_env_int("PACKA_WORKER_BATCH_SIZE", worker_data.get("batch_size", 1)),
             poll_interval=_env_int("PACKA_WORKER_POLL_INTERVAL", worker_data.get("poll_interval", 5)),
             cancel_thresholds=_cancel_thresholds,
+        ),
+        tls=TlsConfig(
+            disabled=worker_tls.get("disabled", False),
+            cert=worker_tls.get("cert", ""),
+            key=worker_tls.get("key", ""),
+            ca=_env("PACKA_TLS_CA", worker_tls.get("ca", shared_tls.get("ca", ""))),
         ),
     )
 
@@ -218,6 +240,8 @@ def load_web(config_path: str | None) -> WebConfig:
 
     web = data.get("web", {})
 
+    web_tls = web.get("tls", {})
+    shared_tls_w = data.get("tls", {})
     return WebConfig(
         username=_env("PACKA_WEB_USERNAME", web.get("username", "admin")),
         password=_env("PACKA_WEB_PASSWORD", web.get("password", "")),
@@ -226,4 +250,11 @@ def load_web(config_path: str | None) -> WebConfig:
         master_port=_env_int("PACKA_WEB_MASTER_PORT", web.get("master_port", 9000)),
         bind=_env("PACKA_WEB_BIND", web.get("bind", "localhost")),
         port=_env_int("PACKA_WEB_PORT", web.get("port", 8080)),
+        bootstrap_token=_env("PACKA_WEB_BOOTSTRAP_TOKEN", web.get("bootstrap_token", "")),
+        tls=TlsConfig(
+            disabled=web_tls.get("disabled", False),
+            cert=web_tls.get("cert", ""),
+            key=web_tls.get("key", ""),
+            ca=_env("PACKA_TLS_CA", web_tls.get("ca", shared_tls_w.get("ca", ""))),
+        ),
     )

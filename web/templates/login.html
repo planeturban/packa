@@ -6,6 +6,46 @@
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent)"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
       <span>packa</span>
     </div>
+
+    {% if bootstrap_restarting %}
+    <div class="login-info" style="margin-bottom:16px">
+      TLS bootstrapped — restarting, please wait…
+    </div>
+    <script>setTimeout(() => location.replace('/login'), 4000);</script>
+
+    {% elif needs_bootstrap %}
+    {% if bootstrap_error %}
+    <div class="login-error" style="margin-bottom:12px">{{ bootstrap_error }}</div>
+    {% endif %}
+    <form method="post" action="/setup/bootstrap">
+      <div class="form-group">
+        <label class="label" for="token">Bootstrap token</label>
+        <input class="input" id="token" name="token" type="text"
+               autocomplete="off" autofocus spellcheck="false" placeholder="Paste token from master log">
+      </div>
+      <button class="btn btn-primary" type="submit" style="width:100%;margin-top:20px;justify-content:center">Bootstrap TLS</button>
+    </form>
+    <div style="margin-top:20px;border-top:1px solid var(--border);padding-top:20px">
+
+    {% if error %}
+    <div class="login-error" style="margin-bottom:12px">{{ error }}</div>
+    {% endif %}
+    <form method="post" action="/login">
+      <div class="form-group">
+        <label class="label" for="username">Username</label>
+        <input class="input" id="username" name="username" type="text"
+               autocomplete="username">
+      </div>
+      <div class="form-group" style="margin-top:12px">
+        <label class="label" for="password">Password</label>
+        <input class="input" id="password" name="password" type="password"
+               autocomplete="current-password">
+      </div>
+      <button class="btn btn-primary" type="submit" style="width:100%;margin-top:20px;justify-content:center">Sign in</button>
+    </form>
+    </div>
+
+    {% else %}
     {% if error %}
     <div class="login-error">{{ error }}</div>
     {% endif %}
@@ -22,6 +62,7 @@
       </div>
       <button class="btn btn-primary" type="submit" style="width:100%;margin-top:20px;justify-content:center">Sign in</button>
     </form>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

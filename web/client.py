@@ -9,20 +9,23 @@ import httpx
 _STATUSES = ["scanning", "pending", "assigned", "processing", "complete", "discarded", "cancelled", "error", "duplicate"]
 
 
-async def fetch_dashboard(master_url: str) -> dict:
+async def fetch_dashboard(master_url: str, httpx_kwargs: dict | None = None) -> dict:
     """
     Fetch all data needed for the dashboard in one call.
     Never raises — returns error fields on failure.
     """
-    async with httpx.AsyncClient(timeout=5.0) as client:
+    kw = httpx_kwargs or {}
+    async with httpx.AsyncClient(timeout=5.0, **kw) as client:
         try:
-            workers_r, scan_r, files_r, stats_r, meta_r, cfg_r = await asyncio.gather(
+            workers_r, scan_r, files_r, stats_r, meta_r, cfg_r, tls_status_r, tls_token_r = await asyncio.gather(
                 client.get(f"{master_url}/workers"),
                 client.get(f"{master_url}/scan/status"),
                 client.get(f"{master_url}/files"),
                 client.get(f"{master_url}/stats"),
                 client.get(f"{master_url}/master/stats"),
                 client.get(f"{master_url}/master/config"),
+                client.get(f"{master_url}/tls/status"),
+                client.get(f"{master_url}/tls/token"),
             )
             workers_list: list = workers_r.json()
             scan: dict = scan_r.json()
@@ -30,6 +33,8 @@ async def fetch_dashboard(master_url: str) -> dict:
             master_stats: dict = stats_r.json()
             master_meta: dict = meta_r.json()
             master_config: dict = cfg_r.json()
+            tls_status: dict = tls_status_r.json() if tls_status_r.is_success else {}
+            tls_token: dict = tls_token_r.json() if tls_token_r.is_success else {}
             master_error = None
         except Exception as exc:
             return {
@@ -43,6 +48,8 @@ async def fetch_dashboard(master_url: str) -> dict:
                 "master_stats": {},
                 "master_meta": {},
                 "master_config": {},
+                "tls_status": {},
+                "tls_token": {},
             }
 
         file_counts = {s: 0 for s in _STATUSES}
@@ -66,11 +73,11 @@ async def fetch_dashboard(master_url: str) -> dict:
 
         status_results, config_results = await asyncio.gather(
             asyncio.gather(
-                *[client.get(f"http://{s['host']}:{s['api_port']}/status") for s in workers_list],
+                *[client.get(f"{s.get('scheme','http')}://{s['host']}:{s['api_port']}/status") for s in workers_list],
                 return_exceptions=True,
             ),
             asyncio.gather(
-                *[client.get(f"http://{s['host']}:{s['api_port']}/config") for s in workers_list],
+                *[client.get(f"{s.get('scheme','http')}://{s['host']}:{s['api_port']}/config") for s in workers_list],
                 return_exceptions=True,
             ),
         )
@@ -104,7 +111,7 @@ async def fetch_dashboard(master_url: str) -> dict:
             "id": info["id"],
             "config_id": config_id,
             "hostname": config_id,
-            "url": f"http://{info['host']}:{info['api_port']}",
+            "url": f"{info.get('scheme','http')}://{info['host']}:{info['api_port']}",
             "host": info["host"],
             "api_port": info["api_port"],
             "state": (st or {}).get("state", "unreachable"),
@@ -123,6 +130,7 @@ async def fetch_dashboard(master_url: str) -> dict:
             "encoder_labels": (st or {}).get("encoder_labels", {}),
             "batch_size": (st or {}).get("batch_size", 1),
             "replace_original": (st or {}).get("replace_original", False),
+            "tls_enabled": (st or {}).get("tls_enabled", False),
             "converted": converted,
             "errors": errors,
             "worker_config": worker_cfg,
@@ -138,4 +146,6 @@ async def fetch_dashboard(master_url: str) -> dict:
         "master_stats": master_stats,
         "master_meta": master_meta,
         "master_config": master_config,
+        "tls_status": tls_status,
+        "tls_token": tls_token,
     }
