@@ -14,9 +14,10 @@ Master REST API.
   POST   /scan/start           — start background directory scan
   POST   /scan/stop            — cancel running scan
   GET    /scan/status          — scan progress
-  GET    /scan/settings        — periodic scan settings
-  POST   /scan/settings        — update periodic scan settings
-  GET    /master/config        — running master configuration
+  GET    /master/config        — running master configuration (layered: default<file<env<db<cli)
+  PATCH  /master/config/{key}  — write an override to the database
+  DELETE /master/config/{key}  — clear the database override, revert via priority
+  POST   /master/config/{key}/restore — copy file/env/default value into the database
   GET    /master/stats         — probe rate, scan rate, scanning queue depth
 """
 
@@ -37,10 +38,10 @@ from shared.db import migrate
 from shared.models import Base, FileRecord, FileStatus
 from shared.schemas import FileRecordCreate, FileRecordOut, StatusUpdate
 
+from . import config_store
 from .database import SessionLocal, engine, get_db
 from .registry import registry
 from .scanner import collect
-from .settings import get_setting, set_setting
 
 Base.metadata.create_all(bind=engine)
 migrate(engine)
@@ -177,16 +178,9 @@ async def _periodic_scan_loop() -> None:
     global _last_periodic_start
     while True:
         await asyncio.sleep(5)
-        if not _config.path_prefix:
+        if not _config.path_prefix or not _config.scan.periodic_enabled or _scan.running:
             continue
-        db = SessionLocal()
-        try:
-            enabled = get_setting(db, "scan_periodic_enabled") == "true"
-            interval = int(get_setting(db, "scan_interval_seconds") or "60")
-        finally:
-            db.close()
-        if not enabled or _scan.running:
-            continue
+        interval = max(10, _config.scan.periodic_interval)
         now = datetime.now(timezone.utc)
         if _last_periodic_start is None or (now - _last_periodic_start).total_seconds() >= interval:
             _last_periodic_start = now
@@ -217,11 +211,19 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Packa Master API", lifespan=lifespan)
 
 _config: Config = Config()
+_config_path: str | None = None
+_cli_values: dict = {}
 
 
 def set_config(config: Config) -> None:
     global _config
     _config = config
+
+
+def set_config_layers(config_path: str | None, cli_values: dict) -> None:
+    global _config_path, _cli_values
+    _config_path = config_path
+    _cli_values = dict(cli_values)
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +310,7 @@ async def _scan_task(scan_dir: str, extensions: set[str], min_size: int, max_siz
 # ---------------------------------------------------------------------------
 
 class WorkerRegister(BaseModel):
-    config_id: str
+    config_id: str = ""
     host: str
     api_port: int
 
@@ -318,7 +320,6 @@ class WorkerOut(BaseModel):
     config_id: str
     host: str
     api_port: int
-    petname: str = ""
 
 
 class TransferRequest(BaseModel):
@@ -365,11 +366,6 @@ class ScanStatus(BaseModel):
     path: str
 
 
-class ScanSettings(BaseModel):
-    interval: int
-    enabled: bool
-
-
 # ---------------------------------------------------------------------------
 # Worker routes
 # ---------------------------------------------------------------------------
@@ -377,10 +373,7 @@ class ScanSettings(BaseModel):
 @app.post("/workers", response_model=WorkerOut, status_code=201)
 def register_worker(body: WorkerRegister):
     worker = registry.register(body.config_id, body.host, body.api_port)
-    if worker.petname:
-        print(f"[master] registered: {worker} (petname: {worker.petname!r})")
-    else:
-        print(f"[master] registered: {worker}")
+    print(f"[master] registered: {worker}")
     return worker
 
 
@@ -533,18 +526,99 @@ def get_worker_stats(worker_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/master/config")
-def get_master_config():
+def get_master_config(db: Session = Depends(get_db)):
+    file_values = config_store.read_file_values(_config_path)
+    env_values = config_store.read_env_values()
+    db_values = config_store.read_db_values(db)
+    effective, sources = config_store.compute_effective(
+        file_values, env_values, db_values, _cli_values,
+    )
     return {
-        "bind": _config.bind,
-        "api_port": _config.api_port,
-        "path_prefix": _config.path_prefix or None,
-        "extensions": _config.scan.extensions,
-        "min_size_mb": (_config.scan.min_size // 1_048_576) if _config.scan.min_size else None,
-        "max_size_mb": (_config.scan.max_size // 1_048_576) if _config.scan.max_size else None,
-        "probe_batch_size": _config.scan.probe_batch_size,
-        "probe_interval_s": _config.scan.probe_interval,
-        "checksum_bytes": _config.scan.checksum_bytes,
+        "fields": config_store.fields_for_api(),
+        "values": effective,
+        "sources": sources,
+        "file": file_values,
+        "env": env_values,
+        "db": db_values,
+        "cli": _cli_values,
+        "config_file": _config_path,
     }
+
+
+class ConfigValueUpdate(BaseModel):
+    value: object
+
+
+class ConfigRestore(BaseModel):
+    source: str  # "file" | "env" | "default"
+
+
+def _reapply_config(db: Session) -> None:
+    """Recompute effective config from all layers and update the live _config."""
+    file_values = config_store.read_file_values(_config_path)
+    env_values = config_store.read_env_values()
+    db_values = config_store.read_db_values(db)
+    effective, _ = config_store.compute_effective(
+        file_values, env_values, db_values, _cli_values,
+    )
+    config_store.apply_to_config(effective, _config)
+
+
+@app.patch("/master/config/{key}")
+def update_master_config(key: str, body: ConfigValueUpdate, db: Session = Depends(get_db)):
+    fld = config_store.field(key)
+    if fld is None:
+        raise HTTPException(status_code=404, detail=f"Unknown key {key!r}")
+    try:
+        config_store.set_db_value(db, key, body.value)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid value for {key!r}: {exc}")
+    _reapply_config(db)
+    print(f"[master] config {key!r} set via DB (requires_restart={fld.requires_restart})")
+    return {"ok": True, "requires_restart": fld.requires_restart}
+
+
+@app.delete("/master/config/{key}")
+def clear_master_config(key: str, db: Session = Depends(get_db)):
+    fld = config_store.field(key)
+    if fld is None:
+        raise HTTPException(status_code=404, detail=f"Unknown key {key!r}")
+    removed = config_store.delete_db_value(db, key)
+    _reapply_config(db)
+    print(f"[master] config {key!r} DB override {'cleared' if removed else 'was already unset'}")
+    return {"ok": True, "cleared": removed, "requires_restart": fld.requires_restart}
+
+
+@app.post("/master/config/{key}/restore")
+def restore_master_config(key: str, body: ConfigRestore, db: Session = Depends(get_db)):
+    fld = config_store.field(key)
+    if fld is None:
+        raise HTTPException(status_code=404, detail=f"Unknown key {key!r}")
+    source = body.source
+    if source == "file":
+        vals = config_store.read_file_values(_config_path)
+    elif source == "env":
+        vals = config_store.read_env_values()
+    elif source == "default":
+        vals = config_store.default_values()
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown source {source!r}")
+    if key not in vals:
+        raise HTTPException(status_code=404, detail=f"No value for {key!r} in {source}")
+    config_store.set_db_value(db, key, vals[key])
+    _reapply_config(db)
+    print(f"[master] config {key!r} restored from {source}")
+    return {"ok": True, "value": vals[key], "requires_restart": fld.requires_restart}
+
+
+@app.post("/restart")
+def restart_master():
+    import os, signal, threading
+    threading.Thread(target=lambda: (
+        __import__('time').sleep(0.2),
+        os.kill(os.getpid(), signal.SIGTERM)
+    ), daemon=True).start()
+    return {"ok": True}
 
 
 @app.get("/master/stats")
@@ -657,23 +731,3 @@ def scan_stop():
 def scan_status():
     return ScanStatus(running=_scan.running, found=_scan.found, skipped=_scan.skipped,
                       errors=_scan.errors, path=_config.path_prefix)
-
-
-# ---------------------------------------------------------------------------
-# Periodic scan settings
-# ---------------------------------------------------------------------------
-
-@app.get("/scan/settings", response_model=ScanSettings)
-def get_scan_settings(db: Session = Depends(get_db)):
-    return ScanSettings(
-        interval=int(get_setting(db, "scan_interval_seconds") or "60"),
-        enabled=get_setting(db, "scan_periodic_enabled") == "true",
-    )
-
-
-@app.post("/scan/settings", response_model=ScanSettings)
-def update_scan_settings(body: ScanSettings, db: Session = Depends(get_db)):
-    interval = max(10, body.interval)
-    set_setting(db, "scan_interval_seconds", str(interval))
-    set_setting(db, "scan_periodic_enabled", "true" if body.enabled else "false")
-    return ScanSettings(interval=interval, enabled=body.enabled)

@@ -239,7 +239,10 @@ async def _monitor_output_size(output_path: str, source_size: int, proc: asyncio
             pass
 
 
-async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) -> None:
+async def _process(job: Job) -> None:
+    ffmpeg_bin = worker_state.ffmpeg_bin
+    output_dir = worker_state.output_dir
+    extra_args = worker_state.extra_args
     output_path = str(Path(output_dir) / Path(job.file_path).name)
     encoder = worker_state.encoder  # snapshot — user may change encoder mid-conversion
     db = SessionLocal()
@@ -424,8 +427,9 @@ async def _process(job: Job, ffmpeg_bin: str, output_dir: str, extra_args: str) 
         db.close()
 
 
-def recover(output_dir: str) -> None:
+def recover() -> None:
     """Called at startup. Resets interrupted jobs and re-queues all pending records."""
+    output_dir = worker_state.output_dir
     db = SessionLocal()
     try:
         interrupted = (
@@ -458,7 +462,7 @@ def recover(output_dir: str) -> None:
         db.close()
 
 
-async def worker_loop(ffmpeg_bin: str, output_dir: str, extra_args: str) -> None:
+async def worker_loop() -> None:
     print("[worker] loop started")
     while True:
         while worker_state.sleeping:
@@ -469,7 +473,7 @@ async def worker_loop(ffmpeg_bin: str, output_dir: str, extra_args: str) -> None
             continue
         worker_state.start(job.record_id)
         try:
-            await _process(job, ffmpeg_bin, output_dir, extra_args)
+            await _process(job)
         finally:
             if worker_state.drain:
                 worker_state.drain = False

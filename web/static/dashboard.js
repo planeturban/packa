@@ -42,7 +42,7 @@ function badge(status) {
     discarded:'badge-discarded', cancelled:'badge-cancelled',
     error:'badge-error', duplicate:'badge-duplicate',
     sleeping:'badge-sleeping', paused:'badge-paused', draining:'badge-draining', online:'badge-online', offline:'badge-offline',
-    'disk full':'badge-error',
+    'disk full':'badge-error', 'setup required':'badge-pending',
   };
   const cls = map[status] || 'badge-discarded';
   const label = status === 'complete' ? 'done' : status;
@@ -91,10 +91,6 @@ const ST = {
   // workers tab
   workerSettingsOpen: {},   // configId → bool
   workerCmdOpen: {},        // configId → bool
-  workerInlineEdit: {},     // configId → 'encoder' | 'batch' | null
-  // scan tab
-  scanEnabled: false,
-  scanInterval: 60,
 };
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -110,7 +106,6 @@ document.addEventListener('DOMContentLoaded', function() {
       ST.connected = true;
       ST.demo = false;
     }
-    updateFromData(ST.data);
     render();
   }
 
@@ -183,7 +178,6 @@ function isEditing() {
   if (isFocused()) return true;
   if (ST.modalSelected.size > 0) return true;
   if (Object.values(ST.workerSettingsOpen).some(Boolean)) return true;
-  if (Object.values(ST.workerInlineEdit).some(Boolean)) return true;
   return Object.values(ST.workerCmdOpen).some(Boolean);
 }
 
@@ -199,7 +193,6 @@ async function fetchAll() {
     } else {
       ST.connected = true;
       ST.demo = false;
-      if (!isEditing()) updateFromData(data);
     }
     ST.data = data;
     render();
@@ -215,13 +208,6 @@ async function fetchAll() {
   }
 }
 
-function updateFromData(data) {
-  if (data.scan_settings) {
-    ST.scanEnabled = !!data.scan_settings.enabled;
-    ST.scanInterval = Math.round((data.scan_settings.interval || 60) / 60);
-  }
-}
-
 // ── Top-level render ─────────────────────────────────────────────────────────
 function render() {
   updateConnectionUI();
@@ -234,20 +220,32 @@ function updateScanButton() {
   const btn = document.getElementById('topbar-scan-btn');
   if (!btn) return;
   const scan = (ST.data && ST.data.scan) || {};
+  const cfg = (ST.data && ST.data.master_config) || {};
+  const values = cfg.values || {};
+  const noPrefix = !values.path_prefix;
   if (scan.running) {
     btn.textContent = '⏹ Stop scan';
     btn.className = 'btn btn-sm btn-danger';
     btn.style.cssText = 'font-size:11px;padding:3px 10px;height:26px';
+    btn.disabled = false;
+    btn.title = '';
   } else {
     btn.innerHTML = '▶ Scan';
     btn.className = 'btn btn-sm btn-primary';
     btn.style.cssText = 'font-size:11px;padding:3px 10px;height:26px';
+    btn.disabled = noPrefix;
+    btn.title = noPrefix ? 'Set master.paths.prefix to enable scanning' : '';
+    if (noPrefix) btn.style.cssText += ';opacity:0.5;cursor:not-allowed';
   }
 }
 
 function topbarScanClick() {
   const scan = (ST.data && ST.data.scan) || {};
-  if (scan.running) scanStop(); else scanStart();
+  const cfg = (ST.data && ST.data.master_config) || {};
+  const values = cfg.values || {};
+  if (scan.running) { scanStop(); return; }
+  if (!values.path_prefix) { toast('Set master.paths.prefix to enable scanning', 'error'); return; }
+  scanStart();
 }
 
 function updateConnectionUI() {
@@ -1012,12 +1010,9 @@ function renderWorkerCard(s) {
   const p = s.progress;
   const pct = p ? Math.round(p.percent || 0) : 0;
   const isDiskFull = !!s.disk_full;
-  const statusStr = isDiskFull ? 'disk full' : isSleeping ? 'sleeping' : s.drain ? 'draining' : isProcessing ? (isPaused ? 'paused' : 'processing') : (s.state === 'unreachable' ? 'offline' : 'online');
+  const statusStr = isDiskFull ? 'disk full' : s.unconfigured ? 'setup required' : isSleeping ? 'sleeping' : s.drain ? 'draining' : isProcessing ? (isPaused ? 'paused' : 'processing') : (s.state === 'unreachable' ? 'offline' : 'online');
 
-  const encoders = s.available_encoders || ['libx265'];
   const labels = s.encoder_labels || {};
-  const encOptions = encoders.map(e => `<option value="${esc(e)}" ${s.encoder===e?'selected':''}>${esc(labels[e]||e)}</option>`).join('');
-  const inlineEdit = ST.workerInlineEdit[s.config_id] || null;
   const showCmd = !!ST.workerCmdOpen[s.config_id];
   const currentFile = s.current_file || '';
   const currentFileName = currentFile ? currentFile.split('/').pop() : '…';
@@ -1059,26 +1054,13 @@ function renderWorkerCard(s) {
         <div class="worker-stat-label">Errors</div>
         <div class="worker-stat-value" style="color:${(s.errors||0)>0?'var(--red)':'inherit'}">${s.errors||0}</div>
       </div>
-      <div class="worker-stat" style="cursor:pointer" onclick="startInlineEdit('${esc(s.config_id)}','encoder')">
-        <div class="worker-stat-label">Encoder</div>
-        ${inlineEdit === 'encoder' ? `
-        <div style="display:flex;gap:4px;align-items:center" onclick="event.stopPropagation()">
-          <select class="select" style="font-size:11px;padding:2px 4px;height:24px" id="inline-enc-${esc(s.config_id)}"
-                  onkeydown="if(event.key==='Escape')cancelInlineEdit('${esc(s.config_id)}')">${encOptions}</select>
-          <button class="btn btn-primary btn-sm" onclick="saveInlineEdit('${esc(s.config_id)}','${esc(s.host)}',${s.api_port})">✓</button>
-          <button class="btn btn-sm" onclick="cancelInlineEdit('${esc(s.config_id)}')">✕</button>
-        </div>` : `<div class="worker-stat-value" style="font-size:12px">${s.unconfigured ? 'SETUP REQUIRED' : esc((s.encoder||'').toUpperCase())}</div>`}
+      <div class="worker-stat">
+        <div class="worker-stat-label">Queue</div>
+        <div class="worker-stat-value">${s.queued||0}</div>
       </div>
-      <div class="worker-stat" style="cursor:pointer" onclick="startInlineEdit('${esc(s.config_id)}','batch')">
-        <div class="worker-stat-label">Batch</div>
-        ${inlineEdit === 'batch' ? `
-        <div style="display:flex;gap:4px;align-items:center" onclick="event.stopPropagation()">
-          <input class="input" type="number" min="1" max="16" value="${s.batch_size||1}" id="inline-batch-${esc(s.config_id)}"
-                 style="width:56px;font-size:11px;padding:2px 4px;height:24px"
-                 onkeydown="if(event.key==='Enter')saveInlineEdit('${esc(s.config_id)}','${esc(s.host)}',${s.api_port});if(event.key==='Escape')cancelInlineEdit('${esc(s.config_id)}')">
-          <button class="btn btn-primary btn-sm" onclick="saveInlineEdit('${esc(s.config_id)}','${esc(s.host)}',${s.api_port})">✓</button>
-          <button class="btn btn-sm" onclick="cancelInlineEdit('${esc(s.config_id)}')">✕</button>
-        </div>` : `<div class="worker-stat-value">${s.batch_size||1}</div>`}
+      <div class="worker-stat" style="min-width:0">
+        <div class="worker-stat-label">Path</div>
+        <div class="worker-stat-value" style="font-size:11px;font-family:'IBM Plex Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc((s.worker_config&&s.worker_config.values&&s.worker_config.values.path_prefix)||'')}">${esc((s.worker_config&&s.worker_config.values&&s.worker_config.values.path_prefix)||'—')}</div>
       </div>
     </div>
 
@@ -1107,7 +1089,8 @@ function renderWorkerCard(s) {
       }
       <button class="btn btn-sm" onclick="toggleWorkerSettings('${esc(s.config_id)}')">${svgIcon('settings',12)} Settings</button>
       ${s.current_cmd ? `<button class="btn btn-sm ${showCmd?'btn-primary':''}" onclick="toggleWorkerCmd('${esc(s.config_id)}')">CMD</button>` : ''}
-      <button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="deregisterWorker('${esc(s.config_id)}')" title="Deregister">${svgIcon('trash',12)}</button>
+      <button class="btn btn-sm" style="margin-left:auto" onclick="restartWorker('${esc(s.host)}',${s.api_port})" title="Restart worker process">Restart</button>
+      <button class="btn btn-sm btn-danger" onclick="deregisterWorker('${esc(s.config_id)}')" title="Deregister">${svgIcon('trash',12)}</button>
     </div>
 
     ${showCmd && s.current_cmd ? `
@@ -1117,22 +1100,23 @@ function renderWorkerCard(s) {
     <div class="worker-settings-panel">
       <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:8px">Running config</div>
       <div style="display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:11px;margin-bottom:12px;font-family:'IBM Plex Mono',monospace">
-        <span style="color:var(--text-faint)">Encoder</span><span>${esc(labels[s.encoder]||s.encoder||'—')}</span>
+        <span style="color:var(--text-faint)">Encoder</span><span>${s.unconfigured ? 'Setup required' : esc(labels[s.encoder]||s.encoder||'—')}</span>
         <span style="color:var(--text-faint)">Batch</span><span>${s.batch_size||1}</span>
         <span style="color:var(--text-faint)">Replace orig.</span><span>${s.replace_original?'yes':'no'}</span>
         <span style="color:var(--text-faint)">Queue</span><span>${s.queued||0}</span>
         <span style="color:var(--text-faint)">Master</span><span>${esc(s.url||'—')}</span>
       </div>
       <div style="border-top:1px solid var(--border-subtle);margin:0 0 12px"></div>
-      <div style="display:flex;align-items:center;justify-content:space-between">
-        <label class="label">Replace original</label>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center">
+        <label class="label" style="white-space:nowrap">Replace original</label>
         <div class="toggle ${s.replace_original?'on':''}" id="repl-${esc(s.config_id)}"
              onclick="this.classList.toggle('on')"></div>
       </div>
-      <button class="btn btn-primary btn-sm" style="margin-top:8px"
+      <button class="btn btn-primary btn-sm" style="margin-top:10px"
               onclick="saveWorkerSettings('${esc(s.config_id)}','${esc(s.host)}',${s.api_port})">
         Save settings
       </button>
+      ${renderWorkerConfigCard(s)}
     </div>` : ''}
   </div>`;
 }
@@ -1155,41 +1139,6 @@ function toggleWorkerCmd(configId) {
   renderWorkers();
 }
 
-function startInlineEdit(configId, field) {
-  ST.workerInlineEdit[configId] = field;
-  renderWorkers();
-  const id = field === 'encoder' ? `inline-enc-${configId}` : `inline-batch-${configId}`;
-  const el = document.getElementById(id);
-  if (el) el.focus();
-}
-
-function cancelInlineEdit(configId) {
-  ST.workerInlineEdit[configId] = null;
-  renderWorkers();
-}
-
-async function saveInlineEdit(configId, host, port) {
-  const workers = (ST.data && ST.data.workers) || [];
-  const w = workers.find(x => x.config_id === configId);
-  if (!w) return;
-  const encEl = document.getElementById(`inline-enc-${configId}`);
-  const batchEl = document.getElementById(`inline-batch-${configId}`);
-  const encoder = encEl ? encEl.value : w.encoder;
-  const batch_size = batchEl ? parseInt(batchEl.value, 10) : (w.batch_size || 1);
-  const payload = { host, port, encoder, batch_size, replace_original: w.replace_original };
-  if (ST.demo) { toast('[Demo] Settings saved', 'info'); return; }
-  try {
-    const r = await fetch('/data/worker/encoder', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(payload),
-    });
-    if (!r.ok) throw new Error(await r.text());
-    toast('Saved', 'success');
-    ST.workerInlineEdit[configId] = null;
-    fetchAll();
-  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
-}
 
 async function workerAction(host, port, action) {
   if (ST.demo) { toast(`[Demo] ${action} → ${host}:${port}`, 'info'); return; }
@@ -1213,7 +1162,6 @@ async function saveWorkerSettings(configId, host, port) {
   const payload = {
     host, port,
     encoder: w.encoder,
-    batch_size: w.batch_size || 1,
     replace_original: repl ? repl.classList.contains('on') : w.replace_original,
   };
   if (ST.demo) { toast('[Demo] Settings saved', 'info'); return; }
@@ -1227,6 +1175,24 @@ async function saveWorkerSettings(configId, host, port) {
     toast('Settings saved', 'success');
     ST.workerSettingsOpen[configId] = false;
     fetchAll();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function saveWorkerEncoder(configId, host, port, value) {
+  const workers = (ST.data && ST.data.workers) || [];
+  const w = workers.find(x => x.config_id === configId);
+  if (!w) return;
+  if (ST.demo) { toast('[Demo] Encoder changed', 'info'); return; }
+  try {
+    const r = await fetch('/data/worker/encoder', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({host, port, encoder: value, replace_original: w.replace_original}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast('Encoder saved', 'success');
+    await fetchAll();
+    renderActiveTab();
   } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
 }
 
@@ -1286,10 +1252,7 @@ function renderScan() {
   const probeDone = probeTotal - scanningQ;
   const probePct = probeTotal > 0 ? Math.min(100, Math.round(probeDone / probeTotal * 100)) : 0;
 
-  const cfgExts = (cfg.extensions || []).join(', ') || '—';
-  const cfgSizeRow = (cfg.min_size_mb || cfg.max_size_mb)
-    ? `<div class="settings-row"><div class="settings-label"><strong>File size limits</strong></div><div style="font-size:13px;color:var(--text-dim)">${cfg.min_size_mb ? cfg.min_size_mb + ' MB min' : 'no min'} · ${cfg.max_size_mb ? cfg.max_size_mb + ' MB max' : 'no max'}</div></div>`
-    : '';
+  const configCard = renderMasterConfigCard(cfg);
 
   el.innerHTML = `
     <div style="max-width:720px">
@@ -1346,58 +1309,342 @@ function renderScan() {
         </div>
       </div>` : ''}
 
-      <div class="card">
-        <div class="card-title">Periodic Scan Settings</div>
-        <div>
-          <div class="settings-row">
-            <div class="settings-label">
-              <strong>Enable periodic scanning</strong>
-              <p>Automatically scan for new files on schedule</p>
-            </div>
-            <div class="toggle ${ST.scanEnabled?'on':''}" id="scan-enabled-toggle"
-                 onclick="ST.scanEnabled=!ST.scanEnabled;this.classList.toggle('on')"></div>
-          </div>
-          <div class="settings-row">
-            <div class="settings-label">
-              <strong>Scan interval</strong>
-              <p>How often to run a background scan</p>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px">
-              <input class="input" type="number" min="1" max="10080" value="${ST.scanInterval}"
-                     id="scan-interval-input" style="width:80px"
-                     oninput="ST.scanInterval=+this.value">
-              <span style="font-size:13px;color:var(--text-dim)">minutes</span>
-            </div>
-          </div>
-        </div>
-        <div style="margin-top:16px">
-          <button class="btn btn-primary" onclick="saveScanSettings()">Save settings</button>
-        </div>
-      </div>
+      ${configCard}
 
-      ${Object.keys(cfg).length ? `
-      <div class="card" style="margin-top:16px">
-        <div class="card-title">Running Config</div>
-        <div class="settings-row">
-          <div class="settings-label"><strong>Bind</strong></div>
-          <div style="font-size:13px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace">${esc(cfg.bind || '')}:${cfg.api_port || ''}</div>
-        </div>
-        <div class="settings-row">
-          <div class="settings-label"><strong>Path prefix</strong></div>
-          <div style="font-size:13px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace">${cfg.path_prefix ? esc(cfg.path_prefix) : '<span style="color:var(--text-faint)">none</span>'}</div>
-        </div>
-        <div class="settings-row">
-          <div class="settings-label"><strong>Extensions</strong></div>
-          <div style="font-size:13px;color:var(--text-dim)">${esc(cfgExts)}</div>
-        </div>
-        ${cfgSizeRow}
-        <div class="settings-row">
-          <div class="settings-label"><strong>Probe batch</strong></div>
-          <div style="font-size:13px;color:var(--text-dim)">${cfg.probe_batch_size} files · every ${cfg.probe_interval_s}s when idle</div>
-        </div>
-      </div>` : ''}
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-subtle);display:flex;align-items:center;gap:8px">
+        <button class="btn btn-sm btn-danger" onclick="restartMaster()" title="Restart the master process">Restart master</button>
+        <span style="font-size:11px;color:var(--text-faint)">Gracefully terminates and restarts the master process. Requires a process manager (e.g. Docker) to restart it.</span>
+      </div>
     </div>
   `;
+}
+
+function _cfgDisplayValue(field, value) {
+  if (field.type === 'list[str]') return (value || []).join(', ');
+  if (value == null) return '';
+  return String(value);
+}
+
+function renderMasterConfigCard(cfg) {
+  const fields = cfg.fields || [];
+  if (!fields.length) return '';
+  const values  = cfg.values  || {};
+  const sources = cfg.sources || {};
+  const fileV   = cfg.file    || {};
+  const envV    = cfg.env     || {};
+  const cliV    = cfg.cli     || {};
+  const cfgFile = cfg.config_file || '';
+  const rows = fields.map(f => renderMasterConfigRow(f, values[f.key], sources[f.key], fileV, envV, cliV)).join('');
+  const fileNote = cfgFile ? `<div style="font-size:11px;color:var(--text-faint);margin-top:4px">Config file: <code>${esc(cfgFile)}</code></div>` : '';
+  return `
+    <div class="card" style="margin-top:16px">
+      <div class="card-title">Master Configuration</div>
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+        Priority: default &lt; file &lt; env &lt; database &lt; CLI. Edits are stored in the database.
+        ${fileNote}
+      </div>
+      ${rows}
+    </div>
+  `;
+}
+
+function renderMasterConfigRow(f, value, source, fileV, envV, cliV) {
+  const hasFile = Object.prototype.hasOwnProperty.call(fileV, f.key);
+  const hasEnv  = Object.prototype.hasOwnProperty.call(envV,  f.key);
+  const hasCli  = Object.prototype.hasOwnProperty.call(cliV,  f.key);
+  const isDb    = source === 'db';
+  const restartFlag = f.requires_restart
+    ? ` <span style="font-size:10px;color:#ef5350;text-transform:uppercase;letter-spacing:.5px">restart required on change</span>`
+    : '';
+  const cliNotice = hasCli
+    ? `<div style="font-size:11px;color:#ab47bc;margin-top:4px">CLI flag active — DB edits take effect only after restart without the flag.</div>`
+    : '';
+  const keyAttr = esc(f.key);
+  let control;
+  if (f.type === 'bool') {
+    const on = value === true || value === 1 || value === '1' || value === 'true';
+    control = `<div class="toggle ${on ? 'on' : ''}" title="${on ? 'On' : 'Off'} — click to toggle"
+                    onclick="masterConfigToggleBool('${keyAttr}')" style="flex:none"></div>
+               <div style="flex:1;min-width:0;font-size:12px;color:var(--text-dim)">${on ? 'On' : 'Off'}</div>`;
+  } else {
+    const display = esc(_cfgDisplayValue(f, value));
+    const inputType = f.type === 'int' ? 'number' : 'text';
+    control = `<input class="input" type="${inputType}" value="${display}"
+                      data-cfg-key="${keyAttr}" data-cfg-type="${esc(f.type)}"
+                      style="flex:1;min-width:220px;font-family:'IBM Plex Mono',monospace"
+                      onkeydown="if(event.key==='Enter'){this.blur();}"
+                      onblur="masterConfigSave('${keyAttr}','${esc(f.type)}',this.value)">`;
+  }
+  const revertTitle = (!hasFile && !hasEnv)
+    ? 'No file or env value to revert to — use Default to reset'
+    : 'Clear DB override; revert via priority chain';
+  const revertDisabled = (!hasFile && !hasEnv) ? 'disabled' : '';
+  return `
+    <div class="settings-row" style="display:block;padding:12px 0">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+        <strong>${esc(f.label || f.key)}</strong>
+        <code style="font-size:11px;color:var(--text-faint)">${keyAttr}</code>
+        ${restartFlag}
+      </div>
+      ${f.help ? `<div style="margin:0 0 6px 0;font-size:12px;color:var(--text-dim)">${esc(f.help)}</div>` : ''}
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        ${control}
+        ${hasFile ? `<button class="btn btn-sm" title="Copy file value to DB" onclick="masterConfigRestore('${keyAttr}','file')">Restore from file</button>` : ''}
+        ${hasEnv  ? `<button class="btn btn-sm" title="Copy env value to DB"  onclick="masterConfigRestore('${keyAttr}','env')">Restore from env</button>`  : ''}
+        <button class="btn btn-sm" title="Copy default value to DB" onclick="masterConfigRestore('${keyAttr}','default')">Default</button>
+        ${isDb ? `<button class="btn btn-sm btn-danger" title="${revertTitle}" onclick="masterConfigRevert('${keyAttr}')" ${revertDisabled}>Revert</button>` : ''}
+      </div>
+      ${cliNotice}
+    </div>
+  `;
+}
+
+function _cfgCoerce(type, raw) {
+  if (type === 'int') {
+    const n = Number(String(raw).trim());
+    if (!Number.isFinite(n)) throw new Error('expected a number');
+    return Math.trunc(n);
+  }
+  if (type === 'list[str]') {
+    return String(raw).split(',').map(s => s.trim()).filter(Boolean);
+  }
+  return String(raw);
+}
+
+function _cfgSameValue(type, a, b) {
+  if (type === 'list[str]') {
+    const aa = Array.isArray(a) ? a : [];
+    const bb = Array.isArray(b) ? b : [];
+    return aa.length === bb.length && aa.every((v, i) => String(v) === String(bb[i]));
+  }
+  return String(a ?? '') === String(b ?? '');
+}
+
+async function masterConfigSave(key, type, raw) {
+  if (ST.demo) { toast('[Demo] Config unchanged', 'info'); return; }
+  const cfg = (ST.data && ST.data.master_config) || {};
+  const current = (cfg.values || {})[key];
+  let newValue;
+  try { newValue = _cfgCoerce(type, raw); }
+  catch (e) { toast(`${key}: ${e.message}`, 'error'); return; }
+  if (_cfgSameValue(type, current, newValue)) return;
+  try {
+    const r = await fetch(`/data/master/config/${encodeURIComponent(key)}`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({value: newValue}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const res = await r.json();
+    toast(`${key} saved${res.requires_restart ? ' (restart required)' : ''}`, 'success');
+    fetchAll();
+  } catch (e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function masterConfigToggleBool(key) {
+  if (ST.demo) { toast('[Demo] Config unchanged', 'info'); return; }
+  const cfg = (ST.data && ST.data.master_config) || {};
+  const current = (cfg.values || {})[key];
+  const next = !(current === true || current === 1 || current === '1' || current === 'true');
+  try {
+    const r = await fetch(`/data/master/config/${encodeURIComponent(key)}`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({value: next}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const res = await r.json();
+    toast(`${key} ${next ? 'enabled' : 'disabled'}${res.requires_restart ? ' (restart required)' : ''}`, 'success');
+    fetchAll();
+  } catch (e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function masterConfigRestore(key, source) {
+  if (ST.demo) { toast('[Demo] Config unchanged', 'info'); return; }
+  try {
+    const r = await fetch(`/data/master/config/${encodeURIComponent(key)}/restore`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({source}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const res = await r.json();
+    toast(`${key} restored from ${source}${res.requires_restart ? ' (restart required)' : ''}`, 'success');
+    fetchAll();
+  } catch (e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function masterConfigRevert(key) {
+  if (ST.demo) { toast('[Demo] Config unchanged', 'info'); return; }
+  try {
+    const r = await fetch(`/data/master/config/${encodeURIComponent(key)}`, {method:'DELETE'});
+    if (!r.ok) throw new Error(await r.text());
+    const res = await r.json();
+    toast(`${key} reverted${res.requires_restart ? ' (restart required)' : ''}`, 'info');
+    fetchAll();
+  } catch (e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+// ---------------------------------------------------------------------------
+// Worker config card (layered: default < file < env < db < cli)
+// ---------------------------------------------------------------------------
+
+function renderWorkerConfigCard(s) {
+  const cfg = s.worker_config || {};
+  const fields = cfg.fields || [];
+  const values  = cfg.values  || {};
+  const sources = cfg.sources || {};
+  const fileV   = cfg.file    || {};
+  const envV    = cfg.env     || {};
+  const cliV    = cfg.cli     || {};
+  const cfgFile = cfg.config_file || '';
+  const host = esc(s.host);
+  const port = s.api_port;
+  const configId = esc(s.config_id);
+
+  const encoders = s.available_encoders || ['libx265'];
+  const encLabels = s.encoder_labels || {};
+  const encPlaceholder = s.unconfigured ? `<option value="" selected disabled>Setup required — select an encoder</option>` : '';
+  const encOptions = encPlaceholder + encoders.map(e => `<option value="${esc(e)}" ${!s.unconfigured&&s.encoder===e?'selected':''}>${esc(encLabels[e]||e)}</option>`).join('');
+  const encoderRow = `
+    <div class="settings-row" style="display:block;padding:8px 0">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+        <strong style="font-size:12px">Encoder</strong>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <select class="input" style="flex:1;min-width:180px;font-size:12px"
+                onchange="saveWorkerEncoder('${configId}','${host}',${port},this.value)">
+          ${encOptions}
+        </select>
+      </div>
+    </div>`;
+
+  const cfgRows = fields.map(f => renderWorkerConfigRow(f, values[f.key], sources[f.key], fileV, envV, cliV, host, port)).join('');
+  const fileNote = cfgFile ? `<div style="font-size:11px;color:var(--text-faint);margin-top:4px">Config file: <code>${esc(cfgFile)}</code></div>` : '';
+  return `
+    <div style="border-top:1px solid var(--border-subtle);margin:12px 0 0"></div>
+    <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin:12px 0 4px">Worker Configuration</div>
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">
+      Priority: default &lt; file &lt; env &lt; database &lt; CLI. Edits are stored in the database.
+      ${fileNote}
+    </div>
+    ${encoderRow}
+    ${cfgRows}
+  `;
+}
+
+function renderWorkerConfigRow(f, value, source, fileV, envV, cliV, host, port) {
+  const hasFile = Object.prototype.hasOwnProperty.call(fileV, f.key);
+  const hasEnv  = Object.prototype.hasOwnProperty.call(envV,  f.key);
+  const hasCli  = Object.prototype.hasOwnProperty.call(cliV,  f.key);
+  const isDb    = source === 'db';
+  const keyAttr = esc(f.key);
+  const restartFlag = f.requires_restart
+    ? ` <span style="font-size:10px;color:#ef5350;text-transform:uppercase;letter-spacing:.5px">restart required on change</span>`
+    : '';
+  const cliNotice = hasCli
+    ? `<div style="font-size:11px;color:#ab47bc;margin-top:4px">CLI flag active — DB edits take effect only after restart without the flag.</div>`
+    : '';
+  const display = esc(_cfgDisplayValue(f, value));
+  const inputType = f.type === 'int' ? 'number' : 'text';
+  const control = `<input class="input" type="${inputType}" value="${display}"
+                          data-cfg-key="${keyAttr}" data-cfg-type="${esc(f.type)}"
+                          style="flex:1;min-width:180px;font-family:'IBM Plex Mono',monospace;font-size:12px"
+                          onkeydown="if(event.key==='Enter'){this.blur();}"
+                          onblur="workerCfgSave('${host}',${port},'${keyAttr}','${esc(f.type)}',this.value)">`;
+  const revertTitle = (!hasFile && !hasEnv)
+    ? 'No file or env value to revert to — use Default to reset'
+    : 'Clear DB override; revert via priority chain';
+  const revertDisabled = (!hasFile && !hasEnv) ? 'disabled' : '';
+  return `
+    <div class="settings-row" style="display:block;padding:8px 0">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+        <strong style="font-size:12px">${esc(f.label || f.key)}</strong>
+        <code style="font-size:10px;color:var(--text-faint)">${keyAttr}</code>
+        ${restartFlag}
+      </div>
+      ${f.help ? `<div style="margin:0 0 4px 0;font-size:11px;color:var(--text-dim)">${esc(f.help)}</div>` : ''}
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        ${control}
+        ${hasFile ? `<button class="btn btn-sm" onclick="workerCfgRestore('${host}',${port},'${keyAttr}','file')">Restore from file</button>` : ''}
+        ${hasEnv  ? `<button class="btn btn-sm" onclick="workerCfgRestore('${host}',${port},'${keyAttr}','env')">Restore from env</button>`  : ''}
+        <button class="btn btn-sm" onclick="workerCfgRestore('${host}',${port},'${keyAttr}','default')">Default</button>
+        ${isDb ? `<button class="btn btn-sm btn-danger" title="${revertTitle}" onclick="workerCfgRevert('${host}',${port},'${keyAttr}')" ${revertDisabled}>Revert</button>` : ''}
+      </div>
+      ${cliNotice}
+    </div>
+  `;
+}
+
+async function workerCfgSave(host, port, key, type, raw) {
+  if (ST.demo) { toast('[Demo] Config unchanged', 'info'); return; }
+  const worker = (ST.data && ST.data.workers || []).find(w => w.host === host && w.api_port === port);
+  const current = ((worker && worker.worker_config && worker.worker_config.values) || {})[key];
+  let newValue;
+  try { newValue = _cfgCoerce(type, raw); }
+  catch (e) { toast(`${key}: ${e.message}`, 'error'); return; }
+  if (_cfgSameValue(type, current, newValue)) return;
+  try {
+    const r = await fetch(`/data/worker/config/${encodeURIComponent(key)}?host=${encodeURIComponent(host)}&port=${port}`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({value: newValue}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const res = await r.json();
+    toast(`${key} saved${res.requires_restart ? ' (restart required)' : ''}`, 'success');
+    fetchAll();
+  } catch (e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function workerCfgRestore(host, port, key, source) {
+  if (ST.demo) { toast('[Demo] Config unchanged', 'info'); return; }
+  try {
+    const r = await fetch(`/data/worker/config/${encodeURIComponent(key)}/restore?host=${encodeURIComponent(host)}&port=${port}`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({source}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const res = await r.json();
+    toast(`${key} restored from ${source}${res.requires_restart ? ' (restart required)' : ''}`, 'success');
+    fetchAll();
+  } catch (e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function workerCfgRevert(host, port, key) {
+  if (ST.demo) { toast('[Demo] Config unchanged', 'info'); return; }
+  try {
+    const r = await fetch(`/data/worker/config/${encodeURIComponent(key)}?host=${encodeURIComponent(host)}&port=${port}`, {method:'DELETE'});
+    if (!r.ok) throw new Error(await r.text());
+    const res = await r.json();
+    toast(`${key} reverted${res.requires_restart ? ' (restart required)' : ''}`, 'info');
+    fetchAll();
+  } catch (e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function restartMaster() {
+  if (ST.demo) { toast('[Demo] Restart skipped', 'info'); return; }
+  if (!confirm('Restart the master process?')) return;
+  try {
+    const r = await fetch('/data/master/restart', {method:'POST'});
+    if (!r.ok) throw new Error(await r.text());
+    toast('Master restarting…', 'info');
+  } catch (e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function restartWorker(host, port) {
+  if (ST.demo) { toast('[Demo] Restart skipped', 'info'); return; }
+  if (!confirm(`Restart worker at ${host}:${port}?`)) return;
+  try {
+    const r = await fetch('/data/worker/restart', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({host, port}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast('Worker restarting…', 'info');
+  } catch (e) { toast(`Failed: ${e.message}`, 'error'); }
 }
 
 async function scanStart() {
@@ -1417,19 +1664,6 @@ async function scanStop() {
     if (!r.ok) throw new Error(await r.text());
     toast('Scan stopped', 'info');
     fetchAll();
-  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
-}
-
-async function saveScanSettings() {
-  if (ST.demo) { toast('[Demo] Settings saved', 'success'); return; }
-  try {
-    const r = await fetch('/data/scan/settings', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({enabled: ST.scanEnabled, interval_minutes: ST.scanInterval}),
-    });
-    if (!r.ok) throw new Error(await r.text());
-    toast('Scan settings saved', 'success');
   } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
 }
 

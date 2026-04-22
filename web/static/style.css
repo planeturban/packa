@@ -77,6 +77,7 @@ body {
   min-height: 100vh;
   font-size: 14px;
   line-height: 1.5;
+  scrollbar-gutter: stable;
 }
 
 /* ── Top bar ────────────────────────────────────────────────────────── */
@@ -362,7 +363,7 @@ input[type="checkbox"] {
 .filter-chip.not { background: color-mix(in oklch, var(--red) 10%, transparent); border-color: var(--red); color: var(--red); text-decoration: line-through; }
 
 /* ── Worker cards ────────────────────────────────────────────────────── */
-.workers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+.workers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(520px, 1fr)); gap: 16px; }
 .worker-card {
   background: var(--surface);
   border: 1px solid var(--border);

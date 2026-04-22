@@ -47,6 +47,13 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 # probe_batch_size = 20
 # probe_interval   = 60
 
+# Periodic re-scan of the path prefix. Also editable live from the Master tab
+# (database override wins over env and file).
+# Env: PACKA_MASTER_SCAN_PERIODIC_ENABLED, PACKA_MASTER_SCAN_INTERVAL
+# [master.scan.periodic]
+# enabled  = false
+# interval = 60    # seconds (min 10)
+
 # ---------------------------------------------------------------------------
 # Worker
 # ---------------------------------------------------------------------------

@@ -16,11 +16,10 @@ async def fetch_dashboard(master_url: str) -> dict:
     """
     async with httpx.AsyncClient(timeout=5.0) as client:
         try:
-            workers_r, scan_r, files_r, settings_r, stats_r, meta_r, cfg_r = await asyncio.gather(
+            workers_r, scan_r, files_r, stats_r, meta_r, cfg_r = await asyncio.gather(
                 client.get(f"{master_url}/workers"),
                 client.get(f"{master_url}/scan/status"),
                 client.get(f"{master_url}/files"),
-                client.get(f"{master_url}/scan/settings"),
                 client.get(f"{master_url}/stats"),
                 client.get(f"{master_url}/master/stats"),
                 client.get(f"{master_url}/master/config"),
@@ -28,7 +27,6 @@ async def fetch_dashboard(master_url: str) -> dict:
             workers_list: list = workers_r.json()
             scan: dict = scan_r.json()
             files: list = files_r.json()
-            scan_settings: dict = settings_r.json()
             master_stats: dict = stats_r.json()
             master_meta: dict = meta_r.json()
             master_config: dict = cfg_r.json()
@@ -37,7 +35,6 @@ async def fetch_dashboard(master_url: str) -> dict:
             return {
                 "master_error": str(exc),
                 "scan": None,
-                "scan_settings": {"interval": 60, "enabled": False},
                 "file_counts": {s: 0 for s in _STATUSES},
                 "files": [],
                 "workers": [],
@@ -67,25 +64,33 @@ async def fetch_dashboard(master_url: str) -> dict:
             "saved_bytes": overall.get("total_saved_bytes", 0),
         }
 
-        status_results = await asyncio.gather(
-            *[
-                client.get(f"http://{s['host']}:{s['api_port']}/status")
-                for s in workers_list
-            ],
-            return_exceptions=True,
+        status_results, config_results = await asyncio.gather(
+            asyncio.gather(
+                *[client.get(f"http://{s['host']}:{s['api_port']}/status") for s in workers_list],
+                return_exceptions=True,
+            ),
+            asyncio.gather(
+                *[client.get(f"http://{s['host']}:{s['api_port']}/config") for s in workers_list],
+                return_exceptions=True,
+            ),
         )
 
     workers = []
-    for info, result in zip(workers_list, status_results):
+    for info, result, cfg_result in zip(workers_list, status_results, config_results):
         st = None
         if not isinstance(result, Exception):
             try:
                 st = result.json()
             except Exception:
                 pass
+        worker_cfg = {}
+        if not isinstance(cfg_result, Exception):
+            try:
+                worker_cfg = cfg_result.json()
+            except Exception:
+                pass
 
         config_id = info["config_id"]
-        petname = info.get("petname", "") or (st or {}).get("petname", "")
         converted = sum(
             1 for f in files
             if f.get("worker_id") == config_id and f.get("status") == "complete"
@@ -98,8 +103,7 @@ async def fetch_dashboard(master_url: str) -> dict:
         workers.append({
             "id": info["id"],
             "config_id": config_id,
-            "petname": petname,
-            "hostname": petname or config_id,
+            "hostname": config_id,
             "url": f"http://{info['host']}:{info['api_port']}",
             "host": info["host"],
             "api_port": info["api_port"],
@@ -121,12 +125,12 @@ async def fetch_dashboard(master_url: str) -> dict:
             "replace_original": (st or {}).get("replace_original", False),
             "converted": converted,
             "errors": errors,
+            "worker_config": worker_cfg,
         })
 
     return {
         "master_error": master_error,
         "scan": scan,
-        "scan_settings": scan_settings,
         "file_counts": file_counts,
         "files": files,
         "workers": workers,

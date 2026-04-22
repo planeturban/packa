@@ -34,6 +34,7 @@ from shared.db import migrate
 from shared.models import Base, FileStatus
 from shared.schemas import FileRecordCreate, FileRecordOut, StatusUpdate
 
+from . import config_store
 from .database import engine, get_db
 from .poller import poller_loop
 from .state import FfmpegProgress, Job, worker_state
@@ -46,11 +47,19 @@ migrate(engine)
 _config: Config = Config()
 _advertise_host: str = ""
 _worker_config_id: str = ""
+_config_path: str | None = None
+_cli_values: dict = {}
 
 
 def set_config(config: Config) -> None:
     global _config
     _config = config
+
+
+def set_config_layers(config_path: str | None, cli_values: dict) -> None:
+    global _config_path, _cli_values
+    _config_path = config_path
+    _cli_values = cli_values
 
 
 def set_registration_params(advertise_host: str, worker_config_id: str) -> None:
@@ -61,6 +70,7 @@ def set_registration_params(advertise_host: str, worker_config_id: str) -> None:
 
 async def _register_and_poll() -> None:
     """Retry registration until master is reachable, then keep registration fresh and run the poller."""
+    global _worker_config_id
     master_base = f"http://{_config.master_host}:{_config.master_port}"
     url = f"{master_base}/workers"
     payload = {"config_id": _worker_config_id, "host": _advertise_host, "api_port": _config.api_port}
@@ -72,12 +82,16 @@ async def _register_and_poll() -> None:
                 r = await client.post(url, json=payload)
                 r.raise_for_status()
                 record = r.json()
+            assigned_id = record["config_id"]
             worker_state.worker_id = record["id"]
-            worker_state.worker_config_id = _worker_config_id
-            worker_state.petname = record.get("petname", "")
+            worker_state.worker_config_id = assigned_id
             worker_state.master_url = master_base
-            name = worker_state.petname or _worker_config_id
-            print(f"[worker] registered as worker-{record['id']} ({name!r})")
+            if not _worker_config_id:
+                set_setting("worker_id", assigned_id)
+                payload["config_id"] = assigned_id
+                _worker_config_id = assigned_id
+                print(f"[worker] assigned id {assigned_id!r} by master")
+            print(f"[worker] registered as worker-{record['id']} ({assigned_id!r})")
             break
         except Exception as exc:
             attempt += 1
@@ -97,20 +111,31 @@ async def _register_and_poll() -> None:
             except Exception as exc:
                 print(f"[worker] re-registration failed: {exc}")
 
-    if _config.ffmpeg.output_dir:
+    if worker_state.output_dir:
         await asyncio.gather(
             poller_loop(
                 master_url=worker_state.master_url,
-                worker_config_id=_worker_config_id,
-                path_prefix=_config.path_prefix,
-                batch_size=_config.worker.batch_size,
-                poll_interval=_config.worker.poll_interval,
-                output_dir=_config.ffmpeg.output_dir,
+                worker_config_id=worker_state.worker_config_id,
             ),
             _reregister_loop(),
         )
     else:
         await _reregister_loop()
+
+
+def _reapply_config() -> None:
+    """Recompute effective config from all layers and update _config and worker_state."""
+    file_values = config_store.read_file_values(_config_path)
+    env_values = config_store.read_env_values()
+    db_values = config_store.read_db_values()
+    effective, _ = config_store.compute_effective(file_values, env_values, db_values, _cli_values)
+    config_store.apply_to_config(effective, _config)
+    worker_state.ffmpeg_bin = _config.ffmpeg.bin
+    worker_state.output_dir = _config.ffmpeg.output_dir
+    worker_state.extra_args = _config.ffmpeg.extra_args
+    worker_state.poll_interval = _config.worker.poll_interval
+    worker_state.batch_size = _config.worker.batch_size
+    worker_state.path_prefix = _config.path_prefix
 
 
 @asynccontextmanager
@@ -120,28 +145,34 @@ async def lifespan(app: FastAPI):
     worker_state.available_encoders = _config.ffmpeg.available_encoders
     worker_state.replace_original = get_setting("replace_original") == "true"
     worker_state.cancel_thresholds = _config.worker.cancel_thresholds
+    worker_state.ffmpeg_bin = _config.ffmpeg.bin
+    worker_state.output_dir = _config.ffmpeg.output_dir
+    worker_state.extra_args = _config.ffmpeg.extra_args
+    worker_state.poll_interval = _config.worker.poll_interval
+    worker_state.batch_size = _config.worker.batch_size
+    worker_state.path_prefix = _config.path_prefix
 
     _default_encoder = worker_state.available_encoders[0] if worker_state.available_encoders else "libx265"
-    stored_batch = get_setting("batch_size")
-    worker_state.batch_size = max(1, int(stored_batch)) if stored_batch else _config.worker.batch_size
 
     if get_setting("ready"):
         worker_state.encoder = get_setting("encoder") or _default_encoder
     elif get_setting("first_run"):
         worker_state.encoder = _default_encoder
-        worker_state.sleeping = True
-        worker_state.unconfigured = True
-        print("[worker] no stored configuration — starting in unconfigured state")
+        if len(worker_state.available_encoders) == 1:
+            set_setting("encoder", _default_encoder)
+            set_setting("ready", "true")
+            set_setting("first_run", "false")
+            print(f"[worker] single encoder ({_default_encoder!r}) — auto-activating")
+        else:
+            worker_state.sleeping = True
+            worker_state.unconfigured = True
+            print("[worker] no stored configuration — starting in unconfigured state")
     else:
         worker_state.encoder = _default_encoder
 
-    if _config.ffmpeg.output_dir:
-        recover(_config.ffmpeg.output_dir)
-        tasks.append(asyncio.create_task(worker_loop(
-            ffmpeg_bin=_config.ffmpeg.bin,
-            output_dir=_config.ffmpeg.output_dir,
-            extra_args=_config.ffmpeg.extra_args,
-        )))
+    if worker_state.output_dir:
+        recover()
+        tasks.append(asyncio.create_task(worker_loop()))
     tasks.append(asyncio.create_task(_register_and_poll()))
     yield
     for task in tasks:
@@ -193,7 +224,6 @@ class WorkerStatus(BaseModel):
 
 class EncoderUpdate(BaseModel):
     encoder: str
-    batch_size: int | None = None
     replace_original: bool | None = None
 
 
@@ -376,9 +406,6 @@ def update_settings(body: EncoderUpdate):
     set_setting("encoder", body.encoder)
     set_setting("ready", "true")
     set_setting("first_run", "false")
-    if body.batch_size is not None:
-        worker_state.batch_size = max(1, body.batch_size)
-        set_setting("batch_size", str(worker_state.batch_size))
     if body.replace_original is not None:
         worker_state.replace_original = body.replace_original
         set_setting("replace_original", "true" if body.replace_original else "false")
@@ -387,4 +414,93 @@ def update_settings(body: EncoderUpdate):
         print(f"[worker] activated with encoder={body.encoder!r} — sleeping until woken")
     else:
         print(f"[worker] encoder changed to {body.encoder!r}")
-    return {"encoder": worker_state.encoder, "batch_size": worker_state.batch_size}
+    return {"encoder": worker_state.encoder}
+
+
+# ---------------------------------------------------------------------------
+# Config (layered: default < file < env < db < cli)
+# ---------------------------------------------------------------------------
+
+class ConfigValueUpdate(BaseModel):
+    value: object
+
+
+class ConfigRestore(BaseModel):
+    source: str  # "file" | "env" | "default"
+
+
+@app.post("/restart")
+def restart_worker():
+    import os, signal, threading
+    threading.Thread(target=lambda: (
+        __import__('time').sleep(0.2),
+        os.kill(os.getpid(), signal.SIGTERM)
+    ), daemon=True).start()
+    return {"ok": True}
+
+
+@app.get("/config")
+def get_worker_config():
+    file_values = config_store.read_file_values(_config_path)
+    env_values = config_store.read_env_values()
+    db_values = config_store.read_db_values()
+    effective, sources = config_store.compute_effective(
+        file_values, env_values, db_values, _cli_values,
+    )
+    return {
+        "fields": config_store.fields_for_api(),
+        "values": effective,
+        "sources": sources,
+        "file": file_values,
+        "env": env_values,
+        "db": db_values,
+        "cli": _cli_values,
+        "config_file": _config_path,
+    }
+
+
+@app.patch("/config/{key}")
+def update_worker_config(key: str, body: ConfigValueUpdate):
+    fld = config_store.field(key)
+    if fld is None:
+        raise HTTPException(status_code=404, detail=f"Unknown key {key!r}")
+    try:
+        config_store.set_db_value(key, body.value)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid value for {key!r}: {exc}")
+    _reapply_config()
+    print(f"[worker] config {key!r} set via DB (requires_restart={fld.requires_restart})")
+    return {"ok": True, "requires_restart": fld.requires_restart}
+
+
+@app.delete("/config/{key}")
+def clear_worker_config(key: str):
+    fld = config_store.field(key)
+    if fld is None:
+        raise HTTPException(status_code=404, detail=f"Unknown key {key!r}")
+    removed = config_store.delete_db_value(key)
+    _reapply_config()
+    print(f"[worker] config {key!r} DB override {'cleared' if removed else 'was already unset'}")
+    return {"ok": True, "cleared": removed, "requires_restart": fld.requires_restart}
+
+
+@app.post("/config/{key}/restore")
+def restore_worker_config(key: str, body: ConfigRestore):
+    fld = config_store.field(key)
+    if fld is None:
+        raise HTTPException(status_code=404, detail=f"Unknown key {key!r}")
+    source = body.source
+    if source == "file":
+        vals = config_store.read_file_values(_config_path)
+    elif source == "env":
+        vals = config_store.read_env_values()
+    elif source == "default":
+        vals = config_store.default_values()
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown source {source!r}")
+    if key not in vals:
+        raise HTTPException(status_code=404, detail=f"No value for {key!r} in {source}")
+    config_store.set_db_value(key, vals[key])
+    _reapply_config()
+    print(f"[worker] config {key!r} restored from {source}")
+    return {"ok": True, "value": vals[key], "requires_restart": fld.requires_restart}

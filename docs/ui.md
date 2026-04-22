@@ -12,7 +12,7 @@ The web dashboard is a single-page app served by the web process. It auto-refres
 | **Files** | Full file table with filter chips, search, checkboxes, and bulk actions |
 | **Statistics** | Aggregated and per-worker stats: jobs, bytes, space saved, bitrate, playtime |
 | **Workers** | Per-worker cards with live progress, controls, encoder and batch settings |
-| **Scan** | Manual scan trigger, periodic scan toggle and interval |
+| **Master** | Probe/scan stats, manual and periodic scan, editable master configuration |
 | **Settings** | Dashboard poll interval and other preferences |
 
 ---
@@ -70,11 +70,41 @@ Click the **Encoder** or **Batch** stat cell to edit it inline. Press Enter or c
 
 ### Settings panel
 
-Click **Settings** to expand a panel with the Replace Original toggle and a Save button.
+Click **Settings** to expand a panel with:
+- A summary of the current running configuration (encoder, batch, replace original, queue depth, master URL).
+- The **Replace original** toggle and **Save settings** button.
+- A **Worker Configuration** section — same layered editor as the Master tab. Fields: path prefix, output directory, ffmpeg binary, extra ffmpeg args, poll interval. All changes take effect on the next job or poll cycle without a restart. Network identity settings (`bind`, `api_port`, `master_host`, `master_port`) are set via config file, environment variables, or CLI flags only.
 
 ### Drain mode
 
 Drain finishes the current job then stops polling. The worker goes to sleep after the job completes. Click Resume (replaces the Drain button while active) to cancel drain and continue polling.
+
+---
+
+## Master tab
+
+The Master tab surfaces four stat cards (average conversion time, probe rate, scan speed, probe queue depth) and a probe-progress bar, followed by the scanner controls and the editable master configuration.
+
+### Scanner
+
+- **Scan status bar** — shows whether a scan is running and, when idle, the configured path prefix. The top-bar **Scan** button is disabled when `master.paths.prefix` is empty.
+- **Periodic scanning** is controlled via the Master Configuration form below (`scan_periodic_enabled`, `scan_interval_seconds`). Edits take effect on the next tick of the periodic-scan loop.
+
+### Master Configuration
+
+Every master setting is rendered as its own row with an input and action buttons:
+
+| Action | Effect |
+|--------|--------|
+| **Edit + blur / Enter** | Saves the new value into the database (`db` source). |
+| **Restore from file** | Copies the value from `packa.toml` into the database. Shown when that layer has a value. |
+| **Restore from env** | Copies the value from the process environment. Shown when that layer has a value. |
+| **Default** | Copies the built-in default into the database. |
+| **Revert** | Clears the database override so the value falls back through env → file → default. Shown only when the current source is `db`. |
+
+Fields flagged **restart required on change** (`bind`, `api_port`) are persisted immediately but only take effect after the master restarts. A toast confirms each save and surfaces the restart flag.
+
+If a value is currently overridden by a CLI flag (`--bind`, `--api-port`) the row shows a note explaining that database edits take effect only after a restart without the flag.
 
 ---
 

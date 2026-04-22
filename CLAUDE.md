@@ -56,13 +56,21 @@ SCANNING → PENDING → ASSIGNED → DISCARDED  (already HEVC, detected by mast
 
 ## Configuration priority
 
-All three processes apply settings in this order (later wins):
+Worker and web apply settings in this order (later wins):
 
 ```
 config file  <  environment variable  <  CLI flag
 ```
 
-`load_master()`, `load_worker()`, and `load_web()` each accept `str | None` as the config path. When `None`, only defaults and env vars are used. Env vars are applied inside the load functions; CLI overrides are applied afterwards in `main()` by checking `if args.x is not None`.
+Master uses a five-layer model managed by `master/config_store.py`:
+
+```
+default  <  file  <  environment  <  database  <  CLI
+```
+
+The database layer (`master_settings` table, `config.*` keys) is editable at runtime via the dashboard's Master tab. CLI flags always win but are never persisted. On first start `config_store.initialize_from_layers()` seeds the database with the effective file+env+default values; subsequent starts read all four layers, merge them with any CLI overrides, and apply the result via `apply_to_config()`. The running `_config` is refreshed whenever a config endpoint writes to the database.
+
+`load_worker()` and `load_web()` each accept `str | None` as the config path. When `None`, only defaults and env vars are used. Env vars are applied inside the load functions; CLI overrides are applied afterwards in `main()` by checking `if args.x is not None`. Master doesn't use `load_master()` — `master/master.py` reads layers directly via `config_store.read_file_values()`, `read_env_values()`, `read_db_values()`, then calls `compute_effective()` and `apply_to_config()`.
 
 ## Master
 
@@ -70,8 +78,10 @@ config file  <  environment variable  <  CLI flag
 
 | File | Purpose |
 |------|---------|
-| `master/master.py` | CLI (`--bind`, `--api-port`, `--config`), starts uvicorn (with TLS if configured) |
-| `master/api.py` | FastAPI app; module-level `_config` set via `set_config()` before uvicorn starts |
+| `master/master.py` | CLI (`--bind`, `--api-port`, `--config`), reads config layers, seeds DB on first run, starts uvicorn |
+| `master/api.py` | FastAPI app; module-level `_config`, `_config_path`, `_cli_values` set via `set_config()` / `set_config_layers()` before uvicorn starts. Exposes `/master/config` CRUD endpoints that mutate the DB layer and call `_reapply_config()` |
+| `master/config_store.py` | Field registry (`MASTER_FIELDS`), layer readers (`read_file_values`, `read_env_values`, `read_db_values`, `default_values`), `compute_effective()` and `apply_to_config()`, DB ops (`set_db_value`, `delete_db_value`, `initialize_from_layers`) |
+| `master/settings.py` | `MasterSetting` key/value table — stores `config.*` entries plus scan-scheduler settings |
 | `master/registry.py` | In-memory `WorkerRegistry`; workers identified by numeric `id` (int, auto) and `config_id` (string, from config file) |
 | `master/scanner.py` | `collect(file_path) → VideoFile` — reads stat, computes checksum |
 | `master/database.py` | Engine + `SessionLocal` + `get_db()` for `master.db` |
@@ -88,6 +98,11 @@ config file  <  environment variable  <  CLI flag
 - `POST /jobs/claim {"worker_id": "...", "count": N}` — worker claims N PENDING records; master marks them ASSIGNED and returns relative paths
 - `POST /files/{id}/sync {"worker_id": N}` — called by worker after ffmpeg completes; master fetches the record from worker and updates its own DB
 - `GET /files?status=...` — query master DB, filterable by status
+- `GET /master/config` — full layered view `{fields, values, sources, file, env, db, cli, config_file}`
+- `PATCH /master/config/{key}` — body `{value}`, writes DB override, reapplies live config
+- `DELETE /master/config/{key}` — clears DB override; effective value falls back through env → file → default
+- `POST /master/config/{key}/restore` — body `{source: "file"|"env"|"default"}`, copies that layer into DB
+- `GET /master/stats` — probe rate (last 60 s), scan rate, probe queue depth, average conversion time
 
 **Scan state** is held in a module-level `_ScanState` instance in `master/api.py`. The background task runs as an `asyncio.Task`, yields with `await asyncio.sleep(0)` between files, and is cancellable via `/scan/stop`.
 
@@ -99,6 +114,13 @@ config file  <  environment variable  <  CLI flag
 | `PACKA_MASTER_API_PORT` | `[master].api_port` |
 | `PACKA_MASTER_PREFIX` | `[master.paths].prefix` |
 | `PACKA_MASTER_EXTENSIONS` | `[master.scan].extensions` (comma-separated) |
+| `PACKA_MASTER_MIN_SIZE` | `[master.scan].min_size` (MB) |
+| `PACKA_MASTER_MAX_SIZE` | `[master.scan].max_size` (MB) |
+| `PACKA_MASTER_CHECKSUM_BYTES` | `[master.scan].checksum_bytes` |
+| `PACKA_MASTER_PROBE_BATCH_SIZE` | `[master.scan].probe_batch_size` |
+| `PACKA_MASTER_PROBE_INTERVAL` | `[master.scan].probe_interval` |
+| `PACKA_MASTER_SCAN_PERIODIC_ENABLED` | `[master.scan.periodic].enabled` |
+| `PACKA_MASTER_SCAN_INTERVAL` | `[master.scan.periodic].interval` (seconds) |
 | `PACKA_MASTER_TLS_CERT` | `[master.tls].cert` |
 | `PACKA_MASTER_TLS_KEY` | `[master.tls].key` |
 | `PACKA_TLS_CA` | `[tls].ca` (shared) |
@@ -191,7 +213,7 @@ Browser talks HTTP(S) to the web process. Web process talks mTLS to master and w
 - **Files** — filterable by status chip, searchable by filename or worker name. Bulk actions (same as modal) live in the table header row so the list never jumps. Prefix stripped from displayed paths; full path in `title`.
 - **Statistics** — aggregated and per-worker stats: jobs, input/output bytes, space saved, compression ratio, avg duration.
 - **Workers** — per-worker cards with live ffmpeg progress (%, FPS, speed, bitrate, current→projected size), encoder selector, batch size, pause/drain/stop/sleep controls and settings panel.
-- **Scan** — manual scan trigger, periodic scan toggle with interval.
+- **Master** — four stat cards (avg conversion, probe rate, scan speed, probe queue), probe-progress bar, scanner controls, and editable master configuration form. Each row has per-value Save / Restore from file / Restore from env / Default / Revert buttons; edits are PATCHed to the database layer and applied live (`requires_restart` fields pop a restart-required toast). The underlying source (`default`/`file`/`env`/`db`/`cli`) is tracked server-side and decides whether the Revert button appears, but it's not rendered as a badge.
 - **Settings** — poll interval selector.
 
 **Polling guard:** `isEditing()` returns true when any input/select/textarea has focus, any worker settings panel is open, or any modal files are selected. When true, `renderActiveTab()` and `updateFromData()` are skipped so in-progress edits are never wiped by a poll.
@@ -201,13 +223,14 @@ Browser talks HTTP(S) to the web process. Web process talks mTLS to master and w
 **Themes:** `data-theme` attribute on `<html>`. Inline `<script>` in `<head>` applies the stored preference before first render (no flash). IBM Plex fonts served from `/static/fonts/` — no Google Fonts request.
 
 **BFF action endpoints in `web/app.py`:**
-- `POST /data/scan/start|stop`, `POST /data/scan/settings`
+- `POST /data/scan/start|stop`
 - `POST /data/files/pending|cancel|delete|assign`
 - `POST /data/worker/action` (stop/pause/resume/drain/sleep/wake — validated against allowlist)
 - `POST /data/worker/encoder`, `GET/POST /data/worker` (settings)
 - `POST /data/transfer`, `POST /data/workers/register`, `DELETE /data/workers/{worker_id}`
 - `GET /data/dashboard`, `GET /data/files`, `GET /data/files/duplicate-pairs`
 - `GET /data/stats`, `GET /data/stats/worker`
+- `PATCH /data/master/config/{key}`, `DELETE /data/master/config/{key}`, `POST /data/master/config/{key}/restore` — thin proxies to the master's `/master/config` CRUD endpoints
 
 **Auth:** `SessionMiddleware` (starlette) with `secret_key` from config. Session stores `{"user": username}` after successful login. Auth is **optional** — if `username` or `password` is empty/missing, all routes are accessible without login. `secret_key` is auto-generated at startup if not set (sessions won't survive restarts).
 

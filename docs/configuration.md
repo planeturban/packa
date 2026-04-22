@@ -9,12 +9,16 @@ cp packa.example.toml packa.toml
 Settings are applied in this order — later wins:
 
 ```
-config file  <  environment variable  <  CLI flag
+default  <  config file  <  environment variable  <  database  <  CLI flag
 ```
+
+Worker and web processes use the three-layer form (`config file < env < CLI`). Master adds a **database layer** backed by its `master_settings` table — values edited from the dashboard live here and override file and env but never the CLI.
 
 ---
 
 ## Master
+
+The master can start with no config file at all — every setting has a built-in default. The dashboard's **Master** tab exposes every key as an editable form, writes edits to the database, and shows which layer each value currently comes from. See [UI reference — Master tab](ui.md#master-tab) for the editor.
 
 ```toml
 [master]
@@ -22,13 +26,19 @@ bind     = "localhost"   # use "any" for 0.0.0.0
 api_port = 9000
 
 [master.paths]
-prefix = "/mnt/data/"   # stripped before sending paths to workers; used as scan root
+prefix = "/mnt/data/"   # stripped before sending paths to workers; used as scan root (empty disables the scanner)
 
 [master.scan]
 extensions = [".mkv", ".mp4", ".avi", ".mov"]
-# min_size = 0           # MB — 0 = no limit
+# min_size = 0                # MB — 0 = no limit
 # max_size = 0
-# checksum_bytes = 4194304   # bytes read from middle of file for duplicate detection (default 4 MB)
+# checksum_bytes = 4194304    # bytes read from middle of file for duplicate detection (default 4 MB)
+# probe_batch_size = 20       # files probed concurrently per tick
+# probe_interval = 60         # seconds to sleep when the probe queue is empty
+
+# [master.scan.periodic]
+# enabled  = false            # periodic re-scan of the path prefix
+# interval = 60               # seconds between periodic scans (min 10)
 ```
 
 | Environment variable | Config key |
@@ -40,6 +50,19 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 | `PACKA_MASTER_MIN_SIZE` | `master.scan.min_size` (MB) |
 | `PACKA_MASTER_MAX_SIZE` | `master.scan.max_size` (MB) |
 | `PACKA_MASTER_CHECKSUM_BYTES` | `master.scan.checksum_bytes` |
+| `PACKA_MASTER_PROBE_BATCH_SIZE` | `master.scan.probe_batch_size` |
+| `PACKA_MASTER_PROBE_INTERVAL` | `master.scan.probe_interval` |
+| `PACKA_MASTER_SCAN_PERIODIC_ENABLED` | `master.scan.periodic.enabled` |
+| `PACKA_MASTER_SCAN_INTERVAL` | `master.scan.periodic.interval` (seconds) |
+
+### Database layer and runtime edits
+
+On first start the master seeds `master_settings` with the effective file + env + default values. From then on the database row wins over file and env; edits from the dashboard are persisted immediately.
+
+- **Save** — writes the new value to the database. For `bind` and `api_port` the change takes effect on the next restart; everything else is picked up live.
+- **Restore from file / env / default** — copies that layer's value into the database. Use this when you want to pin a known-working value against future edits.
+- **Revert** — deletes the database override so the value falls back through env → file → default.
+- **CLI flags** (`--bind`, `--api-port`) are never persisted. While a flag is active the database row is still editable but only takes effect after the process is restarted without the flag; the editor shows a notice in that case.
 
 ---
 
@@ -93,7 +116,7 @@ Each `[worker.ffmpeg.encoder.<key>]` section defines one encoder. Only the encod
 | `video_args` | ffmpeg video codec arguments, placed after `-i` |
 | `input_args` | Optional ffmpeg input options placed **before** `-i` (e.g. `-hwaccel vaapi`) |
 
-The active encoder defaults to the first defined encoder and can be changed at runtime from the dashboard; the choice is persisted in `worker.db`.
+The active encoder defaults to the first defined encoder and can be changed at runtime from the dashboard; the choice is persisted in `worker.db`. Adding, removing, or modifying encoder presets requires editing `packa.toml` and restarting the worker.
 
 The **Replace original** flag (also in the worker modal) moves the converted file back to the source path on success. If the move fails, the record is set to `error`. This setting is persisted in `worker.db` and is off by default.
 
