@@ -1016,6 +1016,8 @@ function renderWorkerCard(s) {
   const showCmd = !!ST.workerCmdOpen[s.config_id];
   const currentFile = s.current_file || '';
   const currentFileName = currentFile ? currentFile.split('/').pop() : '…';
+  const notOnboarded = !s.tls_enabled && !!((ST.data.tls_status||{}).enabled);
+  const disableControls = notOnboarded || s.unconfigured;
 
   return `
   <div class="worker-card ${isProcessing?'active':''}">
@@ -1067,15 +1069,15 @@ function renderWorkerCard(s) {
     <div class="worker-controls">
       ${isProcessing ? `
         ${s.drain
-          ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')">${svgIcon('play',12)} Resume</button>`
+          ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')" ${disableControls?'disabled':''}>${svgIcon('play',12)} Resume</button>`
           : isPaused
-            ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')">${svgIcon('play',12)} Resume</button>`
-            : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'pause')">${svgIcon('pause',12)} Pause</button>`
+            ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')" ${disableControls?'disabled':''}>${svgIcon('play',12)} Resume</button>`
+            : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'pause')" ${disableControls?'disabled':''}>${svgIcon('pause',12)} Pause</button>`
         }
-        <button class="btn btn-sm btn-danger" onclick="workerAction('${esc(s.host)}',${s.api_port},'stop')">${svgIcon('stop',12)} Stop</button>
-        <button class="btn btn-sm ${s.drain?'btn-primary':''}" onclick="workerAction('${esc(s.host)}',${s.api_port},'drain')">Drain</button>
+        <button class="btn btn-sm btn-danger" onclick="workerAction('${esc(s.host)}',${s.api_port},'stop')" ${disableControls?'disabled':''}>${svgIcon('stop',12)} Stop</button>
+        <button class="btn btn-sm ${s.drain?'btn-primary':''}" onclick="workerAction('${esc(s.host)}',${s.api_port},'drain')" ${disableControls?'disabled':''}>Drain</button>
       ` : isSleeping ? `
-        <button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')">${svgIcon('play',12)} Wake</button>
+        <button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')" ${disableControls?'disabled':''}>${svgIcon('play',12)} Wake</button>
         <button class="btn btn-sm" disabled>${svgIcon('stop',12)} Stop</button>
         <button class="btn btn-sm" disabled>Drain</button>
       ` : `
@@ -1084,12 +1086,13 @@ function renderWorkerCard(s) {
         <button class="btn btn-sm" disabled>Drain</button>
       `}
       ${isSleeping
-        ? `<button class="btn btn-primary btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')">${svgIcon('play',12)} Wake</button>`
-        : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'sleep')">${svgIcon('moon',12)} Sleep</button>`
+        ? `<button class="btn btn-primary btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')" ${disableControls?'disabled':''}>${svgIcon('play',12)} Wake</button>`
+        : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'sleep')" ${disableControls?'disabled':''}>${svgIcon('moon',12)} Sleep</button>`
       }
       <button class="btn btn-sm" onclick="toggleWorkerSettings('${esc(s.config_id)}')">${svgIcon('settings',12)} Settings</button>
-      ${s.current_cmd ? `<button class="btn btn-sm ${showCmd?'btn-primary':''}" onclick="toggleWorkerCmd('${esc(s.config_id)}')">CMD</button>` : ''}
-      <button class="btn btn-sm" style="margin-left:auto" onclick="restartWorker('${esc(s.host)}',${s.api_port})" title="Restart worker process">Restart</button>
+      ${s.current_cmd ? `<button class="btn btn-sm ${showCmd?'btn-primary':''}" onclick="toggleWorkerCmd('${esc(s.config_id)}')" ${disableControls?'disabled':''}>CMD</button>` : ''}
+      <button class="btn btn-sm" style="margin-left:auto" onclick="restartWorker('${esc(s.host)}',${s.api_port})" ${disableControls?'disabled':''} title="Restart worker process">Restart</button>
+      ${notOnboarded ? `<button class="btn btn-sm btn-primary" onclick="onboardWorkerTls('${esc(s.host)}',${s.api_port})" title="Bootstrap TLS for this worker">Onboard TLS</button>` : ''}
       <button class="btn btn-sm btn-danger" onclick="deregisterWorker('${esc(s.config_id)}')" title="Deregister">${svgIcon('trash',12)}</button>
     </div>
 
@@ -1225,6 +1228,53 @@ async function deregisterWorker(configId) {
   } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
 }
 
+// ── TLS helpers ──────────────────────────────────────────────────────────────
+function fmtTokenExpiry(expiresAt) {
+  if (!expiresAt) return null;
+  const diff = Math.floor((new Date(expiresAt) - Date.now()) / 1000);
+  if (diff <= 0) return 'expired';
+  if (diff < 60) return `${diff}s`;
+  return `${Math.floor(diff / 60)}m ${diff % 60}s`;
+}
+
+async function generateToken() {
+  const btn = document.getElementById('btn-gen-token');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+  try {
+    await fetch('/data/tls/token', {method: 'POST'});
+    await fetchAll();
+    renderActiveTab();
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Generate token'; }
+  }
+}
+
+function renderTlsCard(tlsStatus, tlsToken) {
+  if (!tlsStatus || !tlsStatus.enabled) return '';
+  const fp = tlsStatus.ca_fingerprint;
+  const token = tlsToken && tlsToken.token ? tlsToken.token : null;
+  const expiresAt = tlsToken && tlsToken.expires_at ? tlsToken.expires_at : null;
+  const expStr = fmtTokenExpiry(expiresAt);
+  const tokenHtml = token
+    ? `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <code style="font-size:12px;background:var(--bg-subtle);padding:4px 8px;border-radius:4px;word-break:break-all">${esc(token)}</code>
+        <span style="font-size:11px;color:var(--text-dim)">${expStr ? `expires in ${expStr}` : ''}</span>
+       </div>`
+    : `<span style="font-size:12px;color:var(--text-dim)">No active token</span>`;
+  return `
+    <div class="card" style="margin-top:16px">
+      <div class="card-title">TLS / mTLS</div>
+      ${fp ? `<div style="font-size:11px;color:var(--text-dim);margin-bottom:10px">CA fingerprint: <code style="font-size:11px">${esc(fp)}</code></div>` : ''}
+      <div style="margin-bottom:8px;font-size:12px;color:var(--text-dim)">Bootstrap token (10 min, multi-use)</div>
+      <div style="margin-bottom:10px">${tokenHtml}</div>
+      <button id="btn-gen-token" class="btn btn-sm" onclick="generateToken()">Generate token</button>
+      <div style="font-size:11px;color:var(--text-faint);margin-top:6px">
+        Workers and web use this token with <code>bootstrap_token</code> in their config to obtain a client certificate.
+      </div>
+    </div>
+  `;
+}
+
 // ── Scan tab ─────────────────────────────────────────────────────────────────
 function renderScan() {
   const el = document.getElementById('tab-master');
@@ -1233,6 +1283,8 @@ function renderScan() {
   const scan = data.scan || {running: false};
   const meta = data.master_meta || {};
   const cfg = data.master_config || {};
+  const tlsStatus = data.tls_status || {};
+  const tlsToken  = data.tls_token  || {};
   const running = scan.running;
   const scanned = scan.scanned || 0;
   const total = scan.total || 0;
@@ -1310,6 +1362,8 @@ function renderScan() {
       </div>` : ''}
 
       ${configCard}
+
+      ${renderTlsCard(tlsStatus, tlsToken)}
 
       <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-subtle);display:flex;align-items:center;gap:8px">
         <button class="btn btn-sm btn-danger" onclick="restartMaster()" title="Restart the master process">Restart master</button>
@@ -1631,6 +1685,20 @@ async function restartMaster() {
     if (!r.ok) throw new Error(await r.text());
     toast('Master restarting…', 'info');
   } catch (e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function onboardWorkerTls(host, port) {
+  try {
+    const r = await fetch('/data/worker/tls/onboard', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({host, port}),
+    });
+    if (!r.ok) throw new Error((await r.json()).error || await r.text());
+    toast('TLS onboarded — worker restarting', 'info');
+  } catch (e) {
+    toast(`Onboard failed: ${e.message}`, 'error');
+  }
 }
 
 async function restartWorker(host, port) {

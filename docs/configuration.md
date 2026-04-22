@@ -39,6 +39,11 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 # [master.scan.periodic]
 # enabled  = false            # periodic re-scan of the path prefix
 # interval = 60               # seconds between periodic scans (min 10)
+
+# [master.tls]                # TLS is auto-configured on first start
+# disabled = true             # opt out entirely
+# cert = "/etc/packa/master.crt"   # BYO cert (overrides auto-generated)
+# key  = "/etc/packa/master.key"
 ```
 
 | Environment variable | Config key |
@@ -54,6 +59,10 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 | `PACKA_MASTER_PROBE_INTERVAL` | `master.scan.probe_interval` |
 | `PACKA_MASTER_SCAN_PERIODIC_ENABLED` | `master.scan.periodic.enabled` |
 | `PACKA_MASTER_SCAN_INTERVAL` | `master.scan.periodic.interval` (seconds) |
+| `PACKA_MASTER_TLS_DISABLED` | `master.tls.disabled` |
+| `PACKA_MASTER_TLS_CERT` | `master.tls.cert` |
+| `PACKA_MASTER_TLS_KEY` | `master.tls.key` |
+| `PACKA_TLS_CA` | `tls.ca` (shared CA for BYO-cert setups) |
 
 ### Database layer and runtime edits
 
@@ -70,11 +79,12 @@ On first start the master seeds `master_settings` with the effective file + env 
 
 ```toml
 [worker]
-bind        = "localhost"
-api_port    = 8000
-master_host = "localhost"
-master_port = 9000
-id          = "storage-01"   # unique ID; omit to auto-generate and persist a UUID
+bind             = "localhost"
+api_port         = 8000
+master_host      = "localhost"
+master_port      = 9000
+id               = "storage-01"   # unique ID; omit to auto-generate and persist a UUID
+# bootstrap_token = ""            # copy from master log on first run; stored after bootstrap
 
 [worker.paths]
 prefix = "/mnt/files/"   # prepended to paths from master; omit to reuse master prefix
@@ -87,6 +97,10 @@ output_dir = "/mnt/output"
 [worker.worker]
 poll_interval     = 5   # seconds between polls when queue is empty
 cancel_thresholds = [[10.0, 1.10], [25.0, 1.05], [50.0, 1.0]]
+
+# [worker.tls]                     # BYO cert (overrides bootstrapped certs)
+# cert = "/etc/packa/worker.crt"
+# key  = "/etc/packa/worker.key"
 ```
 
 `cancel_thresholds` is a list of `[progress%, ratio]` pairs. Once the given progress percentage is reached, ffmpeg is terminated early if the projected output size exceeds `source_size × ratio`. The tightest (highest progress) reached threshold applies. Set to `[]` to disable. As an environment variable: `PACKA_WORKER_CANCEL_THRESHOLDS=10.0:1.10,25.0:1.05,50.0:1.0`.
@@ -105,6 +119,10 @@ cancel_thresholds = [[10.0, 1.10], [25.0, 1.05], [50.0, 1.0]]
 | `PACKA_WORKER_FFMPEG_EXTRA_ARGS` | `worker.ffmpeg.extra_args` |
 | `PACKA_WORKER_POLL_INTERVAL` | `worker.worker.poll_interval` |
 | `PACKA_WORKER_CANCEL_THRESHOLDS` | `worker.worker.cancel_thresholds` (format: `"10.0:1.10,25.0:1.05"`) |
+| `PACKA_WORKER_BOOTSTRAP_TOKEN` | `worker.bootstrap_token` |
+| `PACKA_WORKER_TLS_CERT` | `worker.tls.cert` |
+| `PACKA_WORKER_TLS_KEY` | `worker.tls.key` |
+| `PACKA_TLS_CA` | `tls.ca` (shared CA for BYO-cert setups) |
 
 ### Encoder presets
 
@@ -155,8 +173,14 @@ master_port = 9000
 
 username   = "admin"      # omit username or password to disable authentication
 password   = "change-me"
-secret_key = "long-random-string"   # auto-generated if omitted (sessions won't survive restarts)
+# bootstrap_token = ""    # copy from master log on first run; stored after bootstrap
+
+# [web.tls]               # BYO cert (overrides bootstrapped certs)
+# cert = "/etc/packa/web.crt"
+# key  = "/etc/packa/web.key"
 ```
+
+`secret_key` is auto-generated and persisted in `web.db` — no need to set it manually.
 
 | Environment variable | Config key |
 |----------------------|------------|
@@ -167,3 +191,7 @@ secret_key = "long-random-string"   # auto-generated if omitted (sessions won't 
 | `PACKA_WEB_USERNAME` | `web.username` |
 | `PACKA_WEB_PASSWORD` | `web.password` |
 | `PACKA_WEB_SECRET_KEY` | `web.secret_key` |
+| `PACKA_WEB_BOOTSTRAP_TOKEN` | `web.bootstrap_token` |
+| `PACKA_WEB_TLS_CERT` | `web.tls.cert` |
+| `PACKA_WEB_TLS_KEY` | `web.tls.key` |
+| `PACKA_TLS_CA` | `tls.ca` (shared CA for BYO-cert setups) |

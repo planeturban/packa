@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass
 
 from shared.config import EncoderPreset
+from shared.tls import TlsConfig
 
 
 @dataclass
@@ -35,6 +36,8 @@ class WorkerState:
         self.worker_config_id: str | None = None
         self.petname: str = ""
         self.master_url: str | None = None
+
+        self.tls: TlsConfig = TlsConfig()
 
         self.paused: bool = False
         self.drain: bool = False

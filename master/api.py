@@ -42,6 +42,10 @@ from . import config_store
 from .database import SessionLocal, engine, get_db
 from .registry import registry
 from .scanner import collect
+from .tls_manager import (
+    consume_token, generate_token, get_ca_fingerprint,
+    get_token_info, issue_client_cert, renew_client_cert,
+)
 
 Base.metadata.create_all(bind=engine)
 migrate(engine)
@@ -313,6 +317,7 @@ class WorkerRegister(BaseModel):
     config_id: str = ""
     host: str
     api_port: int
+    scheme: str = "http"
 
 
 class WorkerOut(BaseModel):
@@ -320,6 +325,7 @@ class WorkerOut(BaseModel):
     config_id: str
     host: str
     api_port: int
+    scheme: str = "http"
 
 
 class TransferRequest(BaseModel):
@@ -372,7 +378,7 @@ class ScanStatus(BaseModel):
 
 @app.post("/workers", response_model=WorkerOut, status_code=201)
 def register_worker(body: WorkerRegister):
-    worker = registry.register(body.config_id, body.host, body.api_port)
+    worker = registry.register(body.config_id, body.host, body.api_port, body.scheme)
     print(f"[master] registered: {worker}")
     return worker
 
@@ -692,9 +698,10 @@ async def delete_file(record_id: int, db: Session = Depends(get_db)):
     if record.worker_id:
         worker = registry.get_by_config_id(record.worker_id)
         if worker:
-            url = f"http://{worker.host}:{worker.api_port}/files/{record_id}"
+            from shared.tls import scheme as _scheme
+            url = f"{_scheme(_config.tls)}://{worker.host}:{worker.api_port}/files/{record_id}"
             try:
-                async with httpx.AsyncClient(timeout=5) as client:
+                async with httpx.AsyncClient(timeout=5, **_config.tls.httpx_kwargs()) as client:
                     await client.delete(url)
             except Exception:
                 pass
@@ -731,3 +738,56 @@ def scan_stop():
 def scan_status():
     return ScanStatus(running=_scan.running, found=_scan.found, skipped=_scan.skipped,
                       errors=_scan.errors, path=_config.path_prefix)
+
+
+# ---------------------------------------------------------------------------
+# TLS bootstrap and token management
+# ---------------------------------------------------------------------------
+
+class BootstrapRequest(BaseModel):
+    token: str
+    cn: str = "node"
+
+
+class CertBundle(BaseModel):
+    cert_pem: str
+    key_pem: str
+    ca_pem: str
+
+
+@app.post("/bootstrap", response_model=CertBundle)
+def bootstrap_node(body: BootstrapRequest, db: Session = Depends(get_db)):
+    """Exchange a valid bootstrap token for a client cert bundle (TLS must be enabled)."""
+    if _config.tls.disabled:
+        raise HTTPException(status_code=400, detail="TLS is disabled on this master")
+    if not consume_token(db, body.token):
+        raise HTTPException(status_code=401, detail="Invalid or expired bootstrap token")
+    cn = body.cn or "node"
+    cert_pem, key_pem, ca_pem = issue_client_cert(db, cn)
+    print(f"[tls] issued cert for {cn!r}")
+    return CertBundle(cert_pem=cert_pem, key_pem=key_pem, ca_pem=ca_pem)
+
+
+@app.get("/tls/token")
+def get_tls_token(db: Session = Depends(get_db)):
+    """Return current bootstrap token info, or empty dict if none/expired."""
+    return get_token_info(db) or {}
+
+
+@app.post("/tls/token")
+def create_tls_token(db: Session = Depends(get_db)):
+    """Generate a new bootstrap token (10-minute TTL, multi-use within window)."""
+    token = generate_token(db)
+    info = get_token_info(db)
+    print(f"[tls] new bootstrap token: {token}")
+    return info
+
+
+@app.get("/tls/status")
+def get_tls_status(db: Session = Depends(get_db)):
+    """Return TLS state and CA fingerprint."""
+    fp = get_ca_fingerprint(db)
+    return {
+        "enabled": not _config.tls.disabled,
+        "ca_fingerprint": fp,
+    }

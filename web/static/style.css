@@ -563,6 +563,14 @@ input[type="checkbox"] {
   font-size: 13px;
   margin-bottom: 16px;
 }
+.login-info {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
 
 /* ── Bulk selection bar ─────────────────────────────────────────────── */
 .bulk-bar {

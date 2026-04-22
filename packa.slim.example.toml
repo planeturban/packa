@@ -1,8 +1,15 @@
 # Packa — copy to packa.toml and adjust.
+#
+# TLS is on by default. Master prints a bootstrap token on first start.
+# Set bootstrap_token in [worker] and [web] to obtain TLS certs automatically.
+# To disable TLS: uncomment [master.tls] disabled = true.
 
 [master]
 bind     = "localhost"   # "any" for 0.0.0.0
 api_port = 9000
+
+# [master.tls]
+# disabled = true   # uncomment for plain HTTP
 
 [master.paths]
 prefix = "/mnt/data/"   # stripped from paths before sending to workers
@@ -15,11 +22,12 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 # ---------------------------------------------------------------------------
 
 [worker]
-bind        = "localhost"
-api_port    = 8000
-master_host = "localhost"
-master_port = 9000
-id          = "storage-01"   # omit to auto-generate and persist a UUID
+bind             = "localhost"
+api_port         = 8000
+master_host      = "localhost"
+master_port      = 9000
+id               = "storage-01"   # omit to auto-generate and persist a UUID
+# bootstrap_token  = ""            # copy from master log; remove after first run
 
 [worker.paths]
 prefix = "/mnt/files/"   # prepended to paths from master; omit to reuse master prefix
@@ -49,10 +57,10 @@ poll_interval     = 5
 # ---------------------------------------------------------------------------
 
 [web]
-bind        = "localhost"
-port        = 8080
-master_host = "localhost"
-master_port = 9000
-username    = "admin"
-password    = "change-me"
-secret_key  = "change-me-use-a-long-random-string"
+bind             = "localhost"
+port             = 8080
+master_host      = "localhost"
+master_port      = 9000
+username         = "admin"
+password         = "change-me"
+# bootstrap_token  = ""   # copy from master log; remove after first run

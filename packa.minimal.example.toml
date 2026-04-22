@@ -4,13 +4,17 @@
 #   python -m master.master --config packa.toml
 #   python -m worker.main   --config packa.toml
 #   python -m web.main      --config packa.toml
+#
+# TLS setup: start master first → copy the bootstrap token from the log →
+# add bootstrap_token to [worker] and [web] → start them.
 
 [master.paths]
 prefix = "/mnt/data/"   # root directory for scanning; stripped from paths sent to workers
 
 [worker]
-master_host = "localhost"
-master_port = 9000
+master_host     = "localhost"
+master_port     = 9000
+# bootstrap_token = ""   # paste token from master startup log; remove after first run
 
 [worker.paths]
 prefix = "/mnt/files/"  # prepended to relative paths received from master
@@ -23,5 +27,6 @@ display_name = "Software"
 video_args   = "-c:v libx265"
 
 [web]
-master_host = "localhost"
-master_port = 9000
+master_host     = "localhost"
+master_port     = 9000
+# bootstrap_token = ""   # paste token from master startup log; remove after first run

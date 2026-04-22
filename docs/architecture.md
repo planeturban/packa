@@ -110,14 +110,15 @@ A worker's ID is resolved in this order:
 
 ## Security
 
-**Packa has no security between nodes and is intended for trusted networks only.**
+**mTLS is opt-in and recommended.**
 
-- No authentication between master, workers and the web process — any host that can reach the master API can register as a worker, claim jobs, or manipulate records. The same applies to worker APIs.
-- All inter-node communication is plain HTTP.
-- Web authentication (username/password) is optional and protects only the browser-facing interface, not the underlying master or worker APIs.
-- Inter-node authentication is not yet implemented and is planned for a future release.
-
-Run Packa on an isolated network or behind a firewall. Do not expose master or worker ports to untrusted networks.
+- On first start master auto-generates a CA and server cert (stored in `master.db`) and prints a **bootstrap token** (valid 10 minutes, multi-use) to the log.
+- Workers and the web process exchange this token for a signed client cert via `POST /bootstrap`. The first connection uses TOFU (`verify=False`); all subsequent connections verify against the CA.
+- Bootstrapped certs are persisted in `worker.db` and `web.db` and loaded automatically on restart.
+- Set `[master.tls] disabled = true` to opt out entirely.
+- BYO certs are supported — set `cert`/`key` in the relevant `[*.tls]` section and those override any bootstrapped certs.
+- Web authentication (username/password) is optional and protects the browser-facing interface. `secret_key` is auto-generated and persisted in `web.db`.
+- Master and worker APIs have no per-request authentication beyond mTLS — do not expose them to untrusted networks without TLS enabled.
 
 ---
 

@@ -4,26 +4,28 @@ Worker entry point.
 Configuration priority: config file < environment variables < CLI flags.
 
 Environment variables:
-  PACKA_WORKER_BIND            Bind address
-  PACKA_WORKER_API_PORT        API port
-  PACKA_WORKER_ID              Worker ID (falls back to worker.db if unset)
-  PACKA_WORKER_PREFIX          Path prefix for incoming file paths
-  PACKA_WORKER_MASTER_HOST     Master hostname/IP
-  PACKA_WORKER_MASTER_PORT     Master API port
-  PACKA_WORKER_ADVERTISE_HOST  IP/hostname advertised to master
-  PACKA_WORKER_FFMPEG_BIN      Path to ffmpeg binary
-  PACKA_WORKER_FFMPEG_OUTPUT_DIR  Directory for converted files
-  PACKA_WORKER_FFMPEG_EXTRA_ARGS  Extra ffmpeg arguments
-  PACKA_WORKER_BATCH_SIZE      Jobs to claim per poll
-  PACKA_WORKER_POLL_INTERVAL   Seconds between poll attempts
+  PACKA_WORKER_BIND              Bind address
+  PACKA_WORKER_API_PORT          API port
+  PACKA_WORKER_ID                Worker ID (falls back to worker.db if unset)
+  PACKA_WORKER_PREFIX            Path prefix for incoming file paths
+  PACKA_WORKER_MASTER_HOST       Master hostname/IP
+  PACKA_WORKER_MASTER_PORT       Master API port
+  PACKA_WORKER_ADVERTISE_HOST    IP/hostname advertised to master
+  PACKA_WORKER_FFMPEG_BIN        Path to ffmpeg binary
+  PACKA_WORKER_FFMPEG_OUTPUT_DIR Directory for converted files
+  PACKA_WORKER_FFMPEG_EXTRA_ARGS Extra ffmpeg arguments
+  PACKA_WORKER_BATCH_SIZE        Jobs to claim per poll
+  PACKA_WORKER_POLL_INTERVAL     Seconds between poll attempts
+  PACKA_WORKER_BOOTSTRAP_TOKEN   One-time token to obtain a TLS cert from master
 
 Flags:
-  --bind            Address to bind the server ("any" → 0.0.0.0)
-  --api-port        Metadata API port
-  --master-host     Master hostname/IP
-  --master-port     Master API port
-  --advertise-host  IP/hostname to advertise to master (auto-detected if omitted)
-  --config          Path to TOML config file
+  --bind             Address to bind the server ("any" → 0.0.0.0)
+  --api-port         Metadata API port
+  --master-host      Master hostname/IP
+  --master-port      Master API port
+  --advertise-host   IP/hostname to advertise to master (auto-detected if omitted)
+  --bootstrap-token  One-time token to obtain a TLS cert from master on first run
+  --config           Path to TOML config file
 
 Usage:
   python -m worker.main --config packa.toml
@@ -40,14 +42,16 @@ def _ts_print(*args, **kwargs):
     _orig_print(datetime.now().strftime('%H:%M:%S'), *args, **kwargs)
 builtins.print = _ts_print
 
+import httpx
 import uvicorn
 
 from shared.config import load_worker
 from shared.log import UVICORN_LOG_CONFIG
+from shared.tls import scheme
 
 from . import config_store
 from .api import app, set_config, set_config_layers, set_registration_params
-from .store import get_stored_worker_id, set_setting
+from .store import get_setting, get_stored_worker_id, set_setting
 
 
 def _detect_host() -> str:
@@ -59,7 +63,56 @@ def _detect_host() -> str:
         return socket.gethostbyname(socket.gethostname())
 
 
-async def _main(bind: str, api_port: int, advertise_host: str | None, worker_id: str) -> None:
+def _bootstrap_tls(config) -> None:
+    """Load stored TLS certs or fetch from master using bootstrap_token."""
+    cert_pem = get_setting("tls.cert")
+    key_pem  = get_setting("tls.key")
+    ca_pem   = get_setting("tls.ca")
+
+    if cert_pem and key_pem and ca_pem:
+        config.tls.cert_pem = cert_pem
+        config.tls.key_pem  = key_pem
+        config.tls.ca_pem   = ca_pem
+        print("[worker] TLS certs loaded from store")
+        return
+
+    if not config.bootstrap_token:
+        return
+
+    # Try HTTPS first (verify=False — TOFU on first connection), then fall back to HTTP.
+    r = None
+    for scheme, verify in (("https", False), ("http", True)):
+        try:
+            r = httpx.post(
+                f"{scheme}://{config.master_host}:{config.master_port}/bootstrap",
+                json={"token": config.bootstrap_token, "cn": config.worker_id or "worker"},
+                verify=verify,
+                timeout=10,
+            )
+            r.raise_for_status()
+            break
+        except Exception:
+            r = None
+    if r is None:
+        print("[worker] TLS bootstrap failed: could not reach master on https or http")
+        return
+    try:
+        bundle = r.json()
+        cert_pem = bundle["cert_pem"]
+        key_pem  = bundle["key_pem"]
+        ca_pem   = bundle["ca_pem"]
+        set_setting("tls.cert", cert_pem)
+        set_setting("tls.key",  key_pem)
+        set_setting("tls.ca",   ca_pem)
+        config.tls.cert_pem = cert_pem
+        config.tls.key_pem  = key_pem
+        config.tls.ca_pem   = ca_pem
+        print("[worker] TLS bootstrap successful")
+    except Exception as exc:
+        print(f"[worker] TLS bootstrap failed: {exc}")
+
+
+async def _main(bind: str, api_port: int, advertise_host: str | None, worker_id: str, tls) -> None:
     if advertise_host:
         effective_host = advertise_host
     elif bind == "0.0.0.0":
@@ -67,8 +120,9 @@ async def _main(bind: str, api_port: int, advertise_host: str | None, worker_id:
     else:
         effective_host = bind
     set_registration_params(effective_host, worker_id)
+    tls_kwargs = tls.uvicorn_tls_kwargs()
     uvi_config = uvicorn.Config(app, host=bind, port=api_port, log_level="info",
-                                log_config=UVICORN_LOG_CONFIG)
+                                log_config=UVICORN_LOG_CONFIG, **tls_kwargs)
     await uvicorn.Server(uvi_config).serve()
 
 
@@ -81,6 +135,8 @@ def main() -> None:
     parser.add_argument("--master-port", type=int, default=None, help="Master API port")
     parser.add_argument("--advertise-host", default=None,
                         help="IP/hostname to advertise to master (auto-detected if omitted)")
+    parser.add_argument("--bootstrap-token", default=None,
+                        help="One-time token to obtain a TLS cert from master on first run")
     parser.add_argument("--config", help="Path to TOML config file")
     args = parser.parse_args()
 
@@ -99,6 +155,8 @@ def main() -> None:
         args.advertise_host if args.advertise_host is not None
         else config.advertise_host or None
     )
+    if args.bootstrap_token is not None:
+        config.bootstrap_token = args.bootstrap_token
 
     # Seed/load worker config store (DB layer)
     file_values = config_store.read_file_values(args.config)
@@ -133,14 +191,18 @@ def main() -> None:
     if is_new:
         set_setting("first_run", "true")
 
+    _bootstrap_tls(config)
+
     print(f"[worker] bind: {bind}:{api_port}")
     print(f"[worker] path_prefix: {config.path_prefix!r}")
+    print(f"[worker] tls: {'enabled' if config.tls.enabled else 'disabled'}")
 
     asyncio.run(_main(
         bind=bind,
         api_port=api_port,
         advertise_host=advertise_host,
         worker_id=worker_id,
+        tls=config.tls,
     ))
 
 

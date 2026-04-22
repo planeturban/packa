@@ -103,6 +103,10 @@ The database layer (`master_settings` table, `config.*` keys) is editable at run
 - `DELETE /master/config/{key}` — clears DB override; effective value falls back through env → file → default
 - `POST /master/config/{key}/restore` — body `{source: "file"|"env"|"default"}`, copies that layer into DB
 - `GET /master/stats` — probe rate (last 60 s), scan rate, probe queue depth, average conversion time
+- `POST /bootstrap` — exchange a bootstrap token for a signed client cert bundle `{cert_pem, key_pem, ca_pem}`
+- `GET /tls/status` — CA fingerprint and enabled flag
+- `GET /tls/token` — current token info `{token, expires_at}`
+- `POST /tls/token` — generate a new bootstrap token
 
 **Scan state** is held in a module-level `_ScanState` instance in `master/api.py`. The background task runs as an `asyncio.Task`, yields with `await asyncio.sleep(0)` between files, and is cancellable via `/scan/stop`.
 
@@ -123,6 +127,7 @@ The database layer (`master_settings` table, `config.*` keys) is editable at run
 | `PACKA_MASTER_SCAN_INTERVAL` | `[master.scan.periodic].interval` (seconds) |
 | `PACKA_MASTER_TLS_CERT` | `[master.tls].cert` |
 | `PACKA_MASTER_TLS_KEY` | `[master.tls].key` |
+| `PACKA_MASTER_TLS_DISABLED` | `[master.tls].disabled` |
 | `PACKA_TLS_CA` | `[tls].ca` (shared) |
 
 ## Worker
@@ -170,6 +175,8 @@ Before starting ffmpeg, `ffprobe` checks the video codec. If the file is already
 - `POST /conversion/stop` — terminates the running ffmpeg process; sets status to `CANCELLED` with `cancel_reason="user"`
 - `POST /conversion/sleep` — enter sleep mode (no polling, no new jobs)
 - `POST /conversion/wake` — leave sleep mode
+- `POST /tls/bootstrap` — fetch cert bundle from master using a bootstrap token and self-restart
+- `POST /restart` — restart worker process in-place via `os.execv`
 
 **Worker env vars:**
 
@@ -187,6 +194,7 @@ Before starting ffmpeg, `ffprobe` checks the video codec. If the file is already
 | `PACKA_WORKER_FFMPEG_EXTRA_ARGS` | `[worker.ffmpeg].extra_args` |
 | `PACKA_WORKER_BATCH_SIZE` | `[worker.worker].batch_size` |
 | `PACKA_WORKER_POLL_INTERVAL` | `[worker.worker].poll_interval` |
+| `PACKA_WORKER_BOOTSTRAP_TOKEN` | `[worker].bootstrap_token` |
 | `PACKA_WORKER_TLS_CERT` | `[worker.tls].cert` |
 | `PACKA_WORKER_TLS_KEY` | `[worker.tls].key` |
 | `PACKA_TLS_CA` | `[tls].ca` (shared) |
@@ -212,7 +220,7 @@ Browser talks HTTP(S) to the web process. Web process talks mTLS to master and w
 - **Overview** — 8 clickable status chips (counts per status). Clicking any chip opens a modal listing matching files with checkboxes and bulk actions (Set → Pending / Cancelled, Delete, Queue to worker).
 - **Files** — filterable by status chip, searchable by filename or worker name. Bulk actions (same as modal) live in the table header row so the list never jumps. Prefix stripped from displayed paths; full path in `title`.
 - **Statistics** — aggregated and per-worker stats: jobs, input/output bytes, space saved, compression ratio, avg duration.
-- **Workers** — per-worker cards with live ffmpeg progress (%, FPS, speed, bitrate, current→projected size), encoder selector, batch size, pause/drain/stop/sleep controls and settings panel.
+- **Workers** — per-worker cards with live ffmpeg progress (%, FPS, speed, bitrate, current→projected size), encoder selector, batch size, pause/drain/stop/sleep controls and settings panel. When master has TLS active, worker cards that are not yet onboarded show an **Onboard TLS** button and have all other controls disabled.
 - **Master** — four stat cards (avg conversion, probe rate, scan speed, probe queue), probe-progress bar, scanner controls, and editable master configuration form. Each row has per-value Save / Restore from file / Restore from env / Default / Revert buttons; edits are PATCHed to the database layer and applied live (`requires_restart` fields pop a restart-required toast). The underlying source (`default`/`file`/`env`/`db`/`cli`) is tracked server-side and decides whether the Revert button appears, but it's not rendered as a badge.
 - **Settings** — poll interval selector.
 
@@ -231,8 +239,14 @@ Browser talks HTTP(S) to the web process. Web process talks mTLS to master and w
 - `GET /data/dashboard`, `GET /data/files`, `GET /data/files/duplicate-pairs`
 - `GET /data/stats`, `GET /data/stats/worker`
 - `PATCH /data/master/config/{key}`, `DELETE /data/master/config/{key}`, `POST /data/master/config/{key}/restore` — thin proxies to the master's `/master/config` CRUD endpoints
+- `GET /data/tls/token`, `POST /data/tls/token`, `GET /data/tls/status` — thin proxies to master TLS endpoints
+- `POST /data/worker/tls/onboard` — generate a new token, send it to the worker, trigger worker restart
+- `POST /restart` — restart the web process in-place via `os.execv`
+- `GET /setup/bootstrap`, `POST /setup/bootstrap` — standalone bootstrap token form (shown when web has no TLS certs)
 
-**Auth:** `SessionMiddleware` (starlette) with `secret_key` from config. Session stores `{"user": username}` after successful login. Auth is **optional** — if `username` or `password` is empty/missing, all routes are accessible without login. `secret_key` is auto-generated at startup if not set (sessions won't survive restarts).
+**Auth:** `SessionMiddleware` (starlette) with `secret_key` from config. Session stores `{"user": username}` after successful login. Auth is **optional** — if `username` or `password` is empty/missing, all routes are accessible without login. `secret_key` is **auto-generated and persisted in `web.db`** so sessions survive restarts.
+
+**TLS bootstrap:** when the web process starts without TLS certs, the login page shows a "Bootstrap token" input above the login form. The user pastes the token printed by master, clicks "Bootstrap TLS", and the web process restarts with TLS enabled. The first connection to master uses TOFU (`verify=False`) to fetch the CA cert.
 
 **Web env vars:**
 
@@ -243,6 +257,7 @@ Browser talks HTTP(S) to the web process. Web process talks mTLS to master and w
 | `PACKA_WEB_USERNAME` | `[web].username` |
 | `PACKA_WEB_PASSWORD` | `[web].password` |
 | `PACKA_WEB_SECRET_KEY` | `[web].secret_key` |
+| `PACKA_WEB_BOOTSTRAP_TOKEN` | `[web].bootstrap_token` |
 | `PACKA_WEB_MASTER_HOST` | `[web].master_host` |
 | `PACKA_WEB_MASTER_PORT` | `[web].master_port` |
 | `PACKA_WEB_TLS_CERT` | `[web.tls].cert` |
@@ -251,7 +266,11 @@ Browser talks HTTP(S) to the web process. Web process talks mTLS to master and w
 
 ## mTLS
 
-mTLS is optional and controlled entirely by config. All HTTP calls (registration, job claim, sync) use `https://` and client certificates when `tls.enabled` is true.
+mTLS is opt-in and recommended for untrusted networks. Master auto-generates a CA and server cert on first start (stored in `master.db`). It prints a **bootstrap token** (valid 10 minutes, multi-use) to the log. Workers and the web process exchange this token for a signed client cert, which is stored in `worker.db` / `web.db` and loaded on subsequent starts.
+
+The first connection to master uses TOFU (Trust On First Use) — `verify=False` to fetch the CA cert bundle. After bootstrap all connections verify against the CA.
+
+Opt out entirely with `[master.tls] disabled = true`. BYO certs are supported by setting `cert`/`key` in the relevant `[*.tls]` section.
 
 `shared/tls.py` provides four helpers:
 - `scheme(tls)` — returns `"https"` or `"http"`
@@ -293,21 +312,23 @@ prefix = "/mnt/data/"
 [master.scan]
 extensions = [".mkv", ".mp4", ".avi", ".mov"]
 
-[master.tls]               # optional
-cert = "/etc/packa/master.crt"
-key  = "/etc/packa/master.key"
+[master.tls]               # auto-generated on first start; opt out with:
+# disabled = true
+# cert = "/etc/packa/master.crt"   # BYO cert
+# key  = "/etc/packa/master.key"
 ```
 
 **Worker config fields:**
 
 ```toml
 [worker]
-bind           = "localhost"
-api_port       = 8000
-master_host    = "localhost"
-master_port    = 9000
+bind             = "localhost"
+api_port         = 8000
+master_host      = "localhost"
+master_port      = 9000
 # advertise_host = ""      # auto-detected if omitted
-id             = "storage-01"   # omit to use persisted UUID from worker.db
+id               = "storage-01"   # omit to use persisted UUID from worker.db
+# bootstrap_token = ""     # copy from master log on first run; stored after bootstrap
 
 [worker.paths]
 prefix = "/mnt/files/"    # omit to fall back to master.paths.prefix
@@ -321,26 +342,26 @@ extra_args = ""
 batch_size    = 1
 poll_interval = 5
 
-[worker.tls]                # optional
-cert = "/etc/packa/worker.crt"
-key  = "/etc/packa/worker.key"
+[worker.tls]                # BYO cert (overrides bootstrapped certs)
+# cert = "/etc/packa/worker.crt"
+# key  = "/etc/packa/worker.key"
 ```
 
 **Web config fields:**
 
 ```toml
 [web]
-bind        = "localhost"
-port        = 8080
-username    = "admin"    # optional — omit username or password to disable auth entirely
-password    = "secret"
-secret_key  = "long-random-string"  # optional — auto-generated if omitted
-master_host = "localhost"
-master_port = 9000
+bind             = "localhost"
+port             = 8080
+username         = "admin"    # optional — omit username or password to disable auth entirely
+password         = "secret"
+# bootstrap_token = ""       # copy from master log on first run
+master_host      = "localhost"
+master_port      = 9000
 
-[web.tls]                  # optional
-cert = "/etc/packa/web.crt"
-key  = "/etc/packa/web.key"
+[web.tls]                    # BYO cert (overrides bootstrapped certs)
+# cert = "/etc/packa/web.crt"
+# key  = "/etc/packa/web.key"
 ```
 
 **Shared TLS:**
