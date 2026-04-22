@@ -301,7 +301,7 @@ function renderOverview() {
   const activeTotal = (fc.pending||0) + (fc.assigned||0) + (fc.processing||0) + (fc.complete||0);
   const donePct = activeTotal ? Math.round(((fc.complete||0) / activeTotal) * 100) : 0;
   const statusChips = [
-    { key:'scanning',   label:'Scanning',   color:'var(--text-dim)' },
+    { key:'scanning',   label:'Probing',    color:'var(--text-dim)' },
     { key:'pending',    label:'Pending',    color:'var(--yellow)' },
     { key:'assigned',   label:'Assigned',   color:'var(--blue)' },
     { key:'processing', label:'Processing', color:'var(--blue)' },
@@ -447,7 +447,7 @@ function renderFiles() {
   const nSel = ST.fileSelected.size;
 
   const chipLabels = {
-    all: 'All', scanning: 'Scanning', pending: 'Pending', assigned: 'Assigned',
+    all: 'All', scanning: 'Probing', pending: 'Pending', assigned: 'Assigned',
     processing: 'Processing', complete: 'Done', error: 'Error',
     duplicate: 'Duplicate', discarded: 'Discarded', cancelled: 'Cancelled',
   };
@@ -1265,14 +1265,67 @@ function renderScan() {
   if (!el) return;
   const data = ST.data || {};
   const scan = data.scan || {running: false};
+  const meta = data.master_meta || {};
+  const cfg = data.master_config || {};
   const running = scan.running;
   const scanned = scan.scanned || 0;
   const total = scan.total || 0;
   const found = scan.found || 0;
   const scanPct = total > 0 ? Math.round(scanned / total * 100) : 0;
 
+  const avgConvS = meta.avg_conversion_s;
+  const avgConvStr = avgConvS != null ? fmtDuration(avgConvS) : '—';
+  const probeRate = meta.probe_rate_per_min;
+  const probeRateStr = probeRate != null ? `${probeRate}/min` : '—';
+  const scanRate = meta.scan_rate_per_s;
+  const scanRateStr = scanRate != null ? `${scanRate} files/s` : (running ? 'measuring…' : '—');
+  const scanningQ = meta.scanning_queue ?? 0;
+
+  const st = data.stats || {};
+  const probeTotal = (st.total || 0) - (st.duplicate || 0);
+  const probeDone = probeTotal - scanningQ;
+  const probePct = probeTotal > 0 ? Math.min(100, Math.round(probeDone / probeTotal * 100)) : 0;
+
+  const cfgExts = (cfg.extensions || []).join(', ') || '—';
+  const cfgSizeRow = (cfg.min_size_mb || cfg.max_size_mb)
+    ? `<div class="settings-row"><div class="settings-label"><strong>File size limits</strong></div><div style="font-size:13px;color:var(--text-dim)">${cfg.min_size_mb ? cfg.min_size_mb + ' MB min' : 'no min'} · ${cfg.max_size_mb ? cfg.max_size_mb + ' MB max' : 'no max'}</div></div>`
+    : '';
+
   el.innerHTML = `
     <div style="max-width:720px">
+      <div class="stats-grid" style="margin-bottom:20px;grid-template-columns:repeat(4,1fr)">
+        <div class="stat-card">
+          <div class="stat-label">Avg conversion</div>
+          <div class="stat-value">${avgConvStr}</div>
+          <div class="stat-sub">per file</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Probe rate</div>
+          <div class="stat-value">${probeRateStr}</div>
+          <div class="stat-sub">last 60 s</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Scan speed</div>
+          <div class="stat-value">${scanRateStr}</div>
+          <div class="stat-sub">current scan</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Probe queue</div>
+          <div class="stat-value ${scanningQ > 0 ? 'stat-accent' : ''}">${scanningQ.toLocaleString()}</div>
+          <div class="stat-sub">awaiting probe</div>
+        </div>
+      </div>
+      ${probeTotal > 0 ? `
+      <div style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-dim);margin-bottom:6px">
+          <span>Probe progress</span>
+          <span>${probeDone.toLocaleString()} / ${probeTotal.toLocaleString()} · ${probePct}%</span>
+        </div>
+        <div class="progress-track" style="height:8px">
+          <div class="progress-fill" style="width:${probePct}%"></div>
+        </div>
+      </div>` : ''}
+
       <div class="scan-status-bar">
         <div class="scan-indicator ${running?'scanning':''}"></div>
         <div class="scan-info">
@@ -1321,6 +1374,28 @@ function renderScan() {
           <button class="btn btn-primary" onclick="saveScanSettings()">Save settings</button>
         </div>
       </div>
+
+      ${Object.keys(cfg).length ? `
+      <div class="card" style="margin-top:16px">
+        <div class="card-title">Running Config</div>
+        <div class="settings-row">
+          <div class="settings-label"><strong>Bind</strong></div>
+          <div style="font-size:13px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace">${esc(cfg.bind || '')}:${cfg.api_port || ''}</div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label"><strong>Path prefix</strong></div>
+          <div style="font-size:13px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace">${cfg.path_prefix ? esc(cfg.path_prefix) : '<span style="color:var(--text-faint)">none</span>'}</div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label"><strong>Extensions</strong></div>
+          <div style="font-size:13px;color:var(--text-dim)">${esc(cfgExts)}</div>
+        </div>
+        ${cfgSizeRow}
+        <div class="settings-row">
+          <div class="settings-label"><strong>Probe batch</strong></div>
+          <div style="font-size:13px;color:var(--text-dim)">${cfg.probe_batch_size} files · every ${cfg.probe_interval_s}s when idle</div>
+        </div>
+      </div>` : ''}
     </div>
   `;
 }

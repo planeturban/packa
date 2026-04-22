@@ -3,9 +3,11 @@ In-memory registry of connected workers.
 Round-robin distribution via next_worker().
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import cycle
 from typing import Iterator
+
+from .petnames import is_uuid, pick
 
 
 @dataclass
@@ -14,9 +16,11 @@ class WorkerInfo:
     config_id: str
     host: str
     api_port: int
+    petname: str = field(default="")
 
     def __str__(self) -> str:
-        return f"worker-{self.id} '{self.config_id}' ({self.host}  api={self.api_port})"
+        name = self.petname or self.config_id
+        return f"worker-{self.id} '{name}' ({self.host}  api={self.api_port})"
 
 
 class WorkerRegistry:
@@ -24,6 +28,9 @@ class WorkerRegistry:
         self._workers: dict[int, WorkerInfo] = {}
         self._next_id: int = 1
         self._cycle: Iterator[WorkerInfo] | None = None
+
+    def _used_petnames(self) -> set[str]:
+        return {w.petname for w in self._workers.values() if w.petname}
 
     def register(self, config_id: str, host: str, api_port: int) -> WorkerInfo:
         # If a worker with this config_id already exists, update it in place.
@@ -34,7 +41,9 @@ class WorkerRegistry:
             self._rebuild_cycle()
             return existing
 
-        worker = WorkerInfo(id=self._next_id, config_id=config_id, host=host, api_port=api_port)
+        petname = pick(self._used_petnames()) if is_uuid(config_id) else ""
+        worker = WorkerInfo(id=self._next_id, config_id=config_id, host=host,
+                            api_port=api_port, petname=petname)
         self._workers[self._next_id] = worker
         self._next_id += 1
         self._rebuild_cycle()

@@ -16,9 +16,13 @@ Master REST API.
   GET    /scan/status          — scan progress
   GET    /scan/settings        — periodic scan settings
   POST   /scan/settings        — update periodic scan settings
+  GET    /master/config        — running master configuration
+  GET    /master/stats         — probe rate, scan rate, scanning queue depth
 """
 
 import asyncio
+import time as _time
+from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -76,6 +80,29 @@ def _recover() -> None:
 
 
 _hevc_cursor: int = 0  # last record id checked; resets each full cycle
+_probe_window: deque[tuple[float, int]] = deque()  # (monotonic_time, count)
+
+
+def _record_probes(n: int) -> None:
+    now = _time.monotonic()
+    _probe_window.append((now, n))
+    cutoff = now - 60.0
+    while _probe_window and _probe_window[0][0] < cutoff:
+        _probe_window.popleft()
+
+
+def _probe_rate_per_min() -> float | None:
+    if not _probe_window:
+        return None
+    now = _time.monotonic()
+    recent = [(t, c) for t, c in _probe_window if t >= now - 60.0]
+    if not recent:
+        return None
+    total = sum(c for _, c in recent)
+    elapsed = now - recent[0][0]
+    if elapsed < 1.0:
+        return None
+    return round(total / elapsed * 60, 1)
 
 
 async def _probe_codec(file_path: str) -> tuple[str, int | None, int | None, int | None, float | None]:
@@ -140,6 +167,7 @@ async def _hevc_check_loop() -> None:
                     record.status = FileStatus.PENDING
             db.commit()
             _hevc_cursor = records[-1].id
+            _record_probes(len(records))
         finally:
             db.close()
         await asyncio.sleep(0)
@@ -206,6 +234,7 @@ class _ScanState:
         self.found: int = 0
         self.skipped: int = 0
         self.errors: int = 0
+        self.started_at: float | None = None  # monotonic
         self._task: asyncio.Task | None = None
 
     def cancel(self) -> bool:
@@ -213,6 +242,15 @@ class _ScanState:
             self._task.cancel()
             return True
         return False
+
+    def scan_rate(self) -> float | None:
+        if not self.running or self.started_at is None:
+            return None
+        elapsed = _time.monotonic() - self.started_at
+        if elapsed < 1.0:
+            return None
+        processed = self.found + self.skipped
+        return round(processed / elapsed, 1)
 
 
 _scan = _ScanState()
@@ -222,6 +260,7 @@ async def _scan_task(scan_dir: str, extensions: set[str], min_size: int, max_siz
     from pathlib import Path
     _scan.running = True
     _scan.found = _scan.skipped = _scan.errors = 0
+    _scan.started_at = _time.monotonic()
     print(f"[scan] starting in '{scan_dir}' (extensions: {sorted(extensions)})")
     db = SessionLocal()
     try:
@@ -279,6 +318,7 @@ class WorkerOut(BaseModel):
     config_id: str
     host: str
     api_port: int
+    petname: str = ""
 
 
 class TransferRequest(BaseModel):
@@ -337,7 +377,10 @@ class ScanSettings(BaseModel):
 @app.post("/workers", response_model=WorkerOut, status_code=201)
 def register_worker(body: WorkerRegister):
     worker = registry.register(body.config_id, body.host, body.api_port)
-    print(f"[master] registered: {worker}")
+    if worker.petname:
+        print(f"[master] registered: {worker} (petname: {worker.petname!r})")
+    else:
+        print(f"[master] registered: {worker}")
     return worker
 
 
@@ -487,6 +530,39 @@ def get_stats(db: Session = Depends(get_db)):
 @app.get("/stats/worker/{worker_id}")
 def get_worker_stats(worker_id: str, db: Session = Depends(get_db)):
     return crud.get_worker_stats(db, worker_id)
+
+
+@app.get("/master/config")
+def get_master_config():
+    return {
+        "bind": _config.bind,
+        "api_port": _config.api_port,
+        "path_prefix": _config.path_prefix or None,
+        "extensions": _config.scan.extensions,
+        "min_size_mb": (_config.scan.min_size // 1_048_576) if _config.scan.min_size else None,
+        "max_size_mb": (_config.scan.max_size // 1_048_576) if _config.scan.max_size else None,
+        "probe_batch_size": _config.scan.probe_batch_size,
+        "probe_interval_s": _config.scan.probe_interval,
+        "checksum_bytes": _config.scan.checksum_bytes,
+    }
+
+
+@app.get("/master/stats")
+def get_master_stats(db: Session = Depends(get_db)):
+    from sqlalchemy import func as _func
+    scanning_queue = (
+        db.query(_func.count(FileRecord.id))
+        .filter(FileRecord.status == FileStatus.SCANNING)
+        .scalar() or 0
+    )
+    overall = crud.get_stats(db).get("overall", {})
+    return {
+        "scanning_queue": scanning_queue,
+        "probe_rate_per_min": _probe_rate_per_min(),
+        "scan_rate_per_s": _scan.scan_rate(),
+        "avg_conversion_s": overall.get("avg_duration_seconds"),
+        "avg_fps": overall.get("avg_fps"),
+    }
 
 
 @app.get("/files/duplicate-pairs")

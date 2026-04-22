@@ -74,8 +74,10 @@ async def _register_and_poll() -> None:
                 record = r.json()
             worker_state.worker_id = record["id"]
             worker_state.worker_config_id = _worker_config_id
+            worker_state.petname = record.get("petname", "")
             worker_state.master_url = master_base
-            print(f"[worker] registered as worker-{record['id']}")
+            name = worker_state.petname or _worker_config_id
+            print(f"[worker] registered as worker-{record['id']} ({name!r})")
             break
         except Exception as exc:
             attempt += 1
@@ -186,6 +188,7 @@ class WorkerStatus(BaseModel):
     current_cmd: str | None
     batch_size: int
     replace_original: bool
+    petname: str = ""
 
 
 class EncoderUpdate(BaseModel):
@@ -217,6 +220,7 @@ def get_status():
         current_cmd=worker_state.current_cmd or None,
         batch_size=worker_state.batch_size,
         replace_original=worker_state.replace_original,
+        petname=worker_state.petname,
         progress=ProgressOut(
             percent=p.percent,
             speed=p.speed,
