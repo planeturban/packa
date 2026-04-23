@@ -1,0 +1,105 @@
+# One StatefulSet per worker. Copy and rename for each additional worker.
+# Replace all occurrences of "worker-01" with the worker's unique ID.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: worker-01
+  namespace: packa
+spec:
+  serviceName: worker-01
+  replicas: 1
+  selector:
+    matchLabels:
+      app: packa-worker
+      worker-id: worker-01
+  template:
+    metadata:
+      labels:
+        app: packa-worker
+        worker-id: worker-01
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/planeturban/packa:latest
+          workingDir: /data
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          env:
+            - name: PACKA_ROLE
+              value: worker
+            - name: PACKA_CONFIG
+              value: /etc/packa/packa.toml
+            - name: PACKA_WORKER_ID
+              value: "worker-01"
+            - name: PACKA_WORKER_BOOTSTRAP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: packa-bootstrap-token
+                  key: token
+                  optional: true
+            # Override ffmpeg extra args per worker, e.g. for hardware encoding:
+            # - name: PACKA_WORKER_FFMPEG_EXTRA_ARGS
+            #   value: "-c:v hevc_nvenc -preset p4 -cq 28"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/packa
+            - name: data
+              mountPath: /data
+            - name: media
+              mountPath: /media
+            - name: output
+              mountPath: /output
+      volumes:
+        - name: config
+          configMap:
+            name: packa-config
+            items:
+              - key: packa.toml
+                path: packa.toml
+        # Source media — NFS mount from NAS (adjust server/path):
+        - name: media
+          nfs:
+            server: nas.local       # NAS hostname or IP
+            path: /volume1/media    # exported NFS path
+            readOnly: true
+        # CIFS/SMB alternative — requires cifs-utils on nodes and a Secret with credentials:
+        # - name: media
+        #   flexVolume:
+        #     driver: fstab/cifs
+        #     options:
+        #       networkPath: "//nas.local/media"
+        #       mountOptions: "uid=1000,gid=1000,file_mode=0444,dir_mode=0555"
+        #     secretRef:
+        #       name: packa-cifs-credentials
+
+        # Output directory — NFS mount from NAS:
+        - name: output
+          nfs:
+            server: nas.local       # NAS hostname or IP
+            path: /volume1/output   # exported NFS path
+            readOnly: false
+        # CIFS/SMB alternative:
+        # - name: output
+        #   flexVolume:
+        #     driver: fstab/cifs
+        #     options:
+        #       networkPath: "//nas.local/output"
+        #       mountOptions: "uid=1000,gid=1000,file_mode=0644,dir_mode=0755"
+        #     secretRef:
+        #       name: packa-cifs-credentials
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 512Mi
+        # storageClassName: standard

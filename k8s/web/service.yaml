@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: packa
+spec:
+  selector:
+    app: packa-web
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP   # change to LoadBalancer or NodePort to expose externally,
+                    # or pair with an Ingress below

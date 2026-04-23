@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: master
+  namespace: packa
+spec:
+  serviceName: master
+  replicas: 1
+  selector:
+    matchLabels:
+      app: packa-master
+  template:
+    metadata:
+      labels:
+        app: packa-master
+    spec:
+      serviceAccountName: packa-master
+      containers:
+        - name: master
+          image: ghcr.io/planeturban/packa:latest
+          workingDir: /data
+          ports:
+            - containerPort: 9000
+          volumeMounts:
+            - name: config
+              mountPath: /etc/packa
+            - name: data
+              mountPath: /data
+            - name: media
+              mountPath: /media
+              readOnly: true
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "2"
+              memory: "1Gi"
+          env:
+            - name: PACKA_CONFIG
+              value: /etc/packa/packa.toml
+          # Optional overrides:
+          # - name: PACKA_MASTER_PREFIX
+          #   value: "/media"
+
+        - name: token-exporter
+          image: curlimages/curl:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              KUBE=https://kubernetes.default.svc
+              SA=/var/run/secrets/kubernetes.io/serviceaccount
+              NS=$(cat $SA/namespace)
+              SECRET=packa-bootstrap-token
+
+              while true; do
+                RESP=$(curl -sf http://localhost:9000/tls/token 2>/dev/null)
+                TOKEN=$(echo "$RESP" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+                if [ -n "$TOKEN" ]; then
+                  curl -sf -X PATCH \
+                    -H "Authorization: Bearer $(cat $SA/token)" \
+                    -H "Content-Type: application/strategic-merge-patch+json" \
+                    --cacert $SA/ca.crt \
+                    "$KUBE/api/v1/namespaces/$NS/secrets/$SECRET" \
+                    -d "{\"stringData\":{\"token\":\"$TOKEN\"}}" > /dev/null \
+                  && echo "[token-exporter] bootstrap token written to secret/$SECRET" \
+                  || echo "[token-exporter] failed to patch secret/$SECRET"
+                fi
+                sleep 60
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+
+      volumes:
+        - name: config
+          configMap:
+            name: packa-config
+            items:
+              - key: packa.toml
+                path: packa.toml
+        - name: media
+          nfs:
+            server: nas.local
+            path: /volume1/media
+            readOnly: true
+        # CIFS/SMB alternative:
+        # - name: media
+        #   flexVolume:
+        #     driver: fstab/cifs
+        #     options:
+        #       networkPath: "//nas.local/media"
+        #       mountOptions: "uid=1000,gid=1000,file_mode=0444,dir_mode=0555"
+        #     secretRef:
+        #       name: packa-cifs-credentials
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+        # storageClassName: standard
