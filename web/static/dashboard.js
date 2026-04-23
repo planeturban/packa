@@ -1141,9 +1141,9 @@ function renderWorkerCard(s) {
         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1" title="${esc(currentFile)}">${esc(currentFileName)}</span>
         <span style="white-space:nowrap;margin-left:8px;min-width:140px;text-align:right">${pct}%${p.fps ? ` · ${p.fps} fps` : ''}${p.speed ? ` · ${p.speed}×` : ''}</span>
       </div>
-      <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+      <div class="progress-track"><div class="progress-fill${p.stalled ? ' stalled' : ''}" style="width:${pct}%"></div></div>
       <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-faint);margin-top:4px;font-family:'IBM Plex Mono',monospace">
-        <span>${p.eta_seconds != null ? `ETA ${fmtEta(p.eta_seconds)}` : '—'}</span>
+        <span>${p.stalled ? '<span style="color:var(--warn)">timestamps frozen</span>' : (p.eta_seconds != null ? `ETA ${fmtEta(p.eta_seconds)}` : '—')}</span>
         <span>Queue: ${s.queued||0}</span>
       </div>
       ${p.current_size_bytes != null ? `

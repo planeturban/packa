@@ -50,8 +50,8 @@ SCANNING → PENDING → ASSIGNED → DISCARDED  (already HEVC, detected by mast
 - `PENDING` — probed; codec, resolution, bitrate and duration known; not yet claimed by any worker
 - `ASSIGNED` — claimed by a worker via `/jobs/claim`, not yet processing
 - `PROCESSING` — ffmpeg is running on the worker
-- `DISCARDED` — file was already HEVC; detected by master probe loop, never sent to a worker
-- `CANCELLED` — conversion stopped mid-run. `cancel_reason` is `"user"` (manual stop) or `"auto"` (output exceeded source size, either detected mid-run or post-completion)
+- `DISCARDED` — file was already HEVC, corrupt, or truncated; detected by master probe loop, never sent to a worker. `discard_reason` is `"hevc"`, `"corrupt"`, or `"truncated"`
+- `CANCELLED` — conversion stopped mid-run. `cancel_reason` is `"user"` (manual stop) or `"auto"` (output exceeded source size, either detected mid-run or post-completion). `cancel_detail` stores threshold context e.g. `"25% — output 8% over source"`
 - `COMPLETE` / `ERROR` — terminal states
 
 ## Configuration priority
@@ -83,17 +83,17 @@ The database layer (`master_settings` table, `config.*` keys) is editable at run
 | `master/config_store.py` | Field registry (`MASTER_FIELDS`), layer readers (`read_file_values`, `read_env_values`, `read_db_values`, `default_values`), `compute_effective()` and `apply_to_config()`, DB ops (`set_db_value`, `delete_db_value`, `initialize_from_layers`) |
 | `master/settings.py` | `MasterSetting` key/value table — stores `config.*` entries plus scan-scheduler settings |
 | `master/registry.py` | In-memory `WorkerRegistry`; workers identified by numeric `id` (int, auto) and `config_id` (string, from config file) |
-| `master/scanner.py` | `collect(file_path) → VideoFile` — reads stat, computes checksum |
+| `master/scanner.py` | `collect(file_path) → VideoFile` — reads stat only (no checksum). `compute_checksum(path, file_size, checksum_bytes)` — SHA-256 of middle N bytes; called from probe loop |
 | `master/database.py` | Engine + `SessionLocal` + `get_db()` for `master.db` |
 
-**Checksum:** `SHA-256("{file_name}{file_path}{c_time}{m_time}")` — ID is not included.
+**Checksum:** SHA-256 of `file_size` + N bytes read from the middle of the file (`checksum_bytes`, default 4 MB). Computed in the probe loop (not the scan), concurrently with ffprobe. Used for duplicate detection.
 
 **Path prefix:** master strips its own `path_prefix` from `file_path` in `/jobs/claim` before returning relative paths to workers. Workers prepend their own `path_prefix`.
 
 **Key API endpoints:**
 - `POST /workers` — worker registration (called automatically by worker on startup)
-- `POST /transfer {"file_path": "..."}` — collect metadata for a single file, create PENDING record
-- `POST /scan/start` — background directory scan; creates PENDING records for new files
+- `POST /transfer {"file_path": "..."}` — collect stat metadata for a single file, create SCANNING record (checksum + probe happen in background)
+- `POST /scan/start` — background directory scan; stat-only walk, creates SCANNING records; checksum and ffprobe run in the probe loop
 - `POST /scan/stop` / `GET /scan/status` — cancel or query running scan
 - `POST /jobs/claim {"worker_id": "...", "count": N}` — worker claims N PENDING records; master marks them ASSIGNED and returns relative paths
 - `POST /files/{id}/sync {"worker_id": N}` — called by worker after ffmpeg completes; master fetches the record from worker and updates its own DB
@@ -109,6 +109,8 @@ The database layer (`master_settings` table, `config.*` keys) is editable at run
 - `POST /tls/token` — generate a new bootstrap token
 
 **Scan state** is held in a module-level `_ScanState` instance in `master/api.py`. The background task runs as an `asyncio.Task`, yields with `await asyncio.sleep(0)` between files, and is cancellable via `/scan/stop`.
+
+**Probe loop** (`_hevc_check_loop`): processes SCANNING records in batches. For each batch, runs `_probe_file` (ffprobe + stderr capture + truncation check) and `compute_checksum` concurrently via `asyncio.gather` + `run_in_executor`. Corrupt files (non-empty ffprobe stderr) and truncated files (last PTS > 60 s short of declared duration) are set to `DISCARDED` with `discard_reason`. HEVC files are also discarded. Remaining files are checked for duplicates (by checksum) then set to `PENDING`.
 
 **Master env vars:**
 
@@ -165,6 +167,8 @@ Before starting ffmpeg, `ffprobe` checks the video codec. If the file is already
 
 **Output size monitoring:** `_monitor_output_size()` checks the output file every 5 seconds while ffmpeg runs. If it grows `>= source_size`, ffmpeg is terminated and the record is set to `CANCELLED` (`cancel_reason="auto"`).
 
+**Cancel thresholds:** optional `cancel_thresholds` config (list of `[min_pct, ratio]` pairs) cancels early if the projected output exceeds `source_size * ratio` at `min_pct` progress. Projection uses cumulative average (`current_size / ratio`). When `out_time_us` stops advancing (frozen timestamps), projection is suppressed — `_monitor_output_size` acts as safety net instead. Worker card shows an amber progress bar and "timestamps frozen" when a stall is detected. Default thresholds: `[[20.0, 1.15], [40.0, 1.05], [60.0, 1.0]]`.
+
 **After conversion:** if `output_size >= source_size` the output file is deleted and status is set to `CANCELLED` (`cancel_reason="auto"`). Otherwise `COMPLETE` and result is pushed to master via `PATCH /files/{id}/result`.
 
 **Sleep / drain modes:** `worker_state.sleeping` blocks the worker loop and the poller. `worker_state.drain` causes the worker to set `sleeping=True` after the current job finishes (Finish current). Both flags are exposed in `GET /status`.
@@ -220,7 +224,7 @@ Browser talks HTTP(S) to the web process. Web process talks mTLS to master and w
 - **Overview** — 8 clickable status chips (counts per status). Clicking any chip opens a modal listing matching files with checkboxes and bulk actions (Set → Pending / Cancelled, Delete, Queue to worker).
 - **Files** — filterable by status chip, searchable by filename or worker name. Bulk actions (same as modal) live in the table header row so the list never jumps. Prefix stripped from displayed paths; full path in `title`.
 - **Statistics** — aggregated and per-worker stats: jobs, input/output bytes, space saved, compression ratio, avg duration.
-- **Workers** — per-worker cards with live ffmpeg progress (%, FPS, speed, bitrate, current→projected size), encoder selector, batch size, pause/drain/stop/sleep controls and settings panel. When master has TLS active, worker cards that are not yet onboarded show an **Onboard TLS** button and have all other controls disabled.
+- **Workers** — per-worker cards with live ffmpeg progress (%, FPS, speed, bitrate, current→projected size), encoder selector, batch size, pause/drain/stop/sleep controls and settings panel. When `out_time` is frozen the progress bar turns amber and shows "timestamps frozen". When master has TLS active, worker cards that are not yet onboarded show an **Onboard TLS** button and have all other controls disabled.
 - **Master** — four stat cards (avg conversion, probe rate, scan speed, probe queue), probe-progress bar, scanner controls, and editable master configuration form. Each row has per-value Save / Restore from file / Restore from env / Default / Revert buttons; edits are PATCHed to the database layer and applied live (`requires_restart` fields pop a restart-required toast). The underlying source (`default`/`file`/`env`/`db`/`cli`) is tracked server-side and decides whether the Revert button appears, but it's not rendered as a badge.
 - **Settings** — poll interval selector.
 

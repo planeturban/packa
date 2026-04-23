@@ -228,6 +228,7 @@ class ProgressOut(BaseModel):
     source_size_bytes: int | None
     current_size_bytes: int | None
     projected_size_bytes: int | None
+    stalled: bool = False
 
 
 class WorkerStatus(BaseModel):
@@ -291,6 +292,7 @@ def get_status():
             source_size_bytes=p.source_size_bytes,
             current_size_bytes=p.current_size_bytes,
             projected_size_bytes=p.projected_size_bytes,
+            stalled=p.stalled,
         ) if p else None,
     )
 

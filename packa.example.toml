@@ -184,7 +184,7 @@ poll_interval = 5
 # At each progress point, cancel if projected output > source * ratio.
 # The tightest reached threshold applies. Remove this line to disable early cancellation entirely.
 # Env: PACKA_WORKER_CANCEL_THRESHOLDS  (format: "10.0:1.10,25.0:1.05,50.0:1.0")
-# cancel_thresholds = [[10.0, 1.10], [25.0, 1.05], [50.0, 1.0]]
+# cancel_thresholds = [[20.0, 1.15], [40.0, 1.05], [60.0, 1.0]]
 
 # ---------------------------------------------------------------------------
 # Web frontend

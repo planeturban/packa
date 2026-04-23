@@ -23,6 +23,7 @@ class FfmpegProgress:
     source_size_bytes: int | None = None
     current_size_bytes: int | None = None
     projected_size_bytes: int | None = None
+    stalled: bool = False
 
 
 class WorkerState:
