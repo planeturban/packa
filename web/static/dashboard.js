@@ -310,6 +310,10 @@ function renderOverview() {
   const fc = data.file_counts || {};
   const activeTotal = (fc.pending||0) + (fc.assigned||0) + (fc.processing||0) + (fc.complete||0);
   const donePct = activeTotal ? Math.round(((fc.complete||0) / activeTotal) * 100) : 0;
+  const remaining = (fc.pending||0) + (fc.assigned||0) + (fc.processing||0);
+  const availableWorkers = workers.filter(w => !w.sleeping && !w.unconfigured && w.state !== 'unreachable');
+  const totalRate = availableWorkers.reduce((sum, w) => w.avg_duration_s > 0 ? sum + 1 / w.avg_duration_s : sum, 0);
+  const etaSecs = (remaining > 0 && totalRate > 0) ? Math.round(remaining / totalRate) : null;
   const statusChips = [
     { key:'scanning',   label:'Probing',    color:'var(--text-dim)' },
     { key:'pending',    label:'Pending',    color:'var(--yellow)' },
@@ -335,6 +339,11 @@ function renderOverview() {
         <div class="stat-label">Space Saved</div>
         <div class="stat-value stat-accent">${fmtBytes(stats.saved_bytes)}</div>
         <div class="stat-sub">after compression</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Library ETA</div>
+        <div class="stat-value">${etaSecs != null ? fmtDuration(etaSecs) : '—'}</div>
+        <div class="stat-sub">${etaSecs != null ? `${remaining.toLocaleString()} files · ${availableWorkers.length} worker${availableWorkers.length !== 1 ? 's' : ''}` : 'no estimate available'}</div>
       </div>
     </div>
 
