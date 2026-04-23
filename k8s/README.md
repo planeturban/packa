@@ -11,12 +11,12 @@
 
 ## Step 1 — Edit the config
 
-Open [configmap.yaml](configmap.yaml) and set:
+Open [configmap.yaml](configmap.yaml) and optionally set:
 
-- `[master.paths] prefix` — path where master sees media files (e.g. `/media`)
-- `[worker.paths] prefix` — same path as master (workers share the same NFS mount)
-- `[worker.ffmpeg] output_dir` — where converted files land (e.g. `/output`)
-- `[web] username` / `password` — optional; leave empty to disable auth
+- `[web] username` / `password` — leave empty to disable auth
+
+Paths (`/media`, `/output`) are fixed in the manifests. Mount your NFS/CIFS shares
+at those paths on the nodes — see Step 2.
 
 ---
 
