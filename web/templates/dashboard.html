@@ -72,9 +72,12 @@
 <div id="status-modal-backdrop" class="modal-backdrop" style="display:none" onclick="closeStatusModal()">
   <div class="modal" onclick="event.stopPropagation()">
     <div class="modal-header">
+      <button class="icon-btn" onclick="navigateStatusModal(-1)" id="status-modal-prev" title="Previous status (←)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
       <span class="modal-title" id="status-modal-title"></span>
-      <button class="icon-btn" onclick="closeStatusModal()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      <button class="icon-btn" onclick="navigateStatusModal(1)" id="status-modal-next" title="Next status (→)" style="margin-left:auto">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
       </button>
     </div>
     <div class="modal-body" id="status-modal-body"></div>
