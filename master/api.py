@@ -110,18 +110,50 @@ def _probe_rate_per_min() -> float | None:
     return round(total / elapsed * 60, 1)
 
 
-async def _probe_codec(file_path: str) -> tuple[str, int | None, int | None, int | None, float | None]:
+async def _truncation_check(file_path: str, duration: float) -> str | None:
+    """Seek to 30s before declared end and check if packets exist near that point."""
+    seek = max(0.0, duration - 30)
     try:
         proc = await asyncio.create_subprocess_exec(
-            "ffprobe", "-v", "quiet",
+            "ffprobe", "-v", "error",
+            "-read_intervals", f"{seek:.0f}%+#10",
             "-select_streams", "v:0",
-            "-show_entries", "stream=codec_name,width,height:format=bit_rate,duration",
-            "-of", "default=noprint_wrappers=1",
+            "-show_entries", "packet=pts_time",
+            "-of", "csv=p=0",
             file_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
         stdout, _ = await proc.communicate()
+        pts_values = []
+        for line in stdout.decode().splitlines():
+            line = line.strip()
+            if line and line != "N/A":
+                try:
+                    pts_values.append(float(line))
+                except ValueError:
+                    pass
+        if not pts_values or max(pts_values) < duration - 60:
+            return "truncated"
+        return None
+    except Exception:
+        return None
+
+
+async def _probe_file(file_path: str) -> tuple[str, int | None, int | None, int | None, float | None, str | None]:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name,width,height:format=bit_rate,duration",
+            "-of", "default=noprint_wrappers=1",
+            file_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if stderr.strip():
+            return "", None, None, None, None, "corrupt"
         info = {}
         for line in stdout.decode().splitlines():
             if "=" in line:
@@ -133,9 +165,13 @@ async def _probe_codec(file_path: str) -> tuple[str, int | None, int | None, int
         bitrate = int(info["bit_rate"]) if info.get("bit_rate", "").isdigit() else None
         dur_s = info.get("duration", "")
         duration = float(dur_s) if dur_s.replace(".", "", 1).isdigit() else None
-        return codec, width, height, bitrate, duration
+        if duration and duration > 60:
+            discard_reason = await _truncation_check(file_path, duration)
+            if discard_reason:
+                return codec, width, height, bitrate, duration, discard_reason
+        return codec, width, height, bitrate, duration, None
     except Exception:
-        return "", None, None, None, None
+        return "", None, None, None, None, None
 
 
 async def _hevc_check_loop() -> None:
@@ -159,14 +195,20 @@ async def _hevc_check_loop() -> None:
                 _hevc_cursor = 0
                 await asyncio.sleep(_config.scan.probe_interval)
                 continue
-            probes = await asyncio.gather(*[_probe_codec(r.file_path) for r in records])
-            for record, (codec, width, height, bitrate, duration) in zip(records, probes):
+            probes = await asyncio.gather(*[_probe_file(r.file_path) for r in records])
+            for record, (codec, width, height, bitrate, duration, discard_reason) in zip(records, probes):
                 record.width = width
                 record.height = height
                 record.bitrate = bitrate
                 record.duration = duration
-                if codec == "hevc":
+                if discard_reason:
                     record.status = FileStatus.DISCARDED
+                    record.discard_reason = discard_reason
+                    record.finished_at = datetime.now(timezone.utc)
+                    print(f"[master] record {record.id} discarded — {discard_reason} ({record.file_name!r})")
+                elif codec == "hevc":
+                    record.status = FileStatus.DISCARDED
+                    record.discard_reason = "hevc"
                     record.finished_at = datetime.now(timezone.utc)
                     print(f"[master] record {record.id} discarded — already HEVC ({record.file_name!r})")
                 else:
