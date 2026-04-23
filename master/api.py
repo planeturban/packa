@@ -41,7 +41,7 @@ from shared.schemas import FileRecordCreate, FileRecordOut, StatusUpdate
 from . import config_store
 from .database import SessionLocal, engine, get_db
 from .registry import registry
-from .scanner import collect
+from .scanner import collect, compute_checksum
 from .tls_manager import (
     consume_token, generate_token, get_ca_fingerprint,
     get_token_info, issue_client_cert, renew_client_cert,
@@ -195,13 +195,30 @@ async def _hevc_check_loop() -> None:
                 _hevc_cursor = 0
                 await asyncio.sleep(_config.scan.probe_interval)
                 continue
-            probes = await asyncio.gather(*[_probe_file(r.file_path) for r in records])
-            for record, (codec, width, height, bitrate, duration, discard_reason) in zip(records, probes):
+            loop = asyncio.get_event_loop()
+            probes, checksums = await asyncio.gather(
+                asyncio.gather(*[_probe_file(r.file_path) for r in records]),
+                asyncio.gather(*[
+                    loop.run_in_executor(
+                        None, compute_checksum, r.file_path, r.file_size or 0,
+                        _config.scan.checksum_bytes,
+                    )
+                    for r in records
+                ]),
+            )
+            for record, (codec, width, height, bitrate, duration, discard_reason), checksum in zip(records, probes, checksums):
                 record.width = width
                 record.height = height
                 record.bitrate = bitrate
                 record.duration = duration
-                if discard_reason:
+                record.checksum = checksum
+                existing = crud.get_record_by_checksum(db, checksum)
+                if existing:
+                    record.status = FileStatus.DUPLICATE
+                    record.duplicate_of_id = existing.id
+                    record.finished_at = datetime.now(timezone.utc)
+                    print(f"[master] record {record.id} duplicate of {existing.id} ({record.file_name!r})")
+                elif discard_reason:
                     record.status = FileStatus.DISCARDED
                     record.discard_reason = discard_reason
                     record.finished_at = datetime.now(timezone.utc)
@@ -325,19 +342,14 @@ async def _scan_task(scan_dir: str, extensions: set[str], min_size: int, max_siz
                 _scan.skipped += 1
                 continue
             try:
-                video = collect(str(path), _config.scan.checksum_bytes)
-                existing = crud.get_record_by_checksum(db, video.checksum)
-                status = FileStatus.DUPLICATE if existing else FileStatus.SCANNING
-                duplicate_of_id = existing.id if existing else None
+                video = collect(str(path))
                 crud.create_file_record(db, FileRecordCreate(
                     file_name=video.file_name,
                     file_path=video.file_path,
                     file_size=video.file_size,
                     c_time=video.c_time,
                     m_time=video.m_time,
-                    checksum=video.checksum,
-                    status=status,
-                    duplicate_of_id=duplicate_of_id,
+                    status=FileStatus.SCANNING,
                 ))
                 _scan.found += 1
             except Exception as exc:
@@ -445,26 +457,18 @@ def remove_worker(config_id: str):
 @app.post("/transfer", response_model=FileRecordOut, status_code=201)
 def transfer_file(body: TransferRequest, db: Session = Depends(get_db)):
     try:
-        video = collect(body.file_path, _config.scan.checksum_bytes)
+        video = collect(body.file_path)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    existing = crud.get_record_by_checksum(db, video.checksum)
-    status = FileStatus.DUPLICATE if existing else FileStatus.SCANNING
-    duplicate_of_id = existing.id if existing else None
     record = crud.create_file_record(db, FileRecordCreate(
         file_name=video.file_name,
         file_path=video.file_path,
         file_size=video.file_size,
         c_time=video.c_time,
         m_time=video.m_time,
-        checksum=video.checksum,
-        status=status,
-        duplicate_of_id=duplicate_of_id,
+        status=FileStatus.SCANNING,
     ))
-    if existing:
-        print(f"[master] duplicate '{video.file_name}' — same content as record {existing.id}")
-    else:
-        print(f"[master] queued '{video.file_name}'  record={record.id}")
+    print(f"[master] queued '{video.file_name}'  record={record.id}")
     return record
 
 

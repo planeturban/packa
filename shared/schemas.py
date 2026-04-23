@@ -13,7 +13,7 @@ class FileRecordCreate(BaseModel):
     file_size: int | None = None
     c_time: float
     m_time: float
-    checksum: str
+    checksum: str = ""
     status: FileStatus = FileStatus.PENDING
     duplicate_of_id: int | None = None
     width: int | None = None

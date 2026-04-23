@@ -42,6 +42,8 @@ def get_record_by_path(db: Session, file_path: str) -> FileRecord | None:
 
 def get_record_by_checksum(db: Session, checksum: str) -> FileRecord | None:
     """Return an existing non-duplicate record with the given checksum, if any."""
+    if not checksum:
+        return None
     return (
         db.query(FileRecord)
         .filter(FileRecord.checksum == checksum, FileRecord.status != FileStatus.DUPLICATE)
