@@ -167,6 +167,7 @@ async def _hevc_check_loop() -> None:
                 record.duration = duration
                 if codec == "hevc":
                     record.status = FileStatus.DISCARDED
+                    record.finished_at = datetime.now(timezone.utc)
                     print(f"[master] record {record.id} discarded — already HEVC ({record.file_name!r})")
                 else:
                     record.status = FileStatus.PENDING
@@ -355,6 +356,7 @@ class FileResultUpdate(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     cancel_reason: str | None = None
+    cancel_detail: str | None = None
     encoder: str | None = None
     avg_fps: float | None = None
     avg_speed: float | None = None
@@ -507,6 +509,7 @@ def update_file_result(record_id: int, body: FileResultUpdate, db: Session = Dep
         started_at=body.started_at,
         finished_at=body.finished_at,
         cancel_reason=body.cancel_reason,
+        cancel_detail=body.cancel_detail,
         encoder=body.encoder,
         avg_fps=body.avg_fps,
         avg_speed=body.avg_speed,

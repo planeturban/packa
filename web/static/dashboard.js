@@ -7,6 +7,13 @@ function fmtBytes(b) {
   return `${b.toFixed(1)} ${u[i]}`;
 }
 
+function fmtResolution(w, h) {
+  if (!w || !h) return '—';
+  if (h > 2160) return '4K+';
+  if (h >= 2160) return '4K';
+  return `${h}p`;
+}
+
 function fmtDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -43,6 +50,7 @@ function badge(status) {
     error:'badge-error', duplicate:'badge-duplicate',
     sleeping:'badge-sleeping', paused:'badge-paused', draining:'badge-draining', online:'badge-online', offline:'badge-offline',
     'disk full':'badge-error', 'setup required':'badge-pending',
+    user:'badge-cancelled', auto:'badge-error',
   };
   const cls = map[status] || 'badge-discarded';
   const label = status === 'complete' ? 'done' : status;
@@ -84,10 +92,14 @@ const ST = {
   fileSearch: '',
   fileSelected: new Set(),
   fileBulkOpen: false,
+  filePage: 0,
+  fileSort: {col: 'created_at', dir: 'desc'},
   // modal
   modalStatus: null,
   modalSelected: new Set(),
   modalBulkOpen: false,
+  modalPage: 0,
+  modalSort: {col: 'created_at', dir: 'desc'},
   // workers tab
   workerSettingsOpen: {},   // configId → bool
   workerCmdOpen: {},        // configId → bool
@@ -417,17 +429,12 @@ function stripPrefix(path) {
   return path;
 }
 
-function renderFiles() {
-  const el = document.getElementById('tab-files');
-  if (!el) return;
+const FILES_PAGE_SIZES = [10, 25, 50, 100, 500];
+let FILES_PAGE_SIZE = 25;
+
+function _getFilteredFiles() {
   const files = (ST.data && ST.data.files) || [];
-  const workers = (ST.data && ST.data.workers) || [];
-
-  const statuses = ['all','scanning','pending','assigned','processing','complete','error','duplicate','discarded','cancelled'];
-  const counts = {};
-  statuses.forEach(s => counts[s] = s === 'all' ? files.length : files.filter(f => f.status === s).length);
-
-  const filtered = files.filter(f => {
+  return files.filter(f => {
     if (ST.fileFilters.size > 0 && !ST.fileFilters.has(f.status)) return false;
     if (ST.fileFiltersNot.has(f.status)) return false;
     if (ST.fileSearch) {
@@ -438,11 +445,52 @@ function renderFiles() {
     }
     return true;
   });
+}
 
-  const visibleIds = filtered.slice(0, 100).map(f => f.id);
-  const allSelected = visibleIds.length > 0 && visibleIds.every(id => ST.fileSelected.has(id));
-  const someSelected = visibleIds.some(id => ST.fileSelected.has(id));
+function _sortedFiles(filtered) {
+  const {col, dir} = ST.fileSort;
+  const m = dir === 'asc' ? 1 : -1;
+  return [...filtered].sort((a, b) => {
+    switch (col) {
+      case 'file_path':   return m * (a.file_path||'').localeCompare(b.file_path||'');
+      case 'status':      return m * (a.status||'').localeCompare(b.status||'');
+      case 'worker_id':   return m * (a.worker_id||'').localeCompare(b.worker_id||'');
+      case 'file_size':   return m * ((a.file_size||0) - (b.file_size||0));
+      case 'output_size': return m * ((a.output_size||0) - (b.output_size||0));
+      case 'saved':       return m * (((a.file_size||0)-(a.output_size||0)) - ((b.file_size||0)-(b.output_size||0)));
+      case 'finished_at': return m * (a.finished_at||'').localeCompare(b.finished_at||'');
+      default:            return m * (a.created_at||'').localeCompare(b.created_at||'');
+    }
+  });
+}
+
+function _sortTh(label, col) {
+  const active = ST.fileSort.col === col;
+  const arrow = active ? (ST.fileSort.dir === 'asc' ? ' ↑' : ' ↓') : '';
+  return `<th class="sortable-th${active?' sort-active':''}" onclick="setFileSort('${col}')">${label}${arrow}</th>`;
+}
+
+function renderFiles() {
+  const el = document.getElementById('tab-files');
+  if (!el) return;
+  const files = (ST.data && ST.data.files) || [];
+  const workers = (ST.data && ST.data.workers) || [];
+
+  const statuses = ['all','scanning','pending','assigned','processing','complete','error','duplicate','discarded','cancelled'];
+  const counts = {};
+  statuses.forEach(s => counts[s] = s === 'all' ? files.length : files.filter(f => f.status === s).length);
+
+  const filtered = _getFilteredFiles();
+  const sorted = _sortedFiles(filtered);
+  const totalPages = Math.max(1, Math.ceil(sorted.length / FILES_PAGE_SIZE));
+  const page = Math.min(ST.filePage, totalPages - 1);
+  const pageFiles = sorted.slice(page * FILES_PAGE_SIZE, (page + 1) * FILES_PAGE_SIZE);
+  const pageIds = pageFiles.map(f => f.id);
+
+  const allPageSelected = pageIds.length > 0 && pageIds.every(id => ST.fileSelected.has(id));
+  const somePageSelected = pageIds.some(id => ST.fileSelected.has(id));
   const nSel = ST.fileSelected.size;
+  const allPagesSelectable = allPageSelected && nSel < filtered.length;
 
   const chipLabels = {
     all: 'All', scanning: 'Probing', pending: 'Pending', assigned: 'Assigned',
@@ -450,6 +498,29 @@ function renderFiles() {
     duplicate: 'Duplicate', discarded: 'Discarded', cancelled: 'Cancelled',
   };
   const visibleChips = ['all','scanning','pending','processing','complete','error','duplicate','discarded','cancelled'];
+
+  const paginationBar = totalPages > 1 ? `
+    <div class="pagination-bar">
+      <button class="btn btn-sm" onclick="setFilePage(${page-1})" ${page===0?'disabled':''}>←</button>
+      ${Array.from({length: totalPages}, (_,i) => {
+        if (totalPages <= 7 || i === 0 || i === totalPages-1 || Math.abs(i - page) <= 1) {
+          return `<button class="btn btn-sm${i===page?' btn-primary':''}" onclick="setFilePage(${i})">${i+1}</button>`;
+        } else if (Math.abs(i - page) === 2) {
+          return `<span style="color:var(--text-faint);padding:0 2px">…</span>`;
+        }
+        return '';
+      }).filter((x,i,a) => x && (x !== a[i-1])).join('')}
+      <button class="btn btn-sm" onclick="setFilePage(${page+1})" ${page===totalPages-1?'disabled':''}>→</button>
+      <span style="color:var(--text-faint);font-size:12px;margin-left:4px">${sorted.length} files</span>
+      <select class="input" style="margin-left:auto;width:auto;padding:2px 6px;font-size:12px" onchange="setPageSize(+this.value)">
+        ${FILES_PAGE_SIZES.map(n => `<option value="${n}"${n===FILES_PAGE_SIZE?' selected':''}>${n} / page</option>`).join('')}
+      </select>
+    </div>` : `
+    <div class="pagination-bar" style="justify-content:flex-end">
+      <select class="input" style="width:auto;padding:2px 6px;font-size:12px" onchange="setPageSize(+this.value)">
+        ${FILES_PAGE_SIZES.map(n => `<option value="${n}"${n===FILES_PAGE_SIZE?' selected':''}>${n} / page</option>`).join('')}
+      </select>
+    </div>`;
 
   el.innerHTML = `
     <div class="section-header">
@@ -473,14 +544,23 @@ function renderFiles() {
     </div>
 
     <div class="card" style="padding:0;overflow:hidden">
+      ${allPagesSelectable ? `
+      <div class="select-all-banner">
+        ${nSel} files on this page selected —
+        <a href="#" onclick="selectAllFilteredFiles(event)">Select all ${filtered.length} matching files</a>
+      </div>` : nSel > 0 && nSel >= filtered.length && totalPages > 1 ? `
+      <div class="select-all-banner">
+        All ${nSel} matching files selected —
+        <a href="#" onclick="clearSelection()">Clear selection</a>
+      </div>` : ''}
       <div class="table-wrap">
         <table>
           <thead>${nSel > 0 ? `
           <tr style="height:38px;background:var(--accent-glow)">
             <th style="width:36px;padding:0 0 0 14px">
-              <input type="checkbox" ${allSelected?'checked':''} onchange="toggleAllFiles(this)" style="accent-color:var(--accent)">
+              <input type="checkbox" ${allPageSelected?'checked':''} onchange="toggleAllFiles(this)" style="accent-color:var(--accent)">
             </th>
-            <th style="padding:0" colspan="6">
+            <th style="padding:0" colspan="7">
               <span style="font-size:13px;font-weight:500;color:var(--accent);margin-right:12px">${nSel} selected</span>
               <div class="dropdown" id="bulk-dropdown" style="display:inline-block">
                 <button class="btn btn-sm" onclick="toggleBulkMenu(event)" style="display:inline-flex;align-items:center;gap:6px">
@@ -508,22 +588,23 @@ function renderFiles() {
           </tr>` : `
           <tr style="height:38px">
             <th style="width:36px;padding-left:14px">
-              <input type="checkbox" ${allSelected?'checked':''} onchange="toggleAllFiles(this)"
+              <input type="checkbox" ${allPageSelected?'checked':''} onchange="toggleAllFiles(this)"
                      style="accent-color:var(--accent)">
             </th>
-            <th>Path</th>
-            <th>Status</th>
-            <th>Worker</th>
-            <th>Original</th>
-            <th>Converted</th>
-            <th>Saved</th>
-            <th>Added</th>
+            ${_sortTh('Path','file_path')}
+            ${_sortTh('Status','status')}
+            ${_sortTh('Worker','worker_id')}
+            ${_sortTh('Original','file_size')}
+            ${_sortTh('Converted','output_size')}
+            ${_sortTh('Saved','saved')}
+            ${_sortTh('Added','created_at')}
+            ${_sortTh('Finished','finished_at')}
             <th></th>
           </tr>`}
           </thead>
           <tbody>
-            ${filtered.length === 0 ? `<tr><td colspan="9"><div class="empty">No files matching filter</div></td></tr>` :
-              filtered.slice(0, 100).map(f => {
+            ${pageFiles.length === 0 ? `<tr><td colspan="10"><div class="empty">No files matching filter</div></td></tr>` :
+              pageFiles.map(f => {
                 const saved = (f.file_size && f.output_size) ? f.file_size - f.output_size : 0;
                 const savedPct = f.file_size ? Math.round(saved / f.file_size * 100) : 0;
                 const worker = workers.find(w => w.config_id === f.worker_id);
@@ -543,6 +624,7 @@ function renderFiles() {
                     ${f.status === 'complete' && savedPct > 0 ? `${savedPct}%` : '—'}
                   </span></td>
                   <td><span class="mono">${fmtDate(f.created_at)}</span></td>
+                  <td><span class="mono">${fmtDate(f.finished_at)}</span></td>
                   <td>
                     <button class="btn btn-sm btn-danger" onclick="deleteFile(${f.id})" title="Delete record">
                       ${svgIcon('trash',12)}
@@ -554,13 +636,13 @@ function renderFiles() {
           </tbody>
         </table>
       </div>
-      ${filtered.length > 100 ? `<div style="padding:10px 16px;border-top:1px solid var(--border);font-size:12px;color:var(--text-faint)">Showing 100 of ${filtered.length} records</div>` : ''}
+      ${paginationBar}
     </div>
   `;
 
   // Re-apply indeterminate state
   const hdr = el.querySelector('thead input[type="checkbox"]');
-  if (hdr) hdr.indeterminate = someSelected && !allSelected;
+  if (hdr) hdr.indeterminate = somePageSelected && !allPageSelected;
 }
 
 function toggleFileFilter(s, event) {
@@ -586,31 +668,55 @@ function toggleFileFilter(s, event) {
     }
   }
   ST.fileSelected.clear();
+  ST.filePage = 0;
   renderFiles();
 }
 
 function setFileSearch(q) {
   ST.fileSearch = q;
   ST.fileSelected.clear();
+  ST.filePage = 0;
   renderFiles();
   const inp = document.getElementById('file-search-input');
   if (inp) { inp.focus(); inp.setSelectionRange(q.length, q.length); }
 }
 
+function setFileSort(col) {
+  if (ST.fileSort.col === col) {
+    ST.fileSort.dir = ST.fileSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    ST.fileSort = {col, dir: (col === 'created_at' || col === 'finished_at') ? 'desc' : 'asc'};
+  }
+  ST.filePage = 0;
+  renderFiles();
+}
+
+function setFilePage(p) {
+  ST.filePage = p;
+  renderFiles();
+}
+
+function setPageSize(n) {
+  FILES_PAGE_SIZE = n;
+  ST.filePage = 0;
+  ST.modalPage = 0;
+  renderFiles();
+  renderStatusModal();
+}
+
 function toggleAllFiles(src) {
-  const files = (ST.data && ST.data.files) || [];
-  const filtered = files.filter(f => {
-    if (ST.fileFilters.size > 0 && !ST.fileFilters.has(f.status)) return false;
-    if (ST.fileFiltersNot.has(f.status)) return false;
-    if (ST.fileSearch) {
-      const q = ST.fileSearch.toLowerCase();
-      if (!(f.file_path||'').toLowerCase().includes(q) && !(f.file_name||'').toLowerCase().includes(q)) return false;
-    }
-    return true;
-  });
-  const visibleIds = filtered.slice(0, 100).map(f => f.id);
-  if (src.checked) visibleIds.forEach(id => ST.fileSelected.add(id));
+  const filtered = _getFilteredFiles();
+  const sorted = _sortedFiles(filtered);
+  const page = Math.min(ST.filePage, Math.max(0, Math.ceil(sorted.length / FILES_PAGE_SIZE) - 1));
+  const pageIds = sorted.slice(page * FILES_PAGE_SIZE, (page + 1) * FILES_PAGE_SIZE).map(f => f.id);
+  if (src.checked) pageIds.forEach(id => ST.fileSelected.add(id));
   else ST.fileSelected.clear();
+  renderFiles();
+}
+
+function selectAllFilteredFiles(e) {
+  e.preventDefault();
+  _getFilteredFiles().forEach(f => ST.fileSelected.add(f.id));
   renderFiles();
 }
 
@@ -1795,6 +1901,8 @@ function openStatusModal(status) {
   ST.modalStatus = status;
   ST.modalSelected.clear();
   ST.modalBulkOpen = false;
+  ST.modalPage = 0;
+  ST.modalSort = {col: 'created_at', dir: 'desc'};
   document.getElementById('status-modal-backdrop').style.display = 'flex';
   renderStatusModal();
 }
@@ -1806,6 +1914,79 @@ function closeStatusModal() {
   ST.modalBulkOpen = false;
 }
 
+function _modalSortTh(label, col, right) {
+  const active = ST.modalSort.col === col;
+  const arrow = active ? (ST.modalSort.dir === 'asc' ? ' ↑' : ' ↓') : '';
+  const base = `padding:0 12px 0 0;font-weight:500;white-space:nowrap;cursor:pointer;user-select:none;text-align:${right?'right':'left'};`;
+  const color = active ? 'color:var(--text);' : 'color:var(--text-dim);';
+  return `<th style="${base}${color}" onclick="setModalSort('${col}')">${label}${arrow}</th>`;
+}
+
+function _modalCols(status) {
+  // Returns array of {key, label, right?, th(), td(f, workers)}
+  const mono = 'font-family:\'IBM Plex Mono\',monospace;white-space:nowrap;color:var(--text-dim)';
+  const cell = (content, extra) => `<td style="padding:7px 12px 7px 0;${extra||mono}">${content}</td>`;
+  const cols = {
+    path: {
+      key: 'file_path', label: 'Path',
+      td: (f) => `<td style="padding:7px 12px 7px 0;font-family:'IBM Plex Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:320px" title="${esc(f.file_path)}">${esc(stripPrefix(f.file_path))}</td>`,
+    },
+    status: {
+      key: 'status', label: 'Status',
+      td: (f) => `<td style="padding:7px 12px 7px 0;white-space:nowrap">${badge(f.status)}</td>`,
+    },
+    worker: {
+      key: 'worker_id', label: 'Worker',
+      td: (f, workers) => { const w = workers.find(w => w.config_id === f.worker_id); return cell(w ? esc(w.hostname) : '<span style="color:var(--text-faint)">—</span>', `${mono};color:var(--accent)`); },
+    },
+    resolution: {
+      key: 'resolution', label: 'Resolution',
+      td: (f) => cell(fmtResolution(f.width, f.height)),
+    },
+    cancelReason: {
+      key: 'cancel_reason', label: 'Reason',
+      td: (f) => {
+        if (!f.cancel_reason) return cell('—');
+        if (f.cancel_reason === 'user') return `<td style="padding:7px 12px 7px 0">${badge('user')}</td>`;
+        const tip = f.cancel_detail ? ` title="${esc(f.cancel_detail)}"` : '';
+        return `<td style="padding:7px 12px 7px 0"><span${tip} style="cursor:${f.cancel_detail?'help':'default'}">${badge('auto')}</span></td>`;
+      },
+    },
+    size: {
+      key: 'file_size', label: 'Size', right: true,
+      td: (f) => cell(fmtBytes(f.file_size), `${mono};text-align:right`),
+    },
+    original: {
+      key: 'file_size', label: 'Original', right: true,
+      td: (f) => cell(fmtBytes(f.file_size), `${mono};text-align:right`),
+    },
+    saved: {
+      key: 'saved', label: 'Saved', right: true,
+      td: (f) => { const s = (f.file_size&&f.output_size) ? f.file_size-f.output_size : 0; const pct = f.file_size ? Math.round(s/f.file_size*100) : 0; return cell(pct > 0 ? `${pct}%` : '—', `${mono};text-align:right;color:${pct>0?'var(--green)':'var(--text-faint)'}`); },
+    },
+    added: {
+      key: 'created_at', label: 'Added',
+      td: (f) => cell(fmtDate(f.created_at)),
+    },
+    finished: {
+      key: 'finished_at', label: 'Finished',
+      td: (f) => cell(fmtDate(f.finished_at)),
+    },
+  };
+  switch (status) {
+    case 'scanning':   return [cols.path, cols.size, cols.added];
+    case 'pending':    return [cols.path, cols.resolution, cols.size, cols.added];
+    case 'assigned':   return [cols.path, cols.worker, cols.resolution, cols.size, cols.added];
+    case 'processing': return [cols.path, cols.worker, cols.resolution, cols.size, cols.added];
+    case 'complete':   return [cols.path, cols.worker, cols.resolution, cols.original, cols.saved, cols.added, cols.finished];
+    case 'cancelled':  return [cols.path, cols.worker, cols.resolution, cols.original, cols.saved, cols.added, cols.finished, cols.cancelReason];
+    case 'error':      return [cols.path, cols.worker, cols.resolution, cols.size, cols.added, cols.finished];
+    case 'discarded':  return [cols.path, cols.size, cols.added, cols.finished];
+    case 'duplicate':  return [cols.path, cols.size, cols.added];
+    default:           return [cols.path, cols.status, cols.worker, cols.resolution, cols.size, cols.added, cols.finished];
+  }
+}
+
 function renderStatusModal() {
   if (!ST.modalStatus) return;
   const status = ST.modalStatus;
@@ -1813,80 +1994,137 @@ function renderStatusModal() {
   const workers = (ST.data && ST.data.workers) || [];
   const filtered = status === 'all' ? files : files.filter(f => f.status === status);
   const labels = {
-    all:'All Files', pending:'Pending', assigned:'Assigned', processing:'Processing',
-    complete:'Complete', discarded:'Discarded', cancelled:'Cancelled', error:'Error', duplicate:'Duplicate',
+    all:'All Files', scanning:'Probing', pending:'Pending', assigned:'Assigned',
+    processing:'Processing', complete:'Complete', discarded:'Discarded',
+    cancelled:'Cancelled', error:'Error', duplicate:'Duplicate',
   };
+
+  const cols = _modalCols(status);
+
+  const {col, dir} = ST.modalSort;
+  const m = dir === 'asc' ? 1 : -1;
+  const sorted = [...filtered].sort((a, b) => {
+    switch (col) {
+      case 'file_path':   return m * (a.file_path||'').localeCompare(b.file_path||'');
+      case 'status':      return m * (a.status||'').localeCompare(b.status||'');
+      case 'worker_id':   return m * (a.worker_id||'').localeCompare(b.worker_id||'');
+      case 'file_size':   return m * ((a.file_size||0) - (b.file_size||0));
+      case 'resolution':  return m * ((a.width||0)*(a.height||0) - (b.width||0)*(b.height||0));
+      case 'saved':       return m * (((a.file_size||0)-(a.output_size||0)) - ((b.file_size||0)-(b.output_size||0)));
+      case 'cancel_reason': return m * (a.cancel_reason||'').localeCompare(b.cancel_reason||'');
+      case 'finished_at': return m * (a.finished_at||'').localeCompare(b.finished_at||'');
+      default:            return m * (a.created_at||'').localeCompare(b.created_at||'');
+    }
+  });
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / FILES_PAGE_SIZE));
+  const page = Math.min(ST.modalPage, totalPages - 1);
+  const pageFiles = sorted.slice(page * FILES_PAGE_SIZE, (page + 1) * FILES_PAGE_SIZE);
+  const pageIds = pageFiles.map(f => f.id);
+
   const nSel = ST.modalSelected.size;
-  const allSelected = filtered.length > 0 && filtered.every(f => ST.modalSelected.has(f.id));
+  const allPageSelected = pageIds.length > 0 && pageIds.every(id => ST.modalSelected.has(id));
+  const somePageSelected = pageIds.some(id => ST.modalSelected.has(id));
+  const allPagesSelectable = allPageSelected && nSel < filtered.length;
 
   document.getElementById('status-modal-title').textContent =
     `${labels[status] || status} — ${filtered.length} file${filtered.length !== 1 ? 's' : ''}`;
 
   const body = document.getElementById('status-modal-body');
 
-  const thead = nSel > 0 ? `
-      <thead><tr style="height:36px;font-size:11px;color:var(--text-dim);border-bottom:1px solid var(--border-subtle);background:var(--accent-glow)">
-        <th style="width:36px;padding:0 0 0 14px;font-weight:500">
-          <input type="checkbox" ${allSelected?'checked':''} onchange="toggleAllModal(this)" style="accent-color:var(--accent)">
-        </th>
-        <th style="padding:0;font-weight:500;text-align:left" colspan="2">
-          <span style="color:var(--accent);margin-right:12px">${nSel} selected</span>
-          <div class="dropdown" id="modal-bulk-dropdown" style="display:inline-block">
-            <button class="btn btn-sm" onclick="toggleModalBulkMenu(event)"
-                    style="display:inline-flex;align-items:center;gap:6px">
-              <span>Actions…</span>${svgIcon('chevronDown',12)}
-            </button>
-            ${ST.modalBulkOpen ? `
-            <div class="dropdown-menu">
-              <div class="dropdown-item" onclick="modalBulkSetStatus('pending')">Set → Pending</div>
-              <div class="dropdown-item" onclick="modalBulkSetStatus('cancelled')">Set → Cancelled</div>
-              <div class="dropdown-item" onclick="modalBulkDelete()">Delete records</div>
-              ${workers.length > 0 ? `
-              <div class="dropdown-item dropdown-item-sub" style="display:flex;justify-content:space-between;align-items:center">
-                <span>Queue to…</span>${svgIcon('chevronRight',12)}
-                <div class="submenu">
-                  ${workers.map(w => `<div class="dropdown-item" onclick="modalBulkQueue('${esc(w.config_id)}')">${esc(w.hostname)}</div>`).join('')}
-                </div>
-              </div>` : ''}
-            </div>` : ''}
-          </div>
-        </th>
-        <th style="padding:0 14px 0 0;text-align:right">
-          <button class="btn btn-sm" onclick="ST.modalSelected.clear();ST.modalBulkOpen=false;renderStatusModal()">Clear</button>
-        </th>
-      </tr></thead>` : `
-      <thead><tr style="height:36px;font-size:11px;color:var(--text-dim);border-bottom:1px solid var(--border-subtle)">
-        <th style="width:36px;padding:0 0 0 14px;font-weight:500">
-          <input type="checkbox" ${allSelected?'checked':''} onchange="toggleAllModal(this)" style="accent-color:var(--accent)">
-        </th>
-        <th style="padding:0 12px 0 0;font-weight:500;text-align:left">Path</th>
-        <th style="padding:0 14px 0 0;font-weight:500;text-align:left;white-space:nowrap">Worker</th>
-        <th style="padding:0 14px 0 0;font-weight:500;text-align:right;white-space:nowrap">Size</th>
-      </tr></thead>`;
+  const paginationBar = totalPages > 1 ? `
+    <div class="pagination-bar" style="border-top:1px solid var(--border)">
+      <button class="btn btn-sm" onclick="setModalPage(${page-1})" ${page===0?'disabled':''}>←</button>
+      ${Array.from({length: totalPages}, (_,i) => {
+        if (totalPages <= 7 || i === 0 || i === totalPages-1 || Math.abs(i - page) <= 1)
+          return `<button class="btn btn-sm${i===page?' btn-primary':''}" onclick="setModalPage(${i})">${i+1}</button>`;
+        else if (Math.abs(i - page) === 2)
+          return `<span style="color:var(--text-faint);padding:0 2px">…</span>`;
+        return '';
+      }).filter((x,i,a) => x && (x !== a[i-1])).join('')}
+      <button class="btn btn-sm" onclick="setModalPage(${page+1})" ${page===totalPages-1?'disabled':''}>→</button>
+      <span style="color:var(--text-faint);font-size:12px;margin-left:4px">${sorted.length} files</span>
+      <select class="input" style="margin-left:auto;width:auto;padding:2px 6px;font-size:12px" onchange="setPageSize(+this.value)">
+        ${FILES_PAGE_SIZES.map(n => `<option value="${n}"${n===FILES_PAGE_SIZE?' selected':''}>${n} / page</option>`).join('')}
+      </select>
+    </div>` : `
+    <div class="pagination-bar" style="border-top:1px solid var(--border);justify-content:flex-end">
+      <select class="input" style="width:auto;padding:2px 6px;font-size:12px" onchange="setPageSize(+this.value)">
+        ${FILES_PAGE_SIZES.map(n => `<option value="${n}"${n===FILES_PAGE_SIZE?' selected':''}>${n} / page</option>`).join('')}
+      </select>
+    </div>`;
 
-  if (filtered.length === 0) {
-    body.innerHTML = `<table style="width:100%;border-collapse:collapse">${thead}<tbody><tr><td colspan="4"><div class="modal-empty">No files with this status.</div></td></tr></tbody></table>`;
-    return;
-  }
+  const selectBanner = allPagesSelectable ? `
+    <div class="select-all-banner">
+      ${nSel} files on this page selected —
+      <a href="#" onclick="selectAllModalFiles(event)">Select all ${filtered.length} matching files</a>
+    </div>` : nSel > 0 && nSel >= filtered.length && totalPages > 1 ? `
+    <div class="select-all-banner">
+      All ${nSel} matching files selected —
+      <a href="#" onclick="ST.modalSelected.clear();renderStatusModal()">Clear selection</a>
+    </div>` : '';
+
+  const colSpan = cols.length + 2; // +1 checkbox, +1 clear button col
+
+  const thead = nSel > 0 ? `
+    <thead><tr style="height:36px;font-size:11px;border-bottom:1px solid var(--border-subtle);background:var(--accent-glow)">
+      <th style="width:36px;padding:0 0 0 14px;font-weight:500">
+        <input type="checkbox" ${allPageSelected?'checked':''} onchange="toggleAllModal(this)" style="accent-color:var(--accent)">
+      </th>
+      <th style="padding:0;font-weight:500;text-align:left" colspan="${cols.length}">
+        <span style="color:var(--accent);margin-right:12px">${nSel} selected</span>
+        <div class="dropdown" id="modal-bulk-dropdown" style="display:inline-block">
+          <button class="btn btn-sm" onclick="toggleModalBulkMenu(event)" style="display:inline-flex;align-items:center;gap:6px">
+            <span>Actions…</span>${svgIcon('chevronDown',12)}
+          </button>
+          ${ST.modalBulkOpen ? `
+          <div class="dropdown-menu">
+            <div class="dropdown-item" onclick="modalBulkSetStatus('pending')">Set → Pending</div>
+            <div class="dropdown-item" onclick="modalBulkSetStatus('cancelled')">Set → Cancelled</div>
+            <div class="dropdown-item" onclick="modalBulkDelete()">Delete records</div>
+            ${workers.length > 0 ? `
+            <div class="dropdown-item dropdown-item-sub" style="display:flex;justify-content:space-between;align-items:center">
+              <span>Queue to…</span>${svgIcon('chevronRight',12)}
+              <div class="submenu">
+                ${workers.map(w => `<div class="dropdown-item" onclick="modalBulkQueue('${esc(w.config_id)}')">${esc(w.hostname)}</div>`).join('')}
+              </div>
+            </div>` : ''}
+          </div>` : ''}
+        </div>
+      </th>
+      <th style="padding:0 14px 0 0;text-align:right">
+        <button class="btn btn-sm" onclick="ST.modalSelected.clear();ST.modalBulkOpen=false;renderStatusModal()">Clear</button>
+      </th>
+    </tr></thead>` : `
+    <thead><tr style="height:36px;font-size:11px;color:var(--text-dim);border-bottom:1px solid var(--border-subtle)">
+      <th style="width:36px;padding:0 0 0 14px;font-weight:500"></th>
+      ${cols.map(c => _modalSortTh(c.label, c.key, c.right)).join('')}
+    </tr></thead>`;
 
   body.innerHTML = `
+    ${selectBanner}
     <table style="width:100%;border-collapse:collapse">
       ${thead}
       <tbody>
-        ${filtered.map(f => {
-          const isSel = ST.modalSelected.has(f.id);
-          const worker = workers.find(w => w.config_id === f.worker_id);
-          return `<tr style="${isSel?'background:var(--accent-glow)':''};font-size:12px;border-bottom:1px solid var(--border-subtle)" onmouseenter="this.style.background='${isSel?'var(--accent-glow)':'var(--surface2)'}'" onmouseleave="this.style.background='${isSel?'var(--accent-glow)':''}'">
-            <td style="padding:7px 0 7px 14px">
-              <input type="checkbox" ${isSel?'checked':''} onchange="toggleModalFile(${f.id})" style="accent-color:var(--accent)">
-            </td>
-            <td style="padding:7px 12px 7px 0;font-family:'IBM Plex Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:400px" title="${esc(f.file_path)}">${esc(stripPrefix(f.file_path))}</td>
-            <td style="padding:7px 14px 7px 0;font-family:'IBM Plex Mono',monospace;color:var(--accent);white-space:nowrap">${worker ? esc(worker.hostname) : '<span style="color:var(--text-faint)">—</span>'}</td>
-            <td style="padding:7px 14px 7px 0;font-family:'IBM Plex Mono',monospace;text-align:right;white-space:nowrap;color:var(--text-dim)">${fmtBytes(f.file_size)}</td>
-          </tr>`;
-        }).join('')}
+        ${pageFiles.length === 0
+          ? `<tr><td colspan="${colSpan}"><div class="modal-empty">No files with this status.</div></td></tr>`
+          : pageFiles.map(f => {
+              const isSel = ST.modalSelected.has(f.id);
+              const bg = isSel ? 'var(--accent-glow)' : '';
+              const hoverBg = isSel ? 'var(--accent-glow)' : 'var(--surface2)';
+              return `<tr style="background:${bg};font-size:12px;border-bottom:1px solid var(--border-subtle)" onmouseenter="this.style.background='${hoverBg}'" onmouseleave="this.style.background='${bg}'">
+                <td style="padding:7px 0 7px 14px">
+                  <input type="checkbox" ${isSel?'checked':''} onchange="toggleModalFile(${f.id})" style="accent-color:var(--accent)">
+                </td>
+                ${cols.map(c => c.td(f, workers)).join('')}
+              </tr>`;
+            }).join('')}
       </tbody>
-    </table>`;
+    </table>
+    ${paginationBar}`;
+
+  const hdr = body.querySelector('thead input[type="checkbox"]');
+  if (hdr) hdr.indeterminate = somePageSelected && !allPageSelected;
 }
 
 function toggleModalFile(id) {
@@ -1898,8 +2136,46 @@ function toggleModalFile(id) {
 function toggleAllModal(src) {
   const files = (ST.data && ST.data.files) || [];
   const filtered = ST.modalStatus === 'all' ? files : files.filter(f => f.status === ST.modalStatus);
-  if (src.checked) filtered.forEach(f => ST.modalSelected.add(f.id));
+  const {col, dir} = ST.modalSort; const m = dir==='asc'?1:-1;
+  const sorted = [...filtered].sort((a,b) => {
+    switch(col) {
+      case 'file_path':   return m*(a.file_path||'').localeCompare(b.file_path||'');
+      case 'status':      return m*(a.status||'').localeCompare(b.status||'');
+      case 'worker_id':   return m*(a.worker_id||'').localeCompare(b.worker_id||'');
+      case 'file_size':   return m*((a.file_size||0)-(b.file_size||0));
+      case 'resolution':  return m*((a.width||0)*(a.height||0)-(b.width||0)*(b.height||0));
+      case 'saved':       return m*(((a.file_size||0)-(a.output_size||0))-((b.file_size||0)-(b.output_size||0)));
+      case 'finished_at': return m*(a.finished_at||'').localeCompare(b.finished_at||'');
+      default:            return m*(a.created_at||'').localeCompare(b.created_at||'');
+    }
+  });
+  const page = Math.min(ST.modalPage, Math.max(0, Math.ceil(sorted.length/FILES_PAGE_SIZE)-1));
+  const pageIds = sorted.slice(page*FILES_PAGE_SIZE, (page+1)*FILES_PAGE_SIZE).map(f=>f.id);
+  if (src.checked) pageIds.forEach(id => ST.modalSelected.add(id));
   else ST.modalSelected.clear();
+  renderStatusModal();
+}
+
+function selectAllModalFiles(e) {
+  e.preventDefault();
+  const files = (ST.data && ST.data.files) || [];
+  const filtered = ST.modalStatus === 'all' ? files : files.filter(f => f.status === ST.modalStatus);
+  filtered.forEach(f => ST.modalSelected.add(f.id));
+  renderStatusModal();
+}
+
+function setModalSort(col) {
+  if (ST.modalSort.col === col) {
+    ST.modalSort.dir = ST.modalSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    ST.modalSort = {col, dir: (col === 'created_at' || col === 'finished_at') ? 'desc' : 'asc'};
+  }
+  ST.modalPage = 0;
+  renderStatusModal();
+}
+
+function setModalPage(p) {
+  ST.modalPage = p;
   renderStatusModal();
 }
 

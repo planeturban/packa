@@ -13,6 +13,7 @@ from sqlalchemy.pool import NullPool
 _MIGRATE_COLS = [
     ("file_size", "INTEGER"),
     ("cancel_reason", "VARCHAR(32)"),
+    ("cancel_detail", "VARCHAR(128)"),
     ("encoder", "VARCHAR(64)"),
     ("avg_fps", "FLOAT"),
     ("avg_speed", "FLOAT"),

@@ -40,6 +40,7 @@ class FileRecord(Base):
     )
     file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cancel_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    cancel_detail: Mapped[str | None] = mapped_column(String(128), nullable=True)
     pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     encoder: Mapped[str | None] = mapped_column(String(64), nullable=True)
