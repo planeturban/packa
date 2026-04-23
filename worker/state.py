@@ -45,6 +45,7 @@ class WorkerState:
         self.unconfigured: bool = False
         self.disk_full: bool = False
         self.cancel_reason: str | None = None
+        self.cancel_detail: str | None = None
         self.encoder: str = "libx265"
         self.batch_size: int = 1
         self.current_file: str = ""
@@ -86,6 +87,7 @@ class WorkerState:
         self.proc = None
         self.paused = False
         self.cancel_reason = None
+        self.cancel_detail = None
         self.current_file = ""
         self.current_cmd = ""
 

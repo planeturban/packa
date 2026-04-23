@@ -79,6 +79,22 @@ def _safe_float(val: str | None) -> float:
         return 0.0
 
 
+def _parse_bitrate_bytes_per_s(bitrate_str: str | None) -> float | None:
+    if not bitrate_str or bitrate_str == "N/A":
+        return None
+    s = bitrate_str.lower()
+    try:
+        if s.endswith("kbits/s"):
+            return float(s[:-7]) * 1_000 / 8
+        if s.endswith("mbits/s"):
+            return float(s[:-7]) * 1_000_000 / 8
+        if s.endswith("bits/s"):
+            return float(s[:-6]) / 8
+    except ValueError:
+        pass
+    return None
+
+
 def _parse_progress(frame: dict[str, str], duration_s: float | None, source_size: int = 0) -> FfmpegProgress:
     p = FfmpegProgress(source_size_bytes=source_size or None)
 
@@ -105,7 +121,10 @@ def _parse_progress(frame: dict[str, str], duration_s: float | None, source_size
         remaining_s = duration_s - out_time_s
         if p.speed and p.speed > 0:
             p.eta_seconds = max(0, round(remaining_s / p.speed))
-        if p.current_size_bytes and ratio > 0:
+        bitrate_bps = _parse_bitrate_bytes_per_s(p.bitrate)
+        if p.current_size_bytes and bitrate_bps and remaining_s > 0:
+            p.projected_size_bytes = int(p.current_size_bytes + bitrate_bps * remaining_s)
+        elif p.current_size_bytes and ratio > 0:
             p.projected_size_bytes = int(p.current_size_bytes / ratio)
 
     return p
@@ -142,11 +161,13 @@ async def _stream_progress(
                     if p.percent >= min_pct:
                         ratio = r
                 if ratio is not None and p.projected_size_bytes > source_size * ratio:
+                    over_pct = round((p.projected_size_bytes / source_size - 1) * 100)
                     print(
                         f"[worker] projected size {p.projected_size_bytes} B "
                         f"> {ratio}x source ({source_size} B) at {p.percent:.1f}% — terminating early"
                     )
                     worker_state.cancel_reason = "auto"
+                    worker_state.cancel_detail = f"{p.percent:.0f}% — output {over_pct}% over source"
                     try:
                         proc.terminate()
                     except ProcessLookupError:
@@ -182,6 +203,7 @@ async def _report_result_to_master(
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
     cancel_reason: str | None = None,
+    cancel_detail: str | None = None,
     encoder: str | None = None,
     avg_fps: float | None = None,
     avg_speed: float | None = None,
@@ -200,6 +222,8 @@ async def _report_result_to_master(
         body["finished_at"] = finished_at.isoformat()
     if cancel_reason is not None:
         body["cancel_reason"] = cancel_reason
+    if cancel_detail is not None:
+        body["cancel_detail"] = cancel_detail
     if encoder is not None:
         body["encoder"] = encoder
     if avg_fps is not None:
@@ -309,13 +333,14 @@ async def _process(job: Job) -> None:
                 print(f"[worker] record {job.record_id} reset to pending — disk full")
                 return
             cancel_reason = worker_state.cancel_reason
+            cancel_detail = worker_state.cancel_detail
             if cancel_reason:
                 update_conversion_result(
                     db, job.record_id,
                     status=FileStatus.CANCELLED,
                     pid=proc.pid, output_size=None,
                     started_at=started_at, finished_at=finished_at,
-                    cancel_reason=cancel_reason,
+                    cancel_reason=cancel_reason, cancel_detail=cancel_detail,
                     encoder=encoder,
                     avg_fps=avg_fps, avg_speed=avg_speed,
                 )
@@ -323,7 +348,8 @@ async def _process(job: Job) -> None:
                 await _report_result_to_master(
                     job.record_id, FileStatus.CANCELLED,
                     pid=proc.pid, started_at=started_at, finished_at=finished_at,
-                    cancel_reason=cancel_reason, encoder=encoder,
+                    cancel_reason=cancel_reason, cancel_detail=cancel_detail,
+                    encoder=encoder,
                     avg_fps=avg_fps, avg_speed=avg_speed,
                 )
             else:

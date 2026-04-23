@@ -302,6 +302,7 @@ def update_conversion_result(
     started_at: datetime | None,
     finished_at: datetime | None,
     cancel_reason: str | None = None,
+    cancel_detail: str | None = None,
     encoder: str | None = None,
     avg_fps: float | None = None,
     avg_speed: float | None = None,
@@ -318,6 +319,7 @@ def update_conversion_result(
         record.started_at = started_at
         record.finished_at = finished_at
         record.cancel_reason = cancel_reason
+        record.cancel_detail = cancel_detail
         if encoder is not None:
             record.encoder = encoder
         if avg_fps is not None:
