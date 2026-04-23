@@ -103,6 +103,7 @@ const ST = {
   // workers tab
   workerSettingsOpen: {},   // configId → bool
   workerCmdOpen: {},        // configId → bool
+  workerExpanded: new Set(), // configIds that are expanded in overview
 };
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -379,47 +380,60 @@ function renderOverview() {
     </div>
 
     <div class="card">
-      <div class="card-title">Workers — ${workers.length} registered, ${activeWorkers} active</div>
+      <div class="card-title" style="display:flex;align-items:center">
+        <span style="flex:1">Workers — ${workers.length} registered, ${activeWorkers} active</span>
+        ${workers.length > 0 ? `<button class="btn btn-sm" onclick="toggleAllWorkersExpanded()" style="font-size:11px">${ST.workerExpanded.size >= workers.length ? 'Collapse all' : 'Expand all'}</button>` : ''}
+      </div>
       ${workers.length === 0 ? '<div class="empty">No workers registered</div>' : workers.map(s => {
+        const expanded = ST.workerExpanded.has(s.config_id);
         const dotColor = s.disk_full ? 'var(--red)' : s.state === 'processing' ? 'var(--blue)' : s.sleeping ? 'var(--text-faint)' : 'var(--green)';
         const p = s.progress;
         const pct = p ? Math.round(p.percent || 0) : 0;
         const statusStr = s.disk_full ? 'disk full' : s.sleeping ? 'sleeping' : s.drain ? 'draining' : s.state === 'processing' ? (s.paused ? 'paused' : 'processing') : 'online';
         return `
         <div style="padding:10px 0;border-bottom:1px solid var(--border-subtle)">
-          <div style="display:flex;align-items:center;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="toggleWorkerExpanded('${esc(s.config_id)}')">
             <div style="width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0"></div>
-            <div style="font-size:13px;font-weight:500">${esc(s.hostname)}</div>
+            <div style="font-size:13px;font-weight:500;flex:1">${esc(s.hostname)}</div>
+            ${!expanded && s.state === 'processing' && p ? `
+            <div style="display:flex;align-items:center;gap:8px;min-width:0">
+              <div class="progress-track" style="width:80px;flex-shrink:0"><div class="progress-fill" style="width:${pct}%"></div></div>
+              <span style="font-size:11px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace;white-space:nowrap">${pct}%</span>
+            </div>` : ''}
+            <div style="width:100px;flex-shrink:0;text-align:right">${badge(statusStr)}</div>
+            <div style="color:var(--text-faint);font-size:11px;width:14px;text-align:center">${expanded ? '▲' : '▼'}</div>
           </div>
-          <div style="display:flex;align-items:center;gap:12px;min-width:0">
-            <div style="font-size:11px;color:var(--text-faint);font-family:'IBM Plex Mono',monospace;white-space:nowrap;padding-left:16px">${s.unconfigured ? 'SETUP REQUIRED' : esc((s.encoder||'').toUpperCase())} · batch ${s.batch_size||1} · ${s.converted||0} converted</div>
-            ${s.state === 'processing' && p ? `
-            <div style="flex:1;min-width:0;display:flex;align-items:center;gap:8px">
-              <span style="font-size:11px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1" title="${esc(s.current_file||'')}">${esc((s.current_file||'…').split('/').pop())}</span>
-              <div class="progress-track" style="width:120px;flex-shrink:0"><div class="progress-fill" style="width:${pct}%"></div></div>
-              <span style="font-size:11px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace;white-space:nowrap;min-width:32px;text-align:right">${pct}%</span>
-            </div>` : '<div style="flex:1"></div>'}
-            <div style="width:100px;flex-shrink:0">${badge(statusStr)}</div>
-            ${s.state === 'processing' ? `
-            <div style="display:flex;gap:4px;flex-shrink:0">
-              ${s.drain
-                ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')" title="Wake">${svgIcon('play',11)}</button>`
-                : s.paused
-                  ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')" title="Resume">${svgIcon('play',11)}</button>`
-                  : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'pause')" title="Pause">${svgIcon('pause',11)}</button>`
-              }
-              <button class="btn btn-sm ${s.drain?'btn-primary':''}" onclick="workerAction('${esc(s.host)}',${s.api_port},'drain')" title="Drain">⏭</button>
-              <button class="btn btn-sm btn-danger" onclick="workerAction('${esc(s.host)}',${s.api_port},'stop')" title="Stop">${svgIcon('stop',11)}</button>
-            </div>` : `
-            <div style="display:flex;gap:4px;flex-shrink:0">
-              ${s.sleeping
-                ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')" title="Wake">${svgIcon('play',11)}</button>`
-                : `<button class="btn btn-sm" disabled>${svgIcon('pause',11)}</button>`
-              }
-              <button class="btn btn-sm" disabled>⏭</button>
-              <button class="btn btn-sm" disabled>${svgIcon('stop',11)}</button>
-            </div>`}
-          </div>
+          ${expanded ? `
+          <div style="padding-top:8px">
+            <div style="display:flex;align-items:center;gap:12px;min-width:0">
+              <div style="font-size:11px;color:var(--text-faint);font-family:'IBM Plex Mono',monospace;white-space:nowrap;padding-left:16px">${s.unconfigured ? 'SETUP REQUIRED' : esc((s.encoder||'').toUpperCase())} · batch ${s.batch_size||1} · ${s.converted||0} converted</div>
+              ${s.state === 'processing' && p ? `
+              <div style="flex:1;min-width:0;display:flex;align-items:center;gap:8px">
+                <span style="font-size:11px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1" title="${esc(s.current_file||'')}">${esc((s.current_file||'…').split('/').pop())}</span>
+                <div class="progress-track" style="width:120px;flex-shrink:0"><div class="progress-fill" style="width:${pct}%"></div></div>
+                <span style="font-size:11px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace;white-space:nowrap;min-width:32px;text-align:right">${pct}%</span>
+              </div>` : '<div style="flex:1"></div>'}
+              ${s.state === 'processing' ? `
+              <div style="display:flex;gap:4px;flex-shrink:0">
+                ${s.drain
+                  ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')" title="Wake">${svgIcon('play',11)}</button>`
+                  : s.paused
+                    ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')" title="Resume">${svgIcon('play',11)}</button>`
+                    : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'pause')" title="Pause">${svgIcon('pause',11)}</button>`
+                }
+                <button class="btn btn-sm ${s.drain?'btn-primary':''}" onclick="workerAction('${esc(s.host)}',${s.api_port},'drain')" title="Drain">⏭</button>
+                <button class="btn btn-sm btn-danger" onclick="workerAction('${esc(s.host)}',${s.api_port},'stop')" title="Stop">${svgIcon('stop',11)}</button>
+              </div>` : `
+              <div style="display:flex;gap:4px;flex-shrink:0">
+                ${s.sleeping
+                  ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')" title="Wake">${svgIcon('play',11)}</button>`
+                  : `<button class="btn btn-sm" disabled>${svgIcon('pause',11)}</button>`
+                }
+                <button class="btn btn-sm" disabled>⏭</button>
+                <button class="btn btn-sm" disabled>${svgIcon('stop',11)}</button>
+              </div>`}
+            </div>
+          </div>` : ''}
         </div>`;
       }).join('')}
     </div>
@@ -1258,6 +1272,19 @@ function toggleWorkerCmd(configId) {
 }
 
 
+function toggleWorkerExpanded(configId) {
+  if (ST.workerExpanded.has(configId)) ST.workerExpanded.delete(configId);
+  else ST.workerExpanded.add(configId);
+  renderOverview();
+}
+
+function toggleAllWorkersExpanded() {
+  const workers = (ST.data && ST.data.workers) || [];
+  if (ST.workerExpanded.size >= workers.length) ST.workerExpanded.clear();
+  else workers.forEach(w => ST.workerExpanded.add(w.config_id));
+  renderOverview();
+}
+
 async function workerAction(host, port, action) {
   if (ST.demo) { toast(`[Demo] ${action} → ${host}:${port}`, 'info'); return; }
   try {
@@ -1922,6 +1949,23 @@ function closeStatusModal() {
   ST.modalSelected.clear();
   ST.modalBulkOpen = false;
 }
+
+const _MODAL_STATUS_ORDER = ['scanning','pending','assigned','processing','complete','discarded','cancelled','error','duplicate'];
+
+function navigateStatusModal(dir) {
+  const idx = _MODAL_STATUS_ORDER.indexOf(ST.modalStatus);
+  if (idx === -1) return;
+  const next = _MODAL_STATUS_ORDER[(idx + dir + _MODAL_STATUS_ORDER.length) % _MODAL_STATUS_ORDER.length];
+  openStatusModal(next);
+}
+
+document.addEventListener('keydown', e => {
+  if (!ST.modalStatus) return;
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); navigateStatusModal(-1); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); navigateStatusModal(1); }
+  if (e.key === 'Escape')     { closeStatusModal(); }
+});
 
 function _modalSortTh(label, col, right) {
   const active = ST.modalSort.col === col;
