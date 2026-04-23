@@ -237,9 +237,18 @@ async def _monitor_output_size(output_path: str, source_size: int, proc: asyncio
                 pass
             break
         try:
-            if Path(output_path).stat().st_size >= source_size:
-                print(f"[worker] output already larger than source ({source_size} B) — terminating")
+            actual_size = Path(output_path).stat().st_size
+            stalled = bool(worker_state.progress and worker_state.progress.stalled)
+            thresholds = worker_state.cancel_thresholds
+            limit = source_size
+            if stalled and thresholds:
+                min_ratio = min(r for _, r in thresholds)
+                limit = min(limit, int(source_size * min_ratio))
+            if actual_size >= limit:
+                over_pct = round((actual_size / source_size - 1) * 100)
+                print(f"[worker] output {actual_size} B >= limit {limit} B{' (stalled)' if stalled else ''} — terminating")
                 worker_state.cancel_reason = "auto"
+                worker_state.cancel_detail = f"stalled — output {over_pct}% over source" if stalled else None
                 try:
                     proc.terminate()
                 except ProcessLookupError:
