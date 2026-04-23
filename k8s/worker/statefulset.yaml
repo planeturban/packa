@@ -1,22 +1,18 @@
-# One StatefulSet per worker. Copy and rename for each additional worker.
-# Replace all occurrences of "worker-01" with the worker's unique ID.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: worker-01
+  name: worker
   namespace: packa
 spec:
-  serviceName: worker-01
+  serviceName: worker
   replicas: 1
   selector:
     matchLabels:
       app: packa-worker
-      worker-id: worker-01
   template:
     metadata:
       labels:
         app: packa-worker
-        worker-id: worker-01
     spec:
       containers:
         - name: worker
@@ -36,8 +32,8 @@ spec:
               value: worker
             - name: PACKA_CONFIG
               value: /etc/packa/packa.toml
-            - name: PACKA_WORKER_ID
-              value: "worker-01"
+            # - name: PACKA_WORKER_ID
+            #   value: "worker-01"   # omit to auto-generate a unique ID from worker.db
             - name: PACKA_WORKER_BOOTSTRAP_TOKEN
               valueFrom:
                 secretKeyRef:
