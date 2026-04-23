@@ -52,7 +52,7 @@ video_args   = "-c:v libx265"
 
 [worker.worker]
 poll_interval     = 5
-# cancel_thresholds = [[10.0, 1.10], [25.0, 1.05], [50.0, 1.0]]   # remove to disable early cancellation
+# cancel_thresholds = [[20.0, 1.15], [40.0, 1.05], [60.0, 1.0]]   # remove to disable early cancellation
 
 # ---------------------------------------------------------------------------
 

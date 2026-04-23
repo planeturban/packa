@@ -79,23 +79,8 @@ def _safe_float(val: str | None) -> float:
         return 0.0
 
 
-def _parse_bitrate_bytes_per_s(bitrate_str: str | None) -> float | None:
-    if not bitrate_str or bitrate_str == "N/A":
-        return None
-    s = bitrate_str.lower()
-    try:
-        if s.endswith("kbits/s"):
-            return float(s[:-7]) * 1_000 / 8
-        if s.endswith("mbits/s"):
-            return float(s[:-7]) * 1_000_000 / 8
-        if s.endswith("bits/s"):
-            return float(s[:-6]) / 8
-    except ValueError:
-        pass
-    return None
 
-
-def _parse_progress(frame: dict[str, str], duration_s: float | None, source_size: int = 0) -> FfmpegProgress:
+def _parse_progress(frame: dict[str, str], duration_s: float | None, source_size: int = 0, prev_out_time_us: int = 0) -> FfmpegProgress:
     p = FfmpegProgress(source_size_bytes=source_size or None)
 
     out_time_us = _safe_int(frame.get("out_time_us"))
@@ -121,10 +106,9 @@ def _parse_progress(frame: dict[str, str], duration_s: float | None, source_size
         remaining_s = duration_s - out_time_s
         if p.speed and p.speed > 0:
             p.eta_seconds = max(0, round(remaining_s / p.speed))
-        bitrate_bps = _parse_bitrate_bytes_per_s(p.bitrate)
-        if p.current_size_bytes and bitrate_bps and remaining_s > 0:
-            p.projected_size_bytes = int(p.current_size_bytes + bitrate_bps * remaining_s)
-        elif p.current_size_bytes and ratio > 0:
+        stalled = out_time_us > 0 and out_time_us == prev_out_time_us
+        p.stalled = stalled
+        if not stalled and p.current_size_bytes and ratio > 0:
             p.projected_size_bytes = int(p.current_size_bytes / ratio)
 
     return p
@@ -140,6 +124,7 @@ async def _stream_progress(
     fps_samples: list[float] = []
     speed_samples: list[float] = []
     thresholds = sorted(worker_state.cancel_thresholds)
+    prev_out_time_us: int = 0
     async for raw in stdout:
         line = raw.decode(errors="replace").strip()
         if "=" not in line:
@@ -147,7 +132,8 @@ async def _stream_progress(
         key, _, value = line.partition("=")
         frame[key.strip()] = value.strip()
         if key.strip() == "progress":
-            p = _parse_progress(frame, duration_s, source_size)
+            p = _parse_progress(frame, duration_s, source_size, prev_out_time_us)
+            prev_out_time_us = _safe_int(frame.get("out_time_us"))
             worker_state.progress = p
             if p.fps:
                 fps_samples.append(p.fps)

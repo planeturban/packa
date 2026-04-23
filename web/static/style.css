@@ -35,6 +35,7 @@
   --red-bg:        oklch(0.60 0.18 15 / 0.12);
   --yellow:        oklch(0.75 0.14 85);
   --yellow-bg:     oklch(0.75 0.14 85 / 0.12);
+  --warn:          var(--yellow);
   --blue:          oklch(0.65 0.16 250);
   --blue-bg:       oklch(0.65 0.16 250 / 0.12);
   --purple:        oklch(0.65 0.16 300);
@@ -215,6 +216,7 @@ body {
 }
 .progress-fill.green { background: var(--green); }
 .progress-fill.blue { background: var(--blue); }
+.progress-fill.stalled { background: var(--yellow); }
 
 /* ── Badges ─────────────────────────────────────────────────────────── */
 .badge {
