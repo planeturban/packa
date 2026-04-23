@@ -96,7 +96,7 @@ def _record_probes(n: int) -> None:
         _probe_window.popleft()
 
 
-def _probe_rate_per_min() -> float | None:
+def _probe_rate_per_s() -> float | None:
     if not _probe_window:
         return None
     now = _time.monotonic()
@@ -107,7 +107,7 @@ def _probe_rate_per_min() -> float | None:
     elapsed = now - recent[0][0]
     if elapsed < 1.0:
         return None
-    return round(total / elapsed * 60, 1)
+    return round(total / elapsed, 2)
 
 
 async def _truncation_check(file_path: str, duration: float) -> str | None:
@@ -687,7 +687,7 @@ def get_master_stats(db: Session = Depends(get_db)):
     overall = crud.get_stats(db).get("overall", {})
     return {
         "scanning_queue": scanning_queue,
-        "probe_rate_per_min": _probe_rate_per_min(),
+        "probe_rate_per_s": _probe_rate_per_s(),
         "scan_rate_per_s": _scan.scan_rate(),
         "avg_conversion_s": overall.get("avg_duration_seconds"),
         "avg_fps": overall.get("avg_fps"),

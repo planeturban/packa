@@ -1399,8 +1399,8 @@ function renderScan() {
 
   const avgConvS = meta.avg_conversion_s;
   const avgConvStr = avgConvS != null ? fmtDuration(avgConvS) : '—';
-  const probeRate = meta.probe_rate_per_min;
-  const probeRateStr = probeRate != null ? `${probeRate}/min` : '—';
+  const probeRate = meta.probe_rate_per_s;
+  const probeRateStr = probeRate != null ? `${probeRate}/s` : '—';
   const scanRate = meta.scan_rate_per_s;
   const scanRateStr = scanRate != null ? `${scanRate} files/s` : (running ? 'measuring…' : '—');
   const scanningQ = meta.scanning_queue ?? 0;
@@ -1453,7 +1453,7 @@ function renderScan() {
           <div class="scan-title">${running ? 'Scan in progress…' : 'Scanner idle'}</div>
           <div class="scan-sub">
             ${running
-              ? `${scanned.toLocaleString()} / ${total.toLocaleString()} scanned · ${found} new files found`
+              ? `${(found + (scan.skipped||0) + (scan.errors||0)).toLocaleString()} processed · ${found} new · ${scan.skipped||0} skipped${scan.errors ? ` · ${scan.errors} errors` : ''}`
               : scan.path ? `Path: ${esc(scan.path)}` : 'No scan running'
             }
           </div>

@@ -102,7 +102,7 @@ The database layer (`master_settings` table, `config.*` keys) is editable at run
 - `PATCH /master/config/{key}` — body `{value}`, writes DB override, reapplies live config
 - `DELETE /master/config/{key}` — clears DB override; effective value falls back through env → file → default
 - `POST /master/config/{key}/restore` — body `{source: "file"|"env"|"default"}`, copies that layer into DB
-- `GET /master/stats` — probe rate (last 60 s), scan rate, probe queue depth, average conversion time
+- `GET /master/stats` — probe rate per second (last 60 s), scan rate, probe queue depth, average conversion time
 - `POST /bootstrap` — exchange a bootstrap token for a signed client cert bundle `{cert_pem, key_pem, ca_pem}`
 - `GET /tls/status` — CA fingerprint and enabled flag
 - `GET /tls/token` — current token info `{token, expires_at}`
