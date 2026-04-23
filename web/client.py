@@ -71,7 +71,7 @@ async def fetch_dashboard(master_url: str, httpx_kwargs: dict | None = None) -> 
             "saved_bytes": overall.get("total_saved_bytes", 0),
         }
 
-        status_results, config_results = await asyncio.gather(
+        status_results, config_results, worker_stat_results = await asyncio.gather(
             asyncio.gather(
                 *[client.get(f"{s.get('scheme','http')}://{s['host']}:{s['api_port']}/status") for s in workers_list],
                 return_exceptions=True,
@@ -80,10 +80,14 @@ async def fetch_dashboard(master_url: str, httpx_kwargs: dict | None = None) -> 
                 *[client.get(f"{s.get('scheme','http')}://{s['host']}:{s['api_port']}/config") for s in workers_list],
                 return_exceptions=True,
             ),
+            asyncio.gather(
+                *[client.get(f"{master_url}/stats/worker/{s['config_id']}") for s in workers_list],
+                return_exceptions=True,
+            ),
         )
 
     workers = []
-    for info, result, cfg_result in zip(workers_list, status_results, config_results):
+    for info, result, cfg_result, stat_result in zip(workers_list, status_results, config_results, worker_stat_results):
         st = None
         if not isinstance(result, Exception):
             try:
@@ -94,6 +98,14 @@ async def fetch_dashboard(master_url: str, httpx_kwargs: dict | None = None) -> 
         if not isinstance(cfg_result, Exception):
             try:
                 worker_cfg = cfg_result.json()
+            except Exception:
+                pass
+        worker_avg_s = None
+        if not isinstance(stat_result, Exception):
+            try:
+                wd = stat_result.json()
+                v = (wd.get("overall") or wd).get("avg_duration_seconds")
+                worker_avg_s = v if v else None
             except Exception:
                 pass
 
@@ -134,6 +146,7 @@ async def fetch_dashboard(master_url: str, httpx_kwargs: dict | None = None) -> 
             "converted": converted,
             "errors": errors,
             "worker_config": worker_cfg,
+            "avg_duration_s": worker_avg_s,
         })
 
     return {
