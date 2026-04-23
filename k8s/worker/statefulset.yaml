@@ -14,6 +14,15 @@ spec:
       labels:
         app: packa-worker
     spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: packa-worker
+                topologyKey: kubernetes.io/hostname
       containers:
         - name: worker
           image: ghcr.io/planeturban/packa:latest
