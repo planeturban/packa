@@ -42,6 +42,7 @@ app = FastAPI(title="Packa Web")
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 
 _templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+_templates.env.globals["commit"] = _COMMIT
 
 
 # ---------------------------------------------------------------------------
