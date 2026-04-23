@@ -49,24 +49,25 @@ kubectl create secret generic packa-cifs-credentials -n packa \
 
 ## Step 3 — Add workers
 
-The file [worker/statefulset.yaml](worker/statefulset.yaml) is a template for one worker (`worker-01`).
-
-For each additional worker, copy both files and replace `worker-01` with a unique ID:
+By default workers auto-generate a unique ID stored in `worker.db` — no configuration
+needed. Each pod in a StatefulSet gets its own PVC, so scaling replicas just works:
 
 ```bash
-sed 's/worker-01/worker-02/g' worker/statefulset.yaml > worker/statefulset-worker-02.yaml
-sed 's/worker-01/worker-02/g' worker/service.yaml     > worker/service-worker-02.yaml
+kubectl scale statefulset worker -n packa --replicas=3
 ```
 
-Add the new files to [kustomization.yaml](kustomization.yaml):
+**Workers with different settings (e.g. one GPU, one CPU):**
 
-```yaml
-- worker/statefulset-worker-02.yaml
-- worker/service-worker-02.yaml
+Create a separate StatefulSet per worker and set `PACKA_WORKER_ID` and
+`PACKA_WORKER_FFMPEG_EXTRA_ARGS` explicitly:
+
+```bash
+sed 's/name: worker/name: worker-gpu/g' worker/statefulset.yaml > worker/statefulset-worker-gpu.yaml
+cp worker/service.yaml worker/service-worker-gpu.yaml
+# edit worker-gpu files: set PACKA_WORKER_ID and PACKA_WORKER_FFMPEG_EXTRA_ARGS
 ```
 
-To configure per-worker ffmpeg settings (e.g. hardware encoding), uncomment and set
-`PACKA_WORKER_FFMPEG_EXTRA_ARGS` in the worker's env section.
+Add the new files to [kustomization.yaml](kustomization.yaml).
 
 ---
 
