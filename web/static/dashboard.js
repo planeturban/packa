@@ -1952,6 +1952,16 @@ function _modalCols(status) {
         return `<td style="padding:7px 12px 7px 0"><span${tip} style="cursor:${f.cancel_detail?'help':'default'}">${badge('auto')}</span></td>`;
       },
     },
+    discardReason: {
+      key: 'discard_reason', label: 'Reason',
+      td: (f) => {
+        if (!f.discard_reason) return cell('—');
+        if (f.discard_reason === 'hevc') return `<td style="padding:7px 12px 7px 0"><span class="badge badge-discarded">HEVC</span></td>`;
+        if (f.discard_reason === 'corrupt') return `<td style="padding:7px 12px 7px 0"><span class="badge badge-error">Corrupt</span></td>`;
+        if (f.discard_reason === 'truncated') return `<td style="padding:7px 12px 7px 0"><span class="badge badge-cancelled">Truncated</span></td>`;
+        return cell(f.discard_reason);
+      },
+    },
     size: {
       key: 'file_size', label: 'Size', right: true,
       td: (f) => cell(fmtBytes(f.file_size), `${mono};text-align:right`),
@@ -1981,7 +1991,7 @@ function _modalCols(status) {
     case 'complete':   return [cols.path, cols.worker, cols.resolution, cols.original, cols.saved, cols.added, cols.finished];
     case 'cancelled':  return [cols.path, cols.worker, cols.resolution, cols.original, cols.saved, cols.added, cols.finished, cols.cancelReason];
     case 'error':      return [cols.path, cols.worker, cols.resolution, cols.size, cols.added, cols.finished];
-    case 'discarded':  return [cols.path, cols.size, cols.added, cols.finished];
+    case 'discarded':  return [cols.path, cols.size, cols.added, cols.finished, cols.discardReason];
     case 'duplicate':  return [cols.path, cols.size, cols.added];
     default:           return [cols.path, cols.status, cols.worker, cols.resolution, cols.size, cols.added, cols.finished];
   }
@@ -2012,6 +2022,7 @@ function renderStatusModal() {
       case 'resolution':  return m * ((a.width||0)*(a.height||0) - (b.width||0)*(b.height||0));
       case 'saved':       return m * (((a.file_size||0)-(a.output_size||0)) - ((b.file_size||0)-(b.output_size||0)));
       case 'cancel_reason': return m * (a.cancel_reason||'').localeCompare(b.cancel_reason||'');
+      case 'discard_reason': return m * (a.discard_reason||'').localeCompare(b.discard_reason||'');
       case 'finished_at': return m * (a.finished_at||'').localeCompare(b.finished_at||'');
       default:            return m * (a.created_at||'').localeCompare(b.created_at||'');
     }
