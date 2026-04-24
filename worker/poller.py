@@ -84,7 +84,8 @@ async def _claim_and_enqueue(
                     print(f"[poller] re-claimed existing record {record.id} '{record.file_name}' — reset to pending")
             if record and output_dir:
                 worker_state.enqueue(Job(record_id=record.id, file_path=record.file_path,
-                                         duration=job_data.get("duration")))
+                                         duration=job_data.get("duration"),
+                                         force_encode=bool(job_data.get("force_encode", False))))
                 print(f"[poller] claimed record {record.id} '{record.file_name}'")
     finally:
         db.close()

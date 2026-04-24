@@ -401,6 +401,7 @@ class ClaimOut(BaseModel):
     m_time: float
     checksum: str
     duration: float | None
+    force_encode: bool = False
 
 
 class FileResultUpdate(BaseModel):
@@ -504,6 +505,7 @@ def assign_jobs(body: AssignRequest, db: Session = Depends(get_db)):
             m_time=record.m_time,
             checksum=record.checksum,
             duration=record.duration,
+            force_encode=bool(record.force_encode),
         ))
     db.commit()
     print(f"[master] assigned {len(result)} job(s) to worker '{body.worker_id}'")
@@ -535,6 +537,7 @@ def claim_jobs(body: ClaimRequest, db: Session = Depends(get_db)):
             m_time=record.m_time,
             checksum=record.checksum,
             duration=record.duration,
+            force_encode=bool(record.force_encode),
         ))
     db.commit()
     print(f"[master] worker '{body.worker_id}' claimed {len(result)} job(s)")
@@ -566,6 +569,10 @@ def update_file_result(record_id: int, body: FileResultUpdate, db: Session = Dep
     )
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
+    if body.status == FileStatus.COMPLETE and record.force_encode:
+        record.force_encode = False
+        db.commit()
+        db.refresh(record)
     print(f"[master] record {record_id} → {body.status.value}")
     return record
 
@@ -736,6 +743,12 @@ def update_file_status(record_id: int, body: StatusUpdate, db: Session = Depends
     record = crud.update_status(db, record_id, body.status)
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
+    if body.force_encode:
+        record.force_encode = True
+        db.commit()
+    elif body.status == FileStatus.PENDING:
+        record.force_encode = False
+        db.commit()
     return record
 
 

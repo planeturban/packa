@@ -481,6 +481,24 @@ async def data_files_cancel(request: Request):
     return JSONResponse({"ok": True})
 
 
+@app.post("/data/files/force-encode")
+async def data_files_force_encode(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    ids: list[int] = body.get("ids", [])
+    skip_size_check: bool = bool(body.get("skip_size_check", False))
+    async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
+        await asyncio.gather(
+            *[client.patch(
+                f"{_master_url()}/files/{i}/status",
+                json={"status": "pending", "force_encode": skip_size_check},
+            ) for i in ids],
+            return_exceptions=True,
+        )
+    return JSONResponse({"ok": True})
+
+
 @app.post("/data/worker/pending")
 async def data_worker_pending(request: Request, host: str = Query(), port: int = Query()):
     if not _logged_in(request):

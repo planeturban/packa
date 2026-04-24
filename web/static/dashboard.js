@@ -9,9 +9,11 @@ function fmtBytes(b) {
 
 function fmtResolution(w, h) {
   if (!w || !h) return '—';
-  if (h > 2160) return '4K+';
-  if (h >= 2160) return '4K';
-  return `${h}p`;
+  if (h >= 3240) return '8K';
+  if (h >= 1620) return '4K';
+  if (h >= 900)  return '1080p';
+  if (h >= 600)  return '720p';
+  return 'SD';
 }
 
 function fmtDate(iso) {
@@ -2220,6 +2222,12 @@ function renderStatusModal() {
           <div class="dropdown-menu">
             <div class="dropdown-item" onclick="modalBulkSetStatus('pending')">Set → Pending</div>
             <div class="dropdown-item" onclick="modalBulkSetStatus('cancelled')">Set → Cancelled</div>
+            ${status === 'cancelled' ? `
+            <div class="dropdown-item" onclick="modalBulkForceEncode(false)">Re-encode</div>
+            <div class="dropdown-item" onclick="modalBulkForceEncode(true)">Re-encode (skip size check)</div>` : ''}
+            ${status === 'discarded' ? `
+            <div class="dropdown-item" onclick="modalBulkForceEncode(false)">Force encode</div>
+            <div class="dropdown-item" onclick="modalBulkForceEncode(true)">Force encode (skip size check)</div>` : ''}
             <div class="dropdown-item" onclick="modalBulkDelete()">Delete records</div>
             ${workers.length > 0 ? `
             <div class="dropdown-item dropdown-item-sub" style="display:flex;justify-content:space-between;align-items:center">
@@ -2413,6 +2421,20 @@ async function modalBulkQueue(workerConfigId) {
     if (!r.ok) throw new Error(await r.text());
     const res = await r.json();
     toast(`Queued ${res.assigned || ids.length} files`, 'success');
+    ST.modalSelected.clear();
+    await fetchAll();
+    renderStatusModal();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function modalBulkForceEncode(skipSizeCheck) {
+  const ids = [...ST.modalSelected];
+  if (!ids.length) return;
+  ST.modalBulkOpen = false;
+  try {
+    const r = await fetch('/data/files/force-encode', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids, skip_size_check: skipSizeCheck}) });
+    if (!r.ok) throw new Error(await r.text());
+    toast(`Queued ${ids.length} file(s) for re-encode`, 'success');
     ST.modalSelected.clear();
     await fetchAll();
     renderStatusModal();
