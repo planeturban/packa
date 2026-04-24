@@ -24,6 +24,8 @@ _MIGRATE_COLS = [
     ("bitrate", "INTEGER"),
     ("duration", "REAL"),
     ("force_encode", "INTEGER NOT NULL DEFAULT 0"),
+    ("ffmpeg_cmd", "VARCHAR(2048)"),
+    ("ffmpeg_stderr", "VARCHAR(4096)"),
 ]
 
 

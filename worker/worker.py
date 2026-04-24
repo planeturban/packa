@@ -306,6 +306,7 @@ async def _process(job: Job) -> None:
             record.status = FileStatus.PROCESSING
             record.encoder = encoder
             record.started_at = started_at
+            record.ffmpeg_cmd = worker_state.current_cmd
             db.commit()
         print(f"[worker] record {job.record_id} pid={proc.pid}  duration={duration_s}s  source={source_size}B")
         await _update_master_status(job.record_id, "processing")
@@ -359,6 +360,10 @@ async def _process(job: Job) -> None:
                     encoder=encoder,
                     avg_fps=avg_fps, avg_speed=avg_speed,
                 )
+                record = get_file_record(db, job.record_id)
+                if record:
+                    record.ffmpeg_stderr = stderr_output[-4096:] if stderr_output else None
+                    db.commit()
                 print(f"[worker] record {job.record_id} error (exit {proc.returncode}):")
                 for line in stderr_output.splitlines():
                     print(f"[ffmpeg]   {line}")
