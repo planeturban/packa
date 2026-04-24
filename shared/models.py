@@ -42,6 +42,7 @@ class FileRecord(Base):
     cancel_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     cancel_detail: Mapped[str | None] = mapped_column(String(128), nullable=True)
     discard_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    force_encode: Mapped[bool] = mapped_column(Integer, nullable=False, default=0)
     pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     encoder: Mapped[str | None] = mapped_column(String(64), nullable=True)

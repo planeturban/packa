@@ -9,9 +9,11 @@ function fmtBytes(b) {
 
 function fmtResolution(w, h) {
   if (!w || !h) return '—';
-  if (h > 2160) return '4K+';
-  if (h >= 2160) return '4K';
-  return `${h}p`;
+  if (h >= 3240) return '8K';
+  if (h >= 1620) return '4K';
+  if (h >= 900)  return '1080p';
+  if (h >= 600)  return '720p';
+  return 'SD';
 }
 
 function fmtDate(iso) {
@@ -104,6 +106,10 @@ const ST = {
   workerSettingsOpen: {},   // configId → bool
   workerCmdOpen: {},        // configId → bool
   workerExpanded: new Set(), // configIds that are expanded in overview
+  modalDiscardFilter: new Set(),
+  modalDiscardFilterNot: new Set(),
+  modalCancelFilter: new Set(),
+  modalCancelFilterNot: new Set(),
 };
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -315,6 +321,35 @@ function renderOverview() {
   const availableWorkers = workers.filter(w => !w.sleeping && !w.unconfigured && w.state !== 'unreachable');
   const totalRate = availableWorkers.reduce((sum, w) => w.avg_duration_s > 0 ? sum + 1 / w.avg_duration_s : sum, 0);
   const etaSecs = (remaining > 0 && totalRate > 0) ? Math.round(remaining / totalRate) : null;
+
+  // Projected savings: per-resolution-tier compression ratio from completed files
+  const files = data.files || [];
+  const tierOf = h => !h ? null : h >= 3240 ? '8k' : h >= 1620 ? '4k' : h >= 900 ? '1080p' : h >= 600 ? '720p' : 'sd';
+  const tierStats = {};
+  for (const f of files) {
+    if (f.status !== 'complete' || !f.file_size || !f.output_size || !f.height) continue;
+    const t = tierOf(f.height);
+    if (!t) continue;
+    if (!tierStats[t]) tierStats[t] = { totalIn: 0, totalOut: 0, n: 0 };
+    tierStats[t].totalIn  += f.file_size;
+    tierStats[t].totalOut += f.output_size;
+    tierStats[t].n++;
+  }
+  let projSavedBytes = 0, projTotalSamples = 0, projTotalFiles = 0, projLowConf = false;
+  for (const f of files) {
+    if (f.status !== 'pending' && f.status !== 'assigned') continue;
+    if (!f.file_size || !f.height) continue;
+    const t = tierOf(f.height);
+    const ts = t && tierStats[t];
+    if (!ts || ts.n === 0) continue;
+    const ratio = ts.totalOut / ts.totalIn;
+    projSavedBytes += f.file_size * (1 - ratio);
+    projTotalSamples += ts.n;
+    projTotalFiles++;
+    if (ts.n < 10) projLowConf = true;
+  }
+  const avgSamples = projTotalFiles > 0 ? Math.round(projTotalSamples / projTotalFiles) : 0;
+
   const statusChips = [
     { key:'scanning',   label:'Probing',    color:'var(--text-dim)' },
     { key:'pending',    label:'Pending',    color:'var(--yellow)' },
@@ -340,6 +375,16 @@ function renderOverview() {
         <div class="stat-label">Space Saved</div>
         <div class="stat-value stat-accent">${fmtBytes(stats.saved_bytes)}</div>
         <div class="stat-sub">after compression</div>
+      </div>
+      <div class="stat-card${projLowConf ? ' stat-card-dim' : ''}">
+        <div class="stat-label">Projected Savings</div>
+        <div class="stat-value${projLowConf ? ' stat-dim' : ' stat-accent'}">${projTotalFiles > 0 ? fmtBytes(projSavedBytes) : '—'}</div>
+        <div class="stat-sub">${projTotalFiles > 0 ? `${projTotalFiles.toLocaleString()} pending files · ${avgSamples} sample${avgSamples !== 1 ? 's' : ''}${projLowConf ? ' · low confidence' : ''}` : 'no estimate available'}</div>
+      </div>
+      <div class="stat-card${projLowConf ? ' stat-card-dim' : ''}">
+        <div class="stat-label">Total Savings Est.</div>
+        <div class="stat-value${projLowConf ? ' stat-dim' : ' stat-accent'}">${projTotalFiles > 0 ? fmtBytes((stats.saved_bytes || 0) + projSavedBytes) : fmtBytes(stats.saved_bytes || 0)}</div>
+        <div class="stat-sub">${projTotalFiles > 0 ? `saved + projected${projLowConf ? ' · low confidence' : ''}` : 'saved so far'}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Library ETA</div>
@@ -1881,9 +1926,29 @@ async function scanStop() {
 function renderSettings() {
   const el = document.getElementById('tab-settings');
   if (!el) return;
+  const auth = (ST.data || {}).auth || {};
 
   el.innerHTML = `
     <div style="max-width:600px">
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-title">Authentication</div>
+        <div class="settings-row" style="align-items:flex-start;flex-direction:column;gap:12px">
+          <div style="font-size:13px;color:var(--text-dim)">
+            ${auth.enabled ? `Auth enabled — username: <strong>${esc(auth.username)}</strong>` : 'Auth disabled — dashboard is publicly accessible.'}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;width:100%">
+            <input id="auth-username" class="input" type="text" placeholder="Username (leave empty to disable auth)"
+              value="${esc(auth.username)}" autocomplete="username" style="max-width:320px">
+            <input id="auth-password" class="input" type="password" placeholder="New password"
+              autocomplete="new-password" style="max-width:320px">
+            <div style="display:flex;gap:8px;align-items:center">
+              <button class="btn btn-sm btn-primary" onclick="saveAuth()">Save</button>
+              ${auth.enabled ? `<button class="btn btn-sm btn-danger" onclick="disableAuth()">Disable auth</button>` : ''}
+              <span id="auth-msg" style="font-size:12px;color:var(--text-dim)"></span>
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="card">
         <div class="card-title">Connection</div>
         <div class="settings-row">
@@ -1917,6 +1982,34 @@ function renderSettings() {
   `;
 }
 
+async function saveAuth() {
+  const username = document.getElementById('auth-username').value.trim();
+  const password = document.getElementById('auth-password').value.trim();
+  const msg = document.getElementById('auth-msg');
+  try {
+    const r = await fetch('/data/auth', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username, password})});
+    const j = await r.json();
+    if (!r.ok) { msg.style.color = 'var(--red)'; msg.textContent = j.error || 'Error'; return; }
+    msg.style.color = 'var(--green)'; msg.textContent = 'Saved';
+    await fetchAll();
+    renderSettings();
+  } catch(e) { msg.style.color = 'var(--red)'; msg.textContent = String(e); }
+}
+
+async function disableAuth() {
+  const msg = document.getElementById('auth-msg');
+  try {
+    const r = await fetch('/data/auth', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username:'', password:''})});
+    const j = await r.json();
+    if (!r.ok) { msg.style.color = 'var(--red)'; msg.textContent = j.error || 'Error'; return; }
+    msg.style.color = 'var(--green)'; msg.textContent = 'Auth disabled';
+    await fetchAll();
+    renderSettings();
+  } catch(e) { msg.style.color = 'var(--red)'; msg.textContent = String(e); }
+}
+
 function setPollInterval(ms) {
   ST.pollInterval = ms;
   clearTimeout(ST._pollTimer);
@@ -1939,6 +2032,8 @@ function openStatusModal(status) {
   ST.modalBulkOpen = false;
   ST.modalPage = 0;
   ST.modalSort = {col: 'created_at', dir: 'desc'};
+  ST.modalDiscardFilter.clear(); ST.modalDiscardFilterNot.clear();
+  ST.modalCancelFilter.clear();  ST.modalCancelFilterNot.clear();
   document.getElementById('status-modal-backdrop').style.display = 'flex';
   renderStatusModal();
 }
@@ -2055,7 +2150,28 @@ function renderStatusModal() {
   const status = ST.modalStatus;
   const files = (ST.data && ST.data.files) || [];
   const workers = (ST.data && ST.data.workers) || [];
-  const filtered = status === 'all' ? files : files.filter(f => f.status === status);
+  let filtered = status === 'all' ? files : files.filter(f => f.status === status);
+
+  // Discard reason filter chips
+  const discardReasons = ['hevc', 'corrupt', 'truncated'];
+  const discardCounts = status === 'discarded'
+    ? Object.fromEntries(discardReasons.map(r => [r, filtered.filter(f => f.discard_reason === r).length]))
+    : {};
+  if (status === 'discarded') {
+    if (ST.modalDiscardFilterNot.size > 0) filtered = filtered.filter(f => !ST.modalDiscardFilterNot.has(f.discard_reason));
+    if (ST.modalDiscardFilter.size > 0)    filtered = filtered.filter(f => ST.modalDiscardFilter.has(f.discard_reason));
+  }
+
+  // Cancel reason filter chips
+  const cancelReasons = ['user', 'auto'];
+  const cancelCounts = status === 'cancelled'
+    ? Object.fromEntries(cancelReasons.map(r => [r, filtered.filter(f => f.cancel_reason === r).length]))
+    : {};
+  if (status === 'cancelled') {
+    if (ST.modalCancelFilterNot.size > 0) filtered = filtered.filter(f => !ST.modalCancelFilterNot.has(f.cancel_reason));
+    if (ST.modalCancelFilter.size > 0)    filtered = filtered.filter(f => ST.modalCancelFilter.has(f.cancel_reason));
+  }
+
   const labels = {
     all:'All Files', scanning:'Probing', pending:'Pending', assigned:'Assigned',
     processing:'Processing', complete:'Complete', discarded:'Discarded',
@@ -2145,6 +2261,12 @@ function renderStatusModal() {
           <div class="dropdown-menu">
             <div class="dropdown-item" onclick="modalBulkSetStatus('pending')">Set → Pending</div>
             <div class="dropdown-item" onclick="modalBulkSetStatus('cancelled')">Set → Cancelled</div>
+            ${status === 'cancelled' ? `
+            <div class="dropdown-item" onclick="modalBulkForceEncode(false)">Re-encode</div>
+            <div class="dropdown-item" onclick="modalBulkForceEncode(true)">Re-encode (skip size check)</div>` : ''}
+            ${status === 'discarded' ? `
+            <div class="dropdown-item" onclick="modalBulkForceEncode(false)">Force encode</div>
+            <div class="dropdown-item" onclick="modalBulkForceEncode(true)">Force encode (skip size check)</div>` : ''}
             <div class="dropdown-item" onclick="modalBulkDelete()">Delete records</div>
             ${workers.length > 0 ? `
             <div class="dropdown-item dropdown-item-sub" style="display:flex;justify-content:space-between;align-items:center">
@@ -2165,7 +2287,27 @@ function renderStatusModal() {
       ${cols.map(c => _modalSortTh(c.label, c.key, c.right)).join('')}
     </tr></thead>`;
 
+  const _modalFilterChips = (reasons, counts, activeSet, notSet, toggleFn) => `
+    <div class="filter-bar" style="padding:8px 14px;border-bottom:1px solid var(--border)">
+      <div class="filter-chip ${activeSet.size === 0 && notSet.size === 0 ? 'active' : ''}" onclick="${toggleFn}('all',event)">
+        All <span style="opacity:0.6;font-size:11px">(${Object.values(counts).reduce((a,b)=>a+b,0)})</span>
+      </div>
+      ${reasons.map(r => {
+        const cls = notSet.has(r) ? 'not' : activeSet.has(r) ? 'active' : '';
+        return `<div class="filter-chip ${cls}" onclick="${toggleFn}('${r}',event)">
+          ${r[0].toUpperCase()+r.slice(1)} <span style="opacity:0.6;font-size:11px">(${counts[r]||0})</span>
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  const discardFilterBar = status === 'discarded'
+    ? _modalFilterChips(discardReasons, discardCounts, ST.modalDiscardFilter, ST.modalDiscardFilterNot, 'toggleModalDiscardFilter')
+    : status === 'cancelled'
+    ? _modalFilterChips(cancelReasons, cancelCounts, ST.modalCancelFilter, ST.modalCancelFilterNot, 'toggleModalCancelFilter')
+    : '';
+
   body.innerHTML = `
+    ${discardFilterBar}
     ${selectBanner}
     <table style="width:100%;border-collapse:collapse">
       ${thead}
@@ -2228,6 +2370,36 @@ function selectAllModalFiles(e) {
   renderStatusModal();
 }
 
+function _toggleModalFilter(r, event, include, not, render) {
+  const alt = event && (event.altKey || event.ctrlKey);
+  const shift = event && event.shiftKey;
+  if (r === 'all') {
+    include.clear(); not.clear();
+  } else if (shift) {
+    if (not.has(r)) { not.delete(r); } else { not.add(r); include.delete(r); }
+  } else if (alt) {
+    if (include.has(r)) { include.delete(r); } else { include.add(r); not.delete(r); }
+  } else {
+    if (include.size > 1 && include.has(r)) {
+      include.delete(r);
+    } else {
+      const wasOnly = include.size === 1 && include.has(r) && not.size === 0;
+      include.clear(); not.clear();
+      if (!wasOnly) include.add(r);
+    }
+  }
+  ST.modalPage = 0;
+  render();
+}
+
+function toggleModalDiscardFilter(r, event) {
+  _toggleModalFilter(r, event, ST.modalDiscardFilter, ST.modalDiscardFilterNot, renderStatusModal);
+}
+
+function toggleModalCancelFilter(r, event) {
+  _toggleModalFilter(r, event, ST.modalCancelFilter, ST.modalCancelFilterNot, renderStatusModal);
+}
+
 function setModalSort(col) {
   if (ST.modalSort.col === col) {
     ST.modalSort.dir = ST.modalSort.dir === 'asc' ? 'desc' : 'asc';
@@ -2288,6 +2460,20 @@ async function modalBulkQueue(workerConfigId) {
     if (!r.ok) throw new Error(await r.text());
     const res = await r.json();
     toast(`Queued ${res.assigned || ids.length} files`, 'success');
+    ST.modalSelected.clear();
+    await fetchAll();
+    renderStatusModal();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function modalBulkForceEncode(skipSizeCheck) {
+  const ids = [...ST.modalSelected];
+  if (!ids.length) return;
+  ST.modalBulkOpen = false;
+  try {
+    const r = await fetch('/data/files/force-encode', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids, skip_size_check: skipSizeCheck}) });
+    if (!r.ok) throw new Error(await r.text());
+    toast(`Queued ${ids.length} file(s) for re-encode`, 'success');
     ST.modalSelected.clear();
     await fetchAll();
     renderStatusModal();
