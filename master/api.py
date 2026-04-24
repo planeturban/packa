@@ -22,6 +22,7 @@ Master REST API.
 """
 
 import asyncio
+import os
 import time as _time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -322,38 +323,59 @@ class _ScanState:
 _scan = _ScanState()
 
 
+def _iter_files(scan_dir: str, extensions: set[str]):
+    """Recursively yield (path_str, name, DirEntry.stat()) using scandir.
+
+    Using os.scandir() means entry.stat() reuses the inode info returned by
+    readdir on most filesystems (including NFS), avoiding a separate stat()
+    syscall per file.
+    """
+    try:
+        with os.scandir(scan_dir) as it:
+            for entry in it:
+                if entry.is_dir(follow_symlinks=False):
+                    yield from _iter_files(entry.path, extensions)
+                elif entry.is_file(follow_symlinks=False):
+                    if os.path.splitext(entry.name)[1].lower() in extensions:
+                        try:
+                            yield entry.path, entry.name, entry.stat()
+                        except OSError:
+                            pass
+    except OSError:
+        pass
+
+
 async def _scan_task(scan_dir: str, extensions: set[str], min_size: int, max_size: int) -> None:
-    from pathlib import Path
     _scan.running = True
     _scan.found = _scan.skipped = _scan.errors = 0
     _scan.started_at = _time.monotonic()
     print(f"[scan] starting in '{scan_dir}' (extensions: {sorted(extensions)})")
     db = SessionLocal()
+    i = 0
     try:
-        for path in Path(scan_dir).rglob("*"):
-            await asyncio.sleep(0)
-            if not path.is_file() or path.suffix.lower() not in extensions:
-                continue
-            size = path.stat().st_size
+        for file_path, file_name, st in _iter_files(scan_dir, extensions):
+            i += 1
+            if i % 100 == 0:
+                await asyncio.sleep(0)
+            size = st.st_size
             if (min_size > 0 and size < min_size) or (max_size > 0 and size > max_size):
                 _scan.skipped += 1
                 continue
-            if crud.get_record_by_path(db, str(path)):
+            if crud.get_record_by_path(db, file_path):
                 _scan.skipped += 1
                 continue
             try:
-                video = collect(str(path))
                 crud.create_file_record(db, FileRecordCreate(
-                    file_name=video.file_name,
-                    file_path=video.file_path,
-                    file_size=video.file_size,
-                    c_time=video.c_time,
-                    m_time=video.m_time,
+                    file_name=file_name,
+                    file_path=file_path,
+                    file_size=size,
+                    c_time=st.st_ctime,
+                    m_time=st.st_mtime,
                     status=FileStatus.SCANNING,
                 ))
                 _scan.found += 1
             except Exception as exc:
-                print(f"[scan] error on '{path}': {exc}")
+                print(f"[scan] error on '{file_path}': {exc}")
                 _scan.errors += 1
     except asyncio.CancelledError:
         print(f"[scan] cancelled — found={_scan.found} skipped={_scan.skipped} errors={_scan.errors}")
