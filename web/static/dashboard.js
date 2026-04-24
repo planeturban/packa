@@ -1887,13 +1887,10 @@ function renderSettings() {
     <div style="max-width:600px">
       <div class="card" style="margin-bottom:16px">
         <div class="card-title">Authentication</div>
-        ${auth.tls_forced ? `
-        <div style="font-size:13px;color:var(--text-dim);margin-bottom:12px">TLS is active — authentication is always required.</div>` : ''}
         <div class="settings-row" style="align-items:flex-start;flex-direction:column;gap:12px">
           <div style="font-size:13px;color:var(--text-dim)">
             ${auth.enabled ? `Auth enabled — username: <strong>${esc(auth.username)}</strong>` : 'Auth disabled — dashboard is publicly accessible.'}
           </div>
-          ${!auth.tls_forced ? `
           <div style="display:flex;flex-direction:column;gap:8px;width:100%">
             <input id="auth-username" class="input" type="text" placeholder="Username (leave empty to disable auth)"
               value="${esc(auth.username)}" autocomplete="username" style="max-width:320px">
@@ -1904,7 +1901,7 @@ function renderSettings() {
               ${auth.enabled ? `<button class="btn btn-sm btn-danger" onclick="disableAuth()">Disable auth</button>` : ''}
               <span id="auth-msg" style="font-size:12px;color:var(--text-dim)"></span>
             </div>
-          </div>` : ''}
+          </div>
         </div>
       </div>
       <div class="card">
