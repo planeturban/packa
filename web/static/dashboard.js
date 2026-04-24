@@ -1881,9 +1881,32 @@ async function scanStop() {
 function renderSettings() {
   const el = document.getElementById('tab-settings');
   if (!el) return;
+  const auth = (ST.data || {}).auth || {};
 
   el.innerHTML = `
     <div style="max-width:600px">
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-title">Authentication</div>
+        ${auth.tls_forced ? `
+        <div style="font-size:13px;color:var(--text-dim);margin-bottom:12px">TLS is active — authentication is always required.</div>` : ''}
+        <div class="settings-row" style="align-items:flex-start;flex-direction:column;gap:12px">
+          <div style="font-size:13px;color:var(--text-dim)">
+            ${auth.enabled ? `Auth enabled — username: <strong>${esc(auth.username)}</strong>` : 'Auth disabled — dashboard is publicly accessible.'}
+          </div>
+          ${!auth.tls_forced ? `
+          <div style="display:flex;flex-direction:column;gap:8px;width:100%">
+            <input id="auth-username" class="input" type="text" placeholder="Username (leave empty to disable auth)"
+              value="${esc(auth.username)}" autocomplete="username" style="max-width:320px">
+            <input id="auth-password" class="input" type="password" placeholder="New password"
+              autocomplete="new-password" style="max-width:320px">
+            <div style="display:flex;gap:8px;align-items:center">
+              <button class="btn btn-sm btn-primary" onclick="saveAuth()">Save</button>
+              ${auth.enabled ? `<button class="btn btn-sm btn-danger" onclick="disableAuth()">Disable auth</button>` : ''}
+              <span id="auth-msg" style="font-size:12px;color:var(--text-dim)"></span>
+            </div>
+          </div>` : ''}
+        </div>
+      </div>
       <div class="card">
         <div class="card-title">Connection</div>
         <div class="settings-row">
@@ -1915,6 +1938,34 @@ function renderSettings() {
 
     </div>
   `;
+}
+
+async function saveAuth() {
+  const username = document.getElementById('auth-username').value.trim();
+  const password = document.getElementById('auth-password').value.trim();
+  const msg = document.getElementById('auth-msg');
+  try {
+    const r = await fetch('/data/auth', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username, password})});
+    const j = await r.json();
+    if (!r.ok) { msg.style.color = 'var(--red)'; msg.textContent = j.error || 'Error'; return; }
+    msg.style.color = 'var(--green)'; msg.textContent = 'Saved';
+    await fetchAll();
+    renderSettings();
+  } catch(e) { msg.style.color = 'var(--red)'; msg.textContent = String(e); }
+}
+
+async function disableAuth() {
+  const msg = document.getElementById('auth-msg');
+  try {
+    const r = await fetch('/data/auth', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username:'', password:''})});
+    const j = await r.json();
+    if (!r.ok) { msg.style.color = 'var(--red)'; msg.textContent = j.error || 'Error'; return; }
+    msg.style.color = 'var(--green)'; msg.textContent = 'Auth disabled';
+    await fetchAll();
+    renderSettings();
+  } catch(e) { msg.style.color = 'var(--red)'; msg.textContent = String(e); }
 }
 
 function setPollInterval(ms) {
