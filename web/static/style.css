@@ -204,6 +204,8 @@ body {
 .stat-value { font-size: 28px; font-weight: 300; color: var(--text); letter-spacing: -0.03em; line-height: 1; }
 .stat-sub { font-size: 11px; color: var(--text-dim); margin-top: 4px; font-family: 'IBM Plex Mono', monospace; }
 .stat-accent { color: var(--accent); }
+.stat-dim { color: var(--text-dim); }
+.stat-card-dim { opacity: 0.6; }
 
 /* ── Progress bars ──────────────────────────────────────────────────── */
 .progress-track {

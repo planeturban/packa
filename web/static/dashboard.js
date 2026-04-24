@@ -321,6 +321,35 @@ function renderOverview() {
   const availableWorkers = workers.filter(w => !w.sleeping && !w.unconfigured && w.state !== 'unreachable');
   const totalRate = availableWorkers.reduce((sum, w) => w.avg_duration_s > 0 ? sum + 1 / w.avg_duration_s : sum, 0);
   const etaSecs = (remaining > 0 && totalRate > 0) ? Math.round(remaining / totalRate) : null;
+
+  // Projected savings: per-resolution-tier compression ratio from completed files
+  const files = data.files || [];
+  const tierOf = h => !h ? null : h >= 3240 ? '8k' : h >= 1620 ? '4k' : h >= 900 ? '1080p' : h >= 600 ? '720p' : 'sd';
+  const tierStats = {};
+  for (const f of files) {
+    if (f.status !== 'complete' || !f.file_size || !f.output_size || !f.height) continue;
+    const t = tierOf(f.height);
+    if (!t) continue;
+    if (!tierStats[t]) tierStats[t] = { totalIn: 0, totalOut: 0, n: 0 };
+    tierStats[t].totalIn  += f.file_size;
+    tierStats[t].totalOut += f.output_size;
+    tierStats[t].n++;
+  }
+  let projSavedBytes = 0, projTotalSamples = 0, projTotalFiles = 0, projLowConf = false;
+  for (const f of files) {
+    if (f.status !== 'pending' && f.status !== 'assigned') continue;
+    if (!f.file_size || !f.height) continue;
+    const t = tierOf(f.height);
+    const ts = t && tierStats[t];
+    if (!ts || ts.n === 0) continue;
+    const ratio = ts.totalOut / ts.totalIn;
+    projSavedBytes += f.file_size * (1 - ratio);
+    projTotalSamples += ts.n;
+    projTotalFiles++;
+    if (ts.n < 10) projLowConf = true;
+  }
+  const avgSamples = projTotalFiles > 0 ? Math.round(projTotalSamples / projTotalFiles) : 0;
+
   const statusChips = [
     { key:'scanning',   label:'Probing',    color:'var(--text-dim)' },
     { key:'pending',    label:'Pending',    color:'var(--yellow)' },
@@ -346,6 +375,16 @@ function renderOverview() {
         <div class="stat-label">Space Saved</div>
         <div class="stat-value stat-accent">${fmtBytes(stats.saved_bytes)}</div>
         <div class="stat-sub">after compression</div>
+      </div>
+      <div class="stat-card${projLowConf ? ' stat-card-dim' : ''}">
+        <div class="stat-label">Projected Savings</div>
+        <div class="stat-value${projLowConf ? ' stat-dim' : ' stat-accent'}">${projTotalFiles > 0 ? fmtBytes(projSavedBytes) : '—'}</div>
+        <div class="stat-sub">${projTotalFiles > 0 ? `${projTotalFiles.toLocaleString()} pending files · ${avgSamples} sample${avgSamples !== 1 ? 's' : ''}${projLowConf ? ' · low confidence' : ''}` : 'no estimate available'}</div>
+      </div>
+      <div class="stat-card${projLowConf ? ' stat-card-dim' : ''}">
+        <div class="stat-label">Total Savings Est.</div>
+        <div class="stat-value${projLowConf ? ' stat-dim' : ' stat-accent'}">${projTotalFiles > 0 ? fmtBytes((stats.saved_bytes || 0) + projSavedBytes) : fmtBytes(stats.saved_bytes || 0)}</div>
+        <div class="stat-sub">${projTotalFiles > 0 ? `saved + projected${projLowConf ? ' · low confidence' : ''}` : 'saved so far'}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Library ETA</div>
