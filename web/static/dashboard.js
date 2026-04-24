@@ -104,8 +104,10 @@ const ST = {
   workerSettingsOpen: {},   // configId → bool
   workerCmdOpen: {},        // configId → bool
   workerExpanded: new Set(), // configIds that are expanded in overview
-  modalDiscardFilter: new Set(), // active discard_reason filters in discarded modal
-  modalCancelFilter: new Set(),  // active cancel_reason filters in cancelled modal
+  modalDiscardFilter: new Set(),
+  modalDiscardFilterNot: new Set(),
+  modalCancelFilter: new Set(),
+  modalCancelFilterNot: new Set(),
 };
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -1989,8 +1991,8 @@ function openStatusModal(status) {
   ST.modalBulkOpen = false;
   ST.modalPage = 0;
   ST.modalSort = {col: 'created_at', dir: 'desc'};
-  ST.modalDiscardFilter.clear();
-  ST.modalCancelFilter.clear();
+  ST.modalDiscardFilter.clear(); ST.modalDiscardFilterNot.clear();
+  ST.modalCancelFilter.clear();  ST.modalCancelFilterNot.clear();
   document.getElementById('status-modal-backdrop').style.display = 'flex';
   renderStatusModal();
 }
@@ -2114,8 +2116,9 @@ function renderStatusModal() {
   const discardCounts = status === 'discarded'
     ? Object.fromEntries(discardReasons.map(r => [r, filtered.filter(f => f.discard_reason === r).length]))
     : {};
-  if (status === 'discarded' && ST.modalDiscardFilter.size > 0) {
-    filtered = filtered.filter(f => ST.modalDiscardFilter.has(f.discard_reason));
+  if (status === 'discarded') {
+    if (ST.modalDiscardFilterNot.size > 0) filtered = filtered.filter(f => !ST.modalDiscardFilterNot.has(f.discard_reason));
+    if (ST.modalDiscardFilter.size > 0)    filtered = filtered.filter(f => ST.modalDiscardFilter.has(f.discard_reason));
   }
 
   // Cancel reason filter chips
@@ -2123,8 +2126,9 @@ function renderStatusModal() {
   const cancelCounts = status === 'cancelled'
     ? Object.fromEntries(cancelReasons.map(r => [r, filtered.filter(f => f.cancel_reason === r).length]))
     : {};
-  if (status === 'cancelled' && ST.modalCancelFilter.size > 0) {
-    filtered = filtered.filter(f => ST.modalCancelFilter.has(f.cancel_reason));
+  if (status === 'cancelled') {
+    if (ST.modalCancelFilterNot.size > 0) filtered = filtered.filter(f => !ST.modalCancelFilterNot.has(f.cancel_reason));
+    if (ST.modalCancelFilter.size > 0)    filtered = filtered.filter(f => ST.modalCancelFilter.has(f.cancel_reason));
   }
 
   const labels = {
@@ -2236,29 +2240,24 @@ function renderStatusModal() {
       ${cols.map(c => _modalSortTh(c.label, c.key, c.right)).join('')}
     </tr></thead>`;
 
-  const discardFilterBar = status === 'discarded' ? `
+  const _modalFilterChips = (reasons, counts, activeSet, notSet, toggleFn) => `
     <div class="filter-bar" style="padding:8px 14px;border-bottom:1px solid var(--border)">
-      <div class="filter-chip ${ST.modalDiscardFilter.size === 0 ? 'active' : ''}" onclick="toggleModalDiscardFilter('all',event)">
-        All <span style="opacity:0.6;font-size:11px">(${Object.values(discardCounts).reduce((a,b)=>a+b,0)})</span>
+      <div class="filter-chip ${activeSet.size === 0 && notSet.size === 0 ? 'active' : ''}" onclick="${toggleFn}('all',event)">
+        All <span style="opacity:0.6;font-size:11px">(${Object.values(counts).reduce((a,b)=>a+b,0)})</span>
       </div>
-      ${discardReasons.map(r => {
-        const isActive = ST.modalDiscardFilter.has(r);
-        return `<div class="filter-chip ${isActive ? 'active' : ''}" onclick="toggleModalDiscardFilter('${r}',event)">
-          ${r[0].toUpperCase()+r.slice(1)} <span style="opacity:0.6;font-size:11px">(${discardCounts[r]||0})</span>
+      ${reasons.map(r => {
+        const cls = notSet.has(r) ? 'not' : activeSet.has(r) ? 'active' : '';
+        return `<div class="filter-chip ${cls}" onclick="${toggleFn}('${r}',event)">
+          ${r[0].toUpperCase()+r.slice(1)} <span style="opacity:0.6;font-size:11px">(${counts[r]||0})</span>
         </div>`;
       }).join('')}
-    </div>` : status === 'cancelled' ? `
-    <div class="filter-bar" style="padding:8px 14px;border-bottom:1px solid var(--border)">
-      <div class="filter-chip ${ST.modalCancelFilter.size === 0 ? 'active' : ''}" onclick="toggleModalCancelFilter('all')">
-        All <span style="opacity:0.6;font-size:11px">(${Object.values(cancelCounts).reduce((a,b)=>a+b,0)})</span>
-      </div>
-      ${cancelReasons.map(r => {
-        const isActive = ST.modalCancelFilter.has(r);
-        return `<div class="filter-chip ${isActive ? 'active' : ''}" onclick="toggleModalCancelFilter('${r}')">
-          ${r[0].toUpperCase()+r.slice(1)} <span style="opacity:0.6;font-size:11px">(${cancelCounts[r]||0})</span>
-        </div>`;
-      }).join('')}
-    </div>` : '';
+    </div>`;
+
+  const discardFilterBar = status === 'discarded'
+    ? _modalFilterChips(discardReasons, discardCounts, ST.modalDiscardFilter, ST.modalDiscardFilterNot, 'toggleModalDiscardFilter')
+    : status === 'cancelled'
+    ? _modalFilterChips(cancelReasons, cancelCounts, ST.modalCancelFilter, ST.modalCancelFilterNot, 'toggleModalCancelFilter')
+    : '';
 
   body.innerHTML = `
     ${discardFilterBar}
@@ -2324,33 +2323,34 @@ function selectAllModalFiles(e) {
   renderStatusModal();
 }
 
-function toggleModalDiscardFilter(r, event) {
+function _toggleModalFilter(r, event, include, not, render) {
+  const alt = event && (event.altKey || event.ctrlKey);
   const shift = event && event.shiftKey;
   if (r === 'all') {
-    ST.modalDiscardFilter.clear();
+    include.clear(); not.clear();
   } else if (shift) {
-    // shift+click not applicable for NOT filter here — treat as toggle
-    if (ST.modalDiscardFilter.has(r)) ST.modalDiscardFilter.delete(r);
-    else ST.modalDiscardFilter.add(r);
+    if (not.has(r)) { not.delete(r); } else { not.add(r); include.delete(r); }
+  } else if (alt) {
+    if (include.has(r)) { include.delete(r); } else { include.add(r); not.delete(r); }
   } else {
-    const wasOnly = ST.modalDiscardFilter.size === 1 && ST.modalDiscardFilter.has(r);
-    ST.modalDiscardFilter.clear();
-    if (!wasOnly) ST.modalDiscardFilter.add(r);
+    if (include.size > 1 && include.has(r)) {
+      include.delete(r);
+    } else {
+      const wasOnly = include.size === 1 && include.has(r) && not.size === 0;
+      include.clear(); not.clear();
+      if (!wasOnly) include.add(r);
+    }
   }
   ST.modalPage = 0;
-  renderStatusModal();
+  render();
 }
 
-function toggleModalCancelFilter(r) {
-  if (r === 'all') {
-    ST.modalCancelFilter.clear();
-  } else {
-    const wasOnly = ST.modalCancelFilter.size === 1 && ST.modalCancelFilter.has(r);
-    ST.modalCancelFilter.clear();
-    if (!wasOnly) ST.modalCancelFilter.add(r);
-  }
-  ST.modalPage = 0;
-  renderStatusModal();
+function toggleModalDiscardFilter(r, event) {
+  _toggleModalFilter(r, event, ST.modalDiscardFilter, ST.modalDiscardFilterNot, renderStatusModal);
+}
+
+function toggleModalCancelFilter(r, event) {
+  _toggleModalFilter(r, event, ST.modalCancelFilter, ST.modalCancelFilterNot, renderStatusModal);
 }
 
 function setModalSort(col) {
