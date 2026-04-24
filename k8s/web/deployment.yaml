@@ -13,6 +13,25 @@ spec:
       labels:
         app: packa-web
     spec:
+      initContainers:
+        - name: wait-for-token
+          image: curlimages/curl:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              MASTER=https://master.packa.svc.cluster.local:9000
+              echo "[init] waiting for master bootstrap token..."
+              until curl -sfk "$MASTER/tls/token" | grep -q '"token"'; do
+                sleep 5
+              done
+              echo "[init] token available, starting web"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
       containers:
         - name: web
           image: ghcr.io/planeturban/packa:latest

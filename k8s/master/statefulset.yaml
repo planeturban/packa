@@ -54,8 +54,12 @@ spec:
               SECRET=packa-bootstrap-token
 
               while true; do
-                RESP=$(curl -sf http://localhost:9000/tls/token 2>/dev/null)
+                RESP=$(curl -sfk https://localhost:9000/tls/token 2>/dev/null)
                 TOKEN=$(echo "$RESP" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+                if [ -z "$TOKEN" ]; then
+                  RESP=$(curl -sfk -X POST https://localhost:9000/tls/token 2>/dev/null)
+                  TOKEN=$(echo "$RESP" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+                fi
                 if [ -n "$TOKEN" ]; then
                   curl -sf -X PATCH \
                     -H "Authorization: Bearer $(cat $SA/token)" \
