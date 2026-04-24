@@ -80,9 +80,6 @@ _templates.env.filters["filesize"] = _fmt_bytes
 # ---------------------------------------------------------------------------
 
 def _auth_enabled() -> bool:
-    # TLS active forces auth even if credentials aren't set in config
-    if _config.tls.enabled:
-        return True
     return bool(_config.username and _config.password)
 
 
@@ -298,7 +295,6 @@ def _auth_status() -> dict:
     return {
         "enabled": bool(_config.username and _config.password),
         "username": _config.username or "",
-        "tls_forced": bool(_config.tls.enabled),
     }
 
 
@@ -315,8 +311,6 @@ async def data_dashboard(request: Request):
 async def data_auth_save(request: Request):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    if _config.tls.enabled:
-        return JSONResponse({"error": "TLS is active — auth cannot be disabled"}, status_code=400)
     body = await request.json()
     username = (body.get("username") or "").strip()
     password = (body.get("password") or "").strip()
