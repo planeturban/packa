@@ -861,7 +861,9 @@ def _require_localhost_or_mtls(request: Request) -> None:
     host = request.client.host if request.client else ""
     if host in ("127.0.0.1", "::1"):
         return
-    if request.scope.get("ssl_object") and request.scope["ssl_object"].getpeercert():
+    # Master requires ssl_cert_reqs=CERT_REQUIRED, so any HTTPS request
+    # that completed the TLS handshake has already presented a valid client cert
+    if request.url.scheme == "https":
         return
     raise HTTPException(status_code=403, detail="Token endpoints require localhost or mTLS")
 
