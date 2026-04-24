@@ -10,6 +10,7 @@ class Job:
     record_id: int
     file_path: str
     duration: float | None = None
+    force_encode: bool = False
 
 
 @dataclass

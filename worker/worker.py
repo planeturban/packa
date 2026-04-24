@@ -119,11 +119,12 @@ async def _stream_progress(
     duration_s: float | None,
     source_size: int,
     proc: asyncio.subprocess.Process,
+    force_encode: bool = False,
 ) -> tuple[float | None, float | None]:
     frame: dict[str, str] = {}
     fps_samples: list[float] = []
     speed_samples: list[float] = []
-    thresholds = sorted(worker_state.cancel_thresholds)
+    thresholds = [] if force_encode else sorted(worker_state.cancel_thresholds)
     prev_out_time_us: int = 0
     async for raw in stdout:
         line = raw.decode(errors="replace").strip()
@@ -309,11 +310,13 @@ async def _process(job: Job) -> None:
         print(f"[worker] record {job.record_id} pid={proc.pid}  duration={duration_s}s  source={source_size}B")
         await _update_master_status(job.record_id, "processing")
 
-        results = await asyncio.gather(
-            _stream_progress(proc.stdout, duration_s, source_size, proc),
+        tasks = [
+            _stream_progress(proc.stdout, duration_s, source_size, proc, force_encode=job.force_encode),
             _collect_stderr(proc.stderr),
-            _monitor_output_size(output_path, source_size, proc, output_dir),
-        )
+        ]
+        if not job.force_encode:
+            tasks.append(_monitor_output_size(output_path, source_size, proc, output_dir))
+        results = await asyncio.gather(*tasks)
         avg_fps, avg_speed = results[0]
         stderr_output: str = results[1]
         await proc.wait()
@@ -369,7 +372,7 @@ async def _process(job: Job) -> None:
 
         output_size = Path(output_path).stat().st_size
 
-        if output_size >= source_size:
+        if not job.force_encode and output_size >= source_size:
             Path(output_path).unlink()
             update_conversion_result(
                 db, job.record_id,
@@ -476,7 +479,8 @@ def recover() -> None:
             .all()
         )
         for record in pending:
-            worker_state.enqueue(Job(record_id=record.id, file_path=record.file_path))
+            worker_state.enqueue(Job(record_id=record.id, file_path=record.file_path,
+                                     force_encode=bool(record.force_encode)))
 
         print(f"[worker] recovery complete — {len(pending)} record(s) queued")
     finally:
