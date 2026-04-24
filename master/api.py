@@ -22,6 +22,7 @@ Master REST API.
 """
 
 import asyncio
+import os
 import time as _time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -322,38 +323,64 @@ class _ScanState:
 _scan = _ScanState()
 
 
+def _collect_files(scan_dir: str, extensions: set[str]) -> list[tuple[str, str, os.stat_result]]:
+    """Walk scan_dir in a thread, returning (path, name, stat) for matching files.
+
+    Uses os.scandir() so entry.stat() reuses inode data from readdir, avoiding
+    a separate stat() syscall per file on NFS and similar filesystems.
+    """
+    results = []
+
+    def _walk(d: str) -> None:
+        try:
+            with os.scandir(d) as it:
+                for entry in it:
+                    if entry.is_dir(follow_symlinks=False):
+                        _walk(entry.path)
+                    elif entry.is_file(follow_symlinks=False):
+                        if os.path.splitext(entry.name)[1].lower() in extensions:
+                            try:
+                                results.append((entry.path, entry.name, entry.stat()))
+                            except OSError:
+                                pass
+        except OSError:
+            pass
+
+    _walk(scan_dir)
+    return results
+
+
 async def _scan_task(scan_dir: str, extensions: set[str], min_size: int, max_size: int) -> None:
-    from pathlib import Path
     _scan.running = True
     _scan.found = _scan.skipped = _scan.errors = 0
     _scan.started_at = _time.monotonic()
     print(f"[scan] starting in '{scan_dir}' (extensions: {sorted(extensions)})")
     db = SessionLocal()
     try:
-        for path in Path(scan_dir).rglob("*"):
+        # Run the blocking filesystem walk in a thread so the event loop stays free
+        entries = await asyncio.to_thread(_collect_files, scan_dir, extensions)
+        print(f"[scan] walk complete — {len(entries)} candidate(s) found")
+        for file_path, file_name, st in entries:
             await asyncio.sleep(0)
-            if not path.is_file() or path.suffix.lower() not in extensions:
-                continue
-            size = path.stat().st_size
+            size = st.st_size
             if (min_size > 0 and size < min_size) or (max_size > 0 and size > max_size):
                 _scan.skipped += 1
                 continue
-            if crud.get_record_by_path(db, str(path)):
+            if crud.get_record_by_path(db, file_path):
                 _scan.skipped += 1
                 continue
             try:
-                video = collect(str(path))
                 crud.create_file_record(db, FileRecordCreate(
-                    file_name=video.file_name,
-                    file_path=video.file_path,
-                    file_size=video.file_size,
-                    c_time=video.c_time,
-                    m_time=video.m_time,
+                    file_name=file_name,
+                    file_path=file_path,
+                    file_size=size,
+                    c_time=st.st_ctime,
+                    m_time=st.st_mtime,
                     status=FileStatus.SCANNING,
                 ))
                 _scan.found += 1
             except Exception as exc:
-                print(f"[scan] error on '{path}': {exc}")
+                print(f"[scan] error on '{file_path}': {exc}")
                 _scan.errors += 1
     except asyncio.CancelledError:
         print(f"[scan] cancelled — found={_scan.found} skipped={_scan.skipped} errors={_scan.errors}")
@@ -834,8 +861,9 @@ def _require_localhost_or_mtls(request: Request) -> None:
     host = request.client.host if request.client else ""
     if host in ("127.0.0.1", "::1"):
         return
-    # Allow web BFF and other nodes that have presented a valid client cert
-    if request.scope.get("ssl_object") and request.scope["ssl_object"].getpeercert():
+    # Master requires ssl_cert_reqs=CERT_REQUIRED, so any HTTPS request
+    # that completed the TLS handshake has already presented a valid client cert
+    if request.url.scheme == "https":
         return
     raise HTTPException(status_code=403, detail="Token endpoints require localhost or mTLS")
 
