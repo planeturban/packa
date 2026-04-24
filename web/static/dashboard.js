@@ -104,6 +104,7 @@ const ST = {
   workerSettingsOpen: {},   // configId → bool
   workerCmdOpen: {},        // configId → bool
   workerExpanded: new Set(), // configIds that are expanded in overview
+  modalDiscardFilter: new Set(), // active discard_reason filters in discarded modal
 };
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -1987,6 +1988,7 @@ function openStatusModal(status) {
   ST.modalBulkOpen = false;
   ST.modalPage = 0;
   ST.modalSort = {col: 'created_at', dir: 'desc'};
+  ST.modalDiscardFilter.clear();
   document.getElementById('status-modal-backdrop').style.display = 'flex';
   renderStatusModal();
 }
@@ -2103,7 +2105,17 @@ function renderStatusModal() {
   const status = ST.modalStatus;
   const files = (ST.data && ST.data.files) || [];
   const workers = (ST.data && ST.data.workers) || [];
-  const filtered = status === 'all' ? files : files.filter(f => f.status === status);
+  let filtered = status === 'all' ? files : files.filter(f => f.status === status);
+
+  // Discard reason filter chips
+  const discardReasons = ['hevc', 'corrupt', 'truncated'];
+  const discardCounts = status === 'discarded'
+    ? Object.fromEntries(discardReasons.map(r => [r, filtered.filter(f => f.discard_reason === r).length]))
+    : {};
+  if (status === 'discarded' && ST.modalDiscardFilter.size > 0) {
+    filtered = filtered.filter(f => ST.modalDiscardFilter.has(f.discard_reason));
+  }
+
   const labels = {
     all:'All Files', scanning:'Probing', pending:'Pending', assigned:'Assigned',
     processing:'Processing', complete:'Complete', discarded:'Discarded',
@@ -2213,7 +2225,21 @@ function renderStatusModal() {
       ${cols.map(c => _modalSortTh(c.label, c.key, c.right)).join('')}
     </tr></thead>`;
 
+  const discardFilterBar = status === 'discarded' ? `
+    <div class="filter-bar" style="padding:8px 14px;border-bottom:1px solid var(--border)">
+      <div class="filter-chip ${ST.modalDiscardFilter.size === 0 ? 'active' : ''}" onclick="toggleModalDiscardFilter('all',event)">
+        All <span style="opacity:0.6;font-size:11px">(${Object.values(discardCounts).reduce((a,b)=>a+b,0)})</span>
+      </div>
+      ${discardReasons.map(r => {
+        const isActive = ST.modalDiscardFilter.has(r);
+        return `<div class="filter-chip ${isActive ? 'active' : ''}" onclick="toggleModalDiscardFilter('${r}',event)">
+          ${r[0].toUpperCase()+r.slice(1)} <span style="opacity:0.6;font-size:11px">(${discardCounts[r]||0})</span>
+        </div>`;
+      }).join('')}
+    </div>` : '';
+
   body.innerHTML = `
+    ${discardFilterBar}
     ${selectBanner}
     <table style="width:100%;border-collapse:collapse">
       ${thead}
@@ -2273,6 +2299,23 @@ function selectAllModalFiles(e) {
   const files = (ST.data && ST.data.files) || [];
   const filtered = ST.modalStatus === 'all' ? files : files.filter(f => f.status === ST.modalStatus);
   filtered.forEach(f => ST.modalSelected.add(f.id));
+  renderStatusModal();
+}
+
+function toggleModalDiscardFilter(r, event) {
+  const shift = event && event.shiftKey;
+  if (r === 'all') {
+    ST.modalDiscardFilter.clear();
+  } else if (shift) {
+    // shift+click not applicable for NOT filter here — treat as toggle
+    if (ST.modalDiscardFilter.has(r)) ST.modalDiscardFilter.delete(r);
+    else ST.modalDiscardFilter.add(r);
+  } else {
+    const wasOnly = ST.modalDiscardFilter.size === 1 && ST.modalDiscardFilter.has(r);
+    ST.modalDiscardFilter.clear();
+    if (!wasOnly) ST.modalDiscardFilter.add(r);
+  }
+  ST.modalPage = 0;
   renderStatusModal();
 }
 
