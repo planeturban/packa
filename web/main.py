@@ -130,6 +130,14 @@ def main() -> None:
 
     _bootstrap_tls(config)
 
+    # Load stored credentials (set via UI); override config/env values if present.
+    stored_username = get_setting("auth.username")
+    stored_password = get_setting("auth.password")
+    if stored_username is not None:
+        config.username = stored_username
+    if stored_password is not None:
+        config.password = stored_password
+
     # Persist secret_key so sessions survive restarts; env/config override takes priority.
     if not config.secret_key:
         stored_key = get_setting("secret_key")

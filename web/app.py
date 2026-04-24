@@ -80,9 +80,6 @@ _templates.env.filters["filesize"] = _fmt_bytes
 # ---------------------------------------------------------------------------
 
 def _auth_enabled() -> bool:
-    # TLS active forces auth even if credentials aren't set in config
-    if _config.tls.enabled:
-        return True
     return bool(_config.username and _config.password)
 
 
@@ -294,12 +291,38 @@ async def action_worker_wake(request: Request, host: str = Form(), api_port: int
 # Data endpoints (JSON)
 # ---------------------------------------------------------------------------
 
+def _auth_status() -> dict:
+    return {
+        "enabled": bool(_config.username and _config.password),
+        "username": _config.username or "",
+    }
+
+
 @app.get("/data/dashboard")
 async def data_dashboard(request: Request):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     data = await fetch_dashboard(_master_url(), _httpx_kw())
+    data["auth"] = _auth_status()
     return JSONResponse(data)
+
+
+@app.post("/data/auth")
+async def data_auth_save(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    username = (body.get("username") or "").strip()
+    password = (body.get("password") or "").strip()
+    if username and not password:
+        return JSONResponse({"error": "Password is required when setting a username"}, status_code=400)
+    if password and not username:
+        return JSONResponse({"error": "Username is required when setting a password"}, status_code=400)
+    set_setting("auth.username", username)
+    set_setting("auth.password", password)
+    _config.username = username
+    _config.password = password
+    return JSONResponse({"ok": True, "enabled": bool(username and password)})
 
 
 @app.get("/data/files")
@@ -455,6 +478,24 @@ async def data_files_cancel(request: Request):
         if worker_patches:
             await asyncio.gather(*worker_patches, return_exceptions=True)
 
+    return JSONResponse({"ok": True})
+
+
+@app.post("/data/files/force-encode")
+async def data_files_force_encode(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    ids: list[int] = body.get("ids", [])
+    skip_size_check: bool = bool(body.get("skip_size_check", False))
+    async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
+        await asyncio.gather(
+            *[client.patch(
+                f"{_master_url()}/files/{i}/status",
+                json={"status": "pending", "force_encode": skip_size_check},
+            ) for i in ids],
+            return_exceptions=True,
+        )
     return JSONResponse({"ok": True})
 
 

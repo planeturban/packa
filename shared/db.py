@@ -23,6 +23,7 @@ _MIGRATE_COLS = [
     ("height", "INTEGER"),
     ("bitrate", "INTEGER"),
     ("duration", "REAL"),
+    ("force_encode", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 

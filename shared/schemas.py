@@ -35,6 +35,7 @@ class FileRecordOut(BaseModel):
     cancel_reason: str | None
     cancel_detail: str | None = None
     discard_reason: str | None = None
+    force_encode: bool = False
     pid: int | None
     output_size: int | None
     encoder: str | None
@@ -55,3 +56,4 @@ class FileRecordOut(BaseModel):
 
 class StatusUpdate(BaseModel):
     status: FileStatus
+    force_encode: bool = False
