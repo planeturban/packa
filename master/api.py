@@ -446,6 +446,7 @@ class FileResultUpdate(BaseModel):
     height: int | None = None
     bitrate: int | None = None
     duration: float | None = None
+    ffmpeg_cmd: str | None = None
 
 
 class ScanStatus(BaseModel):
@@ -593,6 +594,7 @@ def update_file_result(record_id: int, body: FileResultUpdate, db: Session = Dep
         height=body.height,
         bitrate=body.bitrate,
         duration=body.duration,
+        ffmpeg_cmd=body.ffmpeg_cmd,
     )
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")

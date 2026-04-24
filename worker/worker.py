@@ -194,6 +194,7 @@ async def _report_result_to_master(
     encoder: str | None = None,
     avg_fps: float | None = None,
     avg_speed: float | None = None,
+    ffmpeg_cmd: str | None = None,
 ) -> None:
     if not worker_state.master_url:
         return
@@ -217,6 +218,8 @@ async def _report_result_to_master(
         body["avg_fps"] = round(avg_fps, 1)
     if avg_speed is not None:
         body["avg_speed"] = round(avg_speed, 2)
+    if ffmpeg_cmd is not None:
+        body["ffmpeg_cmd"] = ffmpeg_cmd
     try:
         async with httpx.AsyncClient(timeout=10, **worker_state.tls.httpx_kwargs()) as client:
             response = await client.patch(url, json=body)
@@ -372,6 +375,7 @@ async def _process(job: Job) -> None:
                     pid=proc.pid, started_at=started_at, finished_at=finished_at,
                     encoder=encoder,
                     avg_fps=avg_fps, avg_speed=avg_speed,
+                    ffmpeg_cmd=worker_state.current_cmd,
                 )
             return
 
