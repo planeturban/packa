@@ -16,7 +16,7 @@ spec:
       containers:
         - name: web
           image: ghcr.io/planeturban/packa:latest
-          workingDir: /data
+          workingDir: /app
           ports:
             - containerPort: 8080
           resources:
