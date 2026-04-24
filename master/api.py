@@ -323,26 +323,31 @@ class _ScanState:
 _scan = _ScanState()
 
 
-def _iter_files(scan_dir: str, extensions: set[str]):
-    """Recursively yield (path_str, name, DirEntry.stat()) using scandir.
+def _collect_files(scan_dir: str, extensions: set[str]) -> list[tuple[str, str, os.stat_result]]:
+    """Walk scan_dir in a thread, returning (path, name, stat) for matching files.
 
-    Using os.scandir() means entry.stat() reuses the inode info returned by
-    readdir on most filesystems (including NFS), avoiding a separate stat()
-    syscall per file.
+    Uses os.scandir() so entry.stat() reuses inode data from readdir, avoiding
+    a separate stat() syscall per file on NFS and similar filesystems.
     """
-    try:
-        with os.scandir(scan_dir) as it:
-            for entry in it:
-                if entry.is_dir(follow_symlinks=False):
-                    yield from _iter_files(entry.path, extensions)
-                elif entry.is_file(follow_symlinks=False):
-                    if os.path.splitext(entry.name)[1].lower() in extensions:
-                        try:
-                            yield entry.path, entry.name, entry.stat()
-                        except OSError:
-                            pass
-    except OSError:
-        pass
+    results = []
+
+    def _walk(d: str) -> None:
+        try:
+            with os.scandir(d) as it:
+                for entry in it:
+                    if entry.is_dir(follow_symlinks=False):
+                        _walk(entry.path)
+                    elif entry.is_file(follow_symlinks=False):
+                        if os.path.splitext(entry.name)[1].lower() in extensions:
+                            try:
+                                results.append((entry.path, entry.name, entry.stat()))
+                            except OSError:
+                                pass
+        except OSError:
+            pass
+
+    _walk(scan_dir)
+    return results
 
 
 async def _scan_task(scan_dir: str, extensions: set[str], min_size: int, max_size: int) -> None:
@@ -351,12 +356,12 @@ async def _scan_task(scan_dir: str, extensions: set[str], min_size: int, max_siz
     _scan.started_at = _time.monotonic()
     print(f"[scan] starting in '{scan_dir}' (extensions: {sorted(extensions)})")
     db = SessionLocal()
-    i = 0
     try:
-        for file_path, file_name, st in _iter_files(scan_dir, extensions):
-            i += 1
-            if i % 100 == 0:
-                await asyncio.sleep(0)
+        # Run the blocking filesystem walk in a thread so the event loop stays free
+        entries = await asyncio.to_thread(_collect_files, scan_dir, extensions)
+        print(f"[scan] walk complete — {len(entries)} candidate(s) found")
+        for file_path, file_name, st in entries:
+            await asyncio.sleep(0)
             size = st.st_size
             if (min_size > 0 and size < min_size) or (max_size > 0 and size > max_size):
                 _scan.skipped += 1
