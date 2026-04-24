@@ -105,6 +105,7 @@ const ST = {
   workerCmdOpen: {},        // configId → bool
   workerExpanded: new Set(), // configIds that are expanded in overview
   modalDiscardFilter: new Set(), // active discard_reason filters in discarded modal
+  modalCancelFilter: new Set(),  // active cancel_reason filters in cancelled modal
 };
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -1989,6 +1990,7 @@ function openStatusModal(status) {
   ST.modalPage = 0;
   ST.modalSort = {col: 'created_at', dir: 'desc'};
   ST.modalDiscardFilter.clear();
+  ST.modalCancelFilter.clear();
   document.getElementById('status-modal-backdrop').style.display = 'flex';
   renderStatusModal();
 }
@@ -2116,6 +2118,15 @@ function renderStatusModal() {
     filtered = filtered.filter(f => ST.modalDiscardFilter.has(f.discard_reason));
   }
 
+  // Cancel reason filter chips
+  const cancelReasons = ['user', 'auto'];
+  const cancelCounts = status === 'cancelled'
+    ? Object.fromEntries(cancelReasons.map(r => [r, filtered.filter(f => f.cancel_reason === r).length]))
+    : {};
+  if (status === 'cancelled' && ST.modalCancelFilter.size > 0) {
+    filtered = filtered.filter(f => ST.modalCancelFilter.has(f.cancel_reason));
+  }
+
   const labels = {
     all:'All Files', scanning:'Probing', pending:'Pending', assigned:'Assigned',
     processing:'Processing', complete:'Complete', discarded:'Discarded',
@@ -2236,6 +2247,17 @@ function renderStatusModal() {
           ${r[0].toUpperCase()+r.slice(1)} <span style="opacity:0.6;font-size:11px">(${discardCounts[r]||0})</span>
         </div>`;
       }).join('')}
+    </div>` : status === 'cancelled' ? `
+    <div class="filter-bar" style="padding:8px 14px;border-bottom:1px solid var(--border)">
+      <div class="filter-chip ${ST.modalCancelFilter.size === 0 ? 'active' : ''}" onclick="toggleModalCancelFilter('all')">
+        All <span style="opacity:0.6;font-size:11px">(${Object.values(cancelCounts).reduce((a,b)=>a+b,0)})</span>
+      </div>
+      ${cancelReasons.map(r => {
+        const isActive = ST.modalCancelFilter.has(r);
+        return `<div class="filter-chip ${isActive ? 'active' : ''}" onclick="toggleModalCancelFilter('${r}')">
+          ${r[0].toUpperCase()+r.slice(1)} <span style="opacity:0.6;font-size:11px">(${cancelCounts[r]||0})</span>
+        </div>`;
+      }).join('')}
     </div>` : '';
 
   body.innerHTML = `
@@ -2314,6 +2336,18 @@ function toggleModalDiscardFilter(r, event) {
     const wasOnly = ST.modalDiscardFilter.size === 1 && ST.modalDiscardFilter.has(r);
     ST.modalDiscardFilter.clear();
     if (!wasOnly) ST.modalDiscardFilter.add(r);
+  }
+  ST.modalPage = 0;
+  renderStatusModal();
+}
+
+function toggleModalCancelFilter(r) {
+  if (r === 'all') {
+    ST.modalCancelFilter.clear();
+  } else {
+    const wasOnly = ST.modalCancelFilter.size === 1 && ST.modalCancelFilter.has(r);
+    ST.modalCancelFilter.clear();
+    if (!wasOnly) ST.modalCancelFilter.add(r);
   }
   ST.modalPage = 0;
   renderStatusModal();
