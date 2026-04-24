@@ -294,12 +294,41 @@ async def action_worker_wake(request: Request, host: str = Form(), api_port: int
 # Data endpoints (JSON)
 # ---------------------------------------------------------------------------
 
+def _auth_status() -> dict:
+    return {
+        "enabled": bool(_config.username and _config.password),
+        "username": _config.username or "",
+        "tls_forced": bool(_config.tls.enabled),
+    }
+
+
 @app.get("/data/dashboard")
 async def data_dashboard(request: Request):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     data = await fetch_dashboard(_master_url(), _httpx_kw())
+    data["auth"] = _auth_status()
     return JSONResponse(data)
+
+
+@app.post("/data/auth")
+async def data_auth_save(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    if _config.tls.enabled:
+        return JSONResponse({"error": "TLS is active — auth cannot be disabled"}, status_code=400)
+    body = await request.json()
+    username = (body.get("username") or "").strip()
+    password = (body.get("password") or "").strip()
+    if username and not password:
+        return JSONResponse({"error": "Password is required when setting a username"}, status_code=400)
+    if password and not username:
+        return JSONResponse({"error": "Username is required when setting a password"}, status_code=400)
+    set_setting("auth.username", username)
+    set_setting("auth.password", password)
+    _config.username = username
+    _config.password = password
+    return JSONResponse({"ok": True, "enabled": bool(username and password)})
 
 
 @app.get("/data/files")
