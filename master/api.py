@@ -28,7 +28,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -817,15 +817,27 @@ def bootstrap_node(body: BootstrapRequest, db: Session = Depends(get_db)):
     return CertBundle(cert_pem=cert_pem, key_pem=key_pem, ca_pem=ca_pem)
 
 
+def _require_localhost_or_mtls(request: Request) -> None:
+    host = request.client.host if request.client else ""
+    if host in ("127.0.0.1", "::1"):
+        return
+    # Allow web BFF and other nodes that have presented a valid client cert
+    if request.scope.get("ssl_object") and request.scope["ssl_object"].getpeercert():
+        return
+    raise HTTPException(status_code=403, detail="Token endpoints require localhost or mTLS")
+
+
 @app.get("/tls/token")
-def get_tls_token(db: Session = Depends(get_db)):
+def get_tls_token(request: Request, db: Session = Depends(get_db)):
     """Return current bootstrap token info, or empty dict if none/expired."""
+    _require_localhost_or_mtls(request)
     return get_token_info(db) or {}
 
 
 @app.post("/tls/token")
-def create_tls_token(db: Session = Depends(get_db)):
+def create_tls_token(request: Request, db: Session = Depends(get_db)):
     """Generate a new bootstrap token (10-minute TTL, multi-use within window)."""
+    _require_localhost_or_mtls(request)
     token = generate_token(db)
     info = get_token_info(db)
     print(f"[tls] new bootstrap token: {token}")
