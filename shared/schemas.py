@@ -39,6 +39,7 @@ class FileRecordOut(BaseModel):
     pid: int | None
     output_size: int | None
     encoder: str | None
+    ffmpeg_cmd: str | None
     avg_fps: float | None
     avg_speed: float | None
     duplicate_of_id: int | None
