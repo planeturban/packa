@@ -4,6 +4,18 @@ set -e
 ROLE=${PACKA_ROLE:-${1:-master}}
 CONFIG=${PACKA_CONFIG:-/data/packa.toml}
 
+# When running as root (standalone Docker), drop to PUID/PGID before starting.
+# When already non-root (k8s runAsUser, or explicit `docker run --user`), skip.
+if [ "$(id -u)" = "0" ]; then
+    PUID=${PUID:-1000}
+    PGID=${PGID:-1000}
+    groupadd -f -g "${PGID}" packa
+    useradd -u "${PUID}" -g "${PGID}" -s /bin/sh -M -N packa 2>/dev/null || true
+    chown packa:packa /data 2>/dev/null || true
+    [ -d /output ] && chown packa:packa /output 2>/dev/null || true
+    exec gosu packa "$0"
+fi
+
 case "$ROLE" in
   master)
     exec python3 -m master.master --config "$CONFIG" --bind any
