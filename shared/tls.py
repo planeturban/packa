@@ -57,9 +57,10 @@ class TlsConfig:
         else:
             cp, kp, cap = self.cert, self.key, self.ca
         return {
-            "ssl_certfile": cp,
-            "ssl_keyfile":  kp,
-            "ssl_ca_certs": cap,
+            "ssl_certfile":  cp,
+            "ssl_keyfile":   kp,
+            "ssl_ca_certs":  cap,
+            "ssl_cert_reqs": ssl.CERT_REQUIRED,
         }
 
     def httpx_kwargs(self) -> dict:

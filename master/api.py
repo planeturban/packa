@@ -936,8 +936,8 @@ def _require_localhost_or_mtls(request: Request) -> None:
     host = request.client.host if request.client else ""
     if host in ("127.0.0.1", "::1"):
         return
-    # Master requires ssl_cert_reqs=CERT_REQUIRED, so any HTTPS request
-    # that completed the TLS handshake has already presented a valid client cert
+    # uvicorn is started with ssl_cert_reqs=CERT_REQUIRED, so reaching here
+    # over HTTPS guarantees the client presented a valid CA-signed cert
     if request.url.scheme == "https":
         return
     raise HTTPException(status_code=403, detail="Token endpoints require localhost or mTLS")
