@@ -75,6 +75,7 @@ class WorkerConfig:
     batch_size: int = 1
     poll_interval: int = 5
     cancel_thresholds: list[tuple[float, float]] = field(default_factory=list)
+    error_threshold: int = 0  # consecutive errors before auto-sleep; 0 = disabled
 
 
 @dataclass
@@ -222,6 +223,7 @@ def load_worker(config_path: str | None) -> Config:
             batch_size=_env_int("PACKA_WORKER_BATCH_SIZE", worker_data.get("batch_size", 1)),
             poll_interval=_env_int("PACKA_WORKER_POLL_INTERVAL", worker_data.get("poll_interval", 5)),
             cancel_thresholds=_cancel_thresholds,
+            error_threshold=_env_int("PACKA_WORKER_ERROR_THRESHOLD", worker_data.get("error_threshold", 0)),
         ),
         tls=TlsConfig(
             disabled=worker_tls.get("disabled", False),

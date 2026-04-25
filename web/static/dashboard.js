@@ -110,6 +110,9 @@ const ST = {
   modalDiscardFilterNot: new Set(),
   modalCancelFilter: new Set(),
   modalCancelFilterNot: new Set(),
+  // server-side paginated results
+  filesResult: {items: [], total: 0},
+  modalResult: {items: [], total: 0},
 };
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -179,7 +182,10 @@ function setTab(t, doRender = true) {
   document.querySelectorAll('[id^="tab-"]').forEach(el => {
     el.style.display = el.id === `tab-${t}` ? '' : 'none';
   });
-  if (doRender) renderActiveTab();
+  if (doRender) {
+    renderActiveTab();
+    if (t === 'files') fetchFilesPage();
+  }
   // Reset poll timer when switching to/from workers tab so interval takes effect immediately
   clearTimeout(ST._pollTimer);
   const interval = t === 'workers' ? ST.workerPollInterval : ST.pollInterval;
@@ -215,6 +221,8 @@ async function fetchAll() {
     }
     ST.data = data;
     render();
+    if (ST.tab === 'files') fetchFilesPage();
+    if (ST.modalStatus) fetchModalPage();
   } catch(e) {
     ST.connected = false;
     updateConnectionUI();
@@ -225,6 +233,44 @@ async function fetchAll() {
       ST._pollTimer = setTimeout(fetchAll, nextInterval);
     }
   }
+}
+
+// ── Server-side file fetches ──────────────────────────────────────────────────
+function _filesSortParam(col) {
+  const map = {file_path:'file_path', status:'status', worker_id:'worker_id',
+               file_size:'file_size', output_size:'output_size', saved:'file_size',
+               created_at:'created_at', finished_at:'finished_at'};
+  return map[col] || 'created_at';
+}
+
+async function fetchFilesPage() {
+  const params = new URLSearchParams({
+    sort_by: _filesSortParam(ST.fileSort.col),
+    sort_dir: ST.fileSort.dir,
+    page: ST.filePage,
+    page_size: FILES_PAGE_SIZE,
+  });
+  if (ST.fileFilters.size === 1) params.set('status', [...ST.fileFilters][0]);
+  if (ST.fileSearch) params.set('search', ST.fileSearch);
+  try {
+    const r = await fetch(`/data/files?${params}`);
+    if (r.ok) { ST.filesResult = await r.json(); renderFiles(); }
+  } catch(e) { console.error('fetchFilesPage:', e); }
+}
+
+async function fetchModalPage() {
+  if (!ST.modalStatus) return;
+  const params = new URLSearchParams({
+    sort_by: _filesSortParam(ST.modalSort.col),
+    sort_dir: ST.modalSort.dir,
+    page: ST.modalPage,
+    page_size: FILES_PAGE_SIZE,
+  });
+  if (ST.modalStatus !== 'all') params.set('status', ST.modalStatus);
+  try {
+    const r = await fetch(`/data/files?${params}`);
+    if (r.ok) { ST.modalResult = await r.json(); renderStatusModal(); }
+  } catch(e) { console.error('fetchModalPage:', e); }
 }
 
 // ── Top-level render ─────────────────────────────────────────────────────────
@@ -290,7 +336,8 @@ function updateTabBadges() {
   if (!ST.data) return;
   const filesBadge = document.getElementById('tab-badge-files');
   const workersBadge = document.getElementById('tab-badge-workers');
-  if (filesBadge) filesBadge.textContent = (ST.data.files || []).length;
+  const fc = ST.data.file_counts || {};
+  if (filesBadge) filesBadge.textContent = Object.values(fc).reduce((s, v) => s + v, 0);
   if (workersBadge) workersBadge.textContent = (ST.data.workers || []).length;
 }
 
@@ -322,34 +369,6 @@ function renderOverview() {
   const totalRate = availableWorkers.reduce((sum, w) => w.avg_duration_s > 0 ? sum + 1 / w.avg_duration_s : sum, 0);
   const etaSecs = (remaining > 0 && totalRate > 0) ? Math.round(remaining / totalRate) : null;
 
-  // Projected savings: per-resolution-tier compression ratio from completed files
-  const files = data.files || [];
-  const tierOf = h => !h ? null : h >= 3240 ? '8k' : h >= 1620 ? '4k' : h >= 900 ? '1080p' : h >= 600 ? '720p' : 'sd';
-  const tierStats = {};
-  for (const f of files) {
-    if (f.status !== 'complete' || !f.file_size || !f.output_size || !f.height) continue;
-    const t = tierOf(f.height);
-    if (!t) continue;
-    if (!tierStats[t]) tierStats[t] = { totalIn: 0, totalOut: 0, n: 0 };
-    tierStats[t].totalIn  += f.file_size;
-    tierStats[t].totalOut += f.output_size;
-    tierStats[t].n++;
-  }
-  let projSavedBytes = 0, projTotalSamples = 0, projTotalFiles = 0, projLowConf = false;
-  for (const f of files) {
-    if (f.status !== 'pending' && f.status !== 'assigned') continue;
-    if (!f.file_size || !f.height) continue;
-    const t = tierOf(f.height);
-    const ts = t && tierStats[t];
-    if (!ts || ts.n === 0) continue;
-    const ratio = ts.totalOut / ts.totalIn;
-    projSavedBytes += f.file_size * (1 - ratio);
-    projTotalSamples += ts.n;
-    projTotalFiles++;
-    if (ts.n < 10) projLowConf = true;
-  }
-  const avgSamples = projTotalFiles > 0 ? Math.round(projTotalSamples / projTotalFiles) : 0;
-
   const statusChips = [
     { key:'scanning',   label:'Probing',    color:'var(--text-dim)' },
     { key:'pending',    label:'Pending',    color:'var(--yellow)' },
@@ -375,16 +394,6 @@ function renderOverview() {
         <div class="stat-label">Space Saved</div>
         <div class="stat-value stat-accent">${fmtBytes(stats.saved_bytes)}</div>
         <div class="stat-sub">after compression</div>
-      </div>
-      <div class="stat-card${projLowConf ? ' stat-card-dim' : ''}">
-        <div class="stat-label">Projected Savings</div>
-        <div class="stat-value${projLowConf ? ' stat-dim' : ' stat-accent'}">${projTotalFiles > 0 ? fmtBytes(projSavedBytes) : '—'}</div>
-        <div class="stat-sub">${projTotalFiles > 0 ? `${projTotalFiles.toLocaleString()} pending files · ${avgSamples} sample${avgSamples !== 1 ? 's' : ''}${projLowConf ? ' · low confidence' : ''}` : 'no estimate available'}</div>
-      </div>
-      <div class="stat-card${projLowConf ? ' stat-card-dim' : ''}">
-        <div class="stat-label">Total Savings Est.</div>
-        <div class="stat-value${projLowConf ? ' stat-dim' : ' stat-accent'}">${projTotalFiles > 0 ? fmtBytes((stats.saved_bytes || 0) + projSavedBytes) : fmtBytes(stats.saved_bytes || 0)}</div>
-        <div class="stat-sub">${projTotalFiles > 0 ? `saved + projected${projLowConf ? ' · low confidence' : ''}` : 'saved so far'}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Library ETA</div>
@@ -500,37 +509,6 @@ function stripPrefix(path) {
 const FILES_PAGE_SIZES = [10, 25, 50, 100, 500];
 let FILES_PAGE_SIZE = 25;
 
-function _getFilteredFiles() {
-  const files = (ST.data && ST.data.files) || [];
-  return files.filter(f => {
-    if (ST.fileFilters.size > 0 && !ST.fileFilters.has(f.status)) return false;
-    if (ST.fileFiltersNot.has(f.status)) return false;
-    if (ST.fileSearch) {
-      const q = ST.fileSearch.toLowerCase();
-      if (!(f.file_path||'').toLowerCase().includes(q) &&
-          !(f.file_name||'').toLowerCase().includes(q) &&
-          !(f.worker_id||'').toLowerCase().includes(q)) return false;
-    }
-    return true;
-  });
-}
-
-function _sortedFiles(filtered) {
-  const {col, dir} = ST.fileSort;
-  const m = dir === 'asc' ? 1 : -1;
-  return [...filtered].sort((a, b) => {
-    switch (col) {
-      case 'file_path':   return m * (a.file_path||'').localeCompare(b.file_path||'');
-      case 'status':      return m * (a.status||'').localeCompare(b.status||'');
-      case 'worker_id':   return m * (a.worker_id||'').localeCompare(b.worker_id||'');
-      case 'file_size':   return m * ((a.file_size||0) - (b.file_size||0));
-      case 'output_size': return m * ((a.output_size||0) - (b.output_size||0));
-      case 'saved':       return m * (((a.file_size||0)-(a.output_size||0)) - ((b.file_size||0)-(b.output_size||0)));
-      case 'finished_at': return m * (a.finished_at||'').localeCompare(b.finished_at||'');
-      default:            return m * (a.created_at||'').localeCompare(b.created_at||'');
-    }
-  });
-}
 
 function _sortTh(label, col) {
   const active = ST.fileSort.col === col;
@@ -541,24 +519,23 @@ function _sortTh(label, col) {
 function renderFiles() {
   const el = document.getElementById('tab-files');
   if (!el) return;
-  const files = (ST.data && ST.data.files) || [];
+  const pageFiles = (ST.filesResult && ST.filesResult.items) || [];
+  const total = (ST.filesResult && ST.filesResult.total) || 0;
   const workers = (ST.data && ST.data.workers) || [];
+  const fc = (ST.data && ST.data.file_counts) || {};
 
   const statuses = ['all','scanning','pending','assigned','processing','complete','error','duplicate','discarded','cancelled'];
+  const totalAll = Object.values(fc).reduce((a, b) => a + b, 0);
   const counts = {};
-  statuses.forEach(s => counts[s] = s === 'all' ? files.length : files.filter(f => f.status === s).length);
+  statuses.forEach(s => counts[s] = s === 'all' ? totalAll : (fc[s] || 0));
 
-  const filtered = _getFilteredFiles();
-  const sorted = _sortedFiles(filtered);
-  const totalPages = Math.max(1, Math.ceil(sorted.length / FILES_PAGE_SIZE));
-  const page = Math.min(ST.filePage, totalPages - 1);
-  const pageFiles = sorted.slice(page * FILES_PAGE_SIZE, (page + 1) * FILES_PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(total / FILES_PAGE_SIZE));
+  const page = ST.filePage;
   const pageIds = pageFiles.map(f => f.id);
 
   const allPageSelected = pageIds.length > 0 && pageIds.every(id => ST.fileSelected.has(id));
   const somePageSelected = pageIds.some(id => ST.fileSelected.has(id));
   const nSel = ST.fileSelected.size;
-  const allPagesSelectable = allPageSelected && nSel < filtered.length;
 
   const chipLabels = {
     all: 'All', scanning: 'Probing', pending: 'Pending', assigned: 'Assigned',
@@ -579,7 +556,7 @@ function renderFiles() {
         return '';
       }).filter((x,i,a) => x && (x !== a[i-1])).join('')}
       <button class="btn btn-sm" onclick="setFilePage(${page+1})" ${page===totalPages-1?'disabled':''}>→</button>
-      <span style="color:var(--text-faint);font-size:12px;margin-left:4px">${sorted.length} files</span>
+      <span style="color:var(--text-faint);font-size:12px;margin-left:4px">${total} files</span>
       <select class="input" style="margin-left:auto;width:auto;padding:2px 6px;font-size:12px" onchange="setPageSize(+this.value)">
         ${FILES_PAGE_SIZES.map(n => `<option value="${n}"${n===FILES_PAGE_SIZE?' selected':''}>${n} / page</option>`).join('')}
       </select>
@@ -612,13 +589,9 @@ function renderFiles() {
     </div>
 
     <div class="card" style="padding:0;overflow:hidden">
-      ${allPagesSelectable ? `
+      ${nSel > 0 ? `
       <div class="select-all-banner">
-        ${nSel} files on this page selected —
-        <a href="#" onclick="selectAllFilteredFiles(event)">Select all ${filtered.length} matching files</a>
-      </div>` : nSel > 0 && nSel >= filtered.length && totalPages > 1 ? `
-      <div class="select-all-banner">
-        All ${nSel} matching files selected —
+        ${nSel} file${nSel !== 1 ? 's' : ''} selected —
         <a href="#" onclick="clearSelection()">Clear selection</a>
       </div>` : ''}
       <div class="table-wrap">
@@ -737,14 +710,14 @@ function toggleFileFilter(s, event) {
   }
   ST.fileSelected.clear();
   ST.filePage = 0;
-  renderFiles();
+  fetchFilesPage();
 }
 
 function setFileSearch(q) {
   ST.fileSearch = q;
   ST.fileSelected.clear();
   ST.filePage = 0;
-  renderFiles();
+  fetchFilesPage();
   const inp = document.getElementById('file-search-input');
   if (inp) { inp.focus(); inp.setSelectionRange(q.length, q.length); }
 }
@@ -756,27 +729,24 @@ function setFileSort(col) {
     ST.fileSort = {col, dir: (col === 'created_at' || col === 'finished_at') ? 'desc' : 'asc'};
   }
   ST.filePage = 0;
-  renderFiles();
+  fetchFilesPage();
 }
 
 function setFilePage(p) {
   ST.filePage = p;
-  renderFiles();
+  fetchFilesPage();
 }
 
 function setPageSize(n) {
   FILES_PAGE_SIZE = n;
   ST.filePage = 0;
   ST.modalPage = 0;
-  renderFiles();
-  renderStatusModal();
+  fetchFilesPage();
+  fetchModalPage();
 }
 
 function toggleAllFiles(src) {
-  const filtered = _getFilteredFiles();
-  const sorted = _sortedFiles(filtered);
-  const page = Math.min(ST.filePage, Math.max(0, Math.ceil(sorted.length / FILES_PAGE_SIZE) - 1));
-  const pageIds = sorted.slice(page * FILES_PAGE_SIZE, (page + 1) * FILES_PAGE_SIZE).map(f => f.id);
+  const pageIds = (ST.filesResult.items || []).map(f => f.id);
   if (src.checked) pageIds.forEach(id => ST.fileSelected.add(id));
   else ST.fileSelected.clear();
   renderFiles();
@@ -784,7 +754,7 @@ function toggleAllFiles(src) {
 
 function selectAllFilteredFiles(e) {
   e.preventDefault();
-  _getFilteredFiles().forEach(f => ST.fileSelected.add(f.id));
+  (ST.filesResult.items || []).forEach(f => ST.fileSelected.add(f.id));
   renderFiles();
 }
 
@@ -1200,7 +1170,10 @@ function renderWorkerCard(s) {
         <div class="worker-name">${esc(s.hostname)}</div>
         <div class="worker-meta">${esc(s.config_id)} · ${esc(s.url)} · ${esc(s.version || '?')}</div>
       </div>
-      ${badge(statusStr)}
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
+        ${badge(statusStr)}
+        ${s.sleep_reason ? `<span style="font-size:10px;color:var(--red);font-family:'IBM Plex Mono',monospace;white-space:nowrap">${esc(s.sleep_reason)}</span>` : ''}
+      </div>
     </div>
 
     ${isProcessing && p ? `
@@ -2036,8 +2009,10 @@ function openStatusModal(status) {
   ST.modalSort = {col: 'created_at', dir: 'desc'};
   ST.modalDiscardFilter.clear(); ST.modalDiscardFilterNot.clear();
   ST.modalCancelFilter.clear();  ST.modalCancelFilterNot.clear();
+  ST.modalResult = {items: [], total: 0};
   document.getElementById('status-modal-backdrop').style.display = 'flex';
   renderStatusModal();
+  fetchModalPage();
 }
 
 function closeStatusModal() {
@@ -2156,28 +2131,29 @@ function _modalCols(status) {
 function renderStatusModal() {
   if (!ST.modalStatus) return;
   const status = ST.modalStatus;
-  const files = (ST.data && ST.data.files) || [];
   const workers = (ST.data && ST.data.workers) || [];
-  let filtered = status === 'all' ? files : files.filter(f => f.status === status);
+  // Server-side paginated items; sub-filters (discard/cancel reason) applied client-side to current page
+  let pageFiles = (ST.modalResult && ST.modalResult.items) || [];
+  const total = (ST.modalResult && ST.modalResult.total) || 0;
 
-  // Discard reason filter chips
+  // Discard reason filter chips — counts from current page only
   const discardReasons = ['hevc', 'corrupt', 'truncated'];
   const discardCounts = status === 'discarded'
-    ? Object.fromEntries(discardReasons.map(r => [r, filtered.filter(f => f.discard_reason === r).length]))
+    ? Object.fromEntries(discardReasons.map(r => [r, pageFiles.filter(f => f.discard_reason === r).length]))
     : {};
   if (status === 'discarded') {
-    if (ST.modalDiscardFilterNot.size > 0) filtered = filtered.filter(f => !ST.modalDiscardFilterNot.has(f.discard_reason));
-    if (ST.modalDiscardFilter.size > 0)    filtered = filtered.filter(f => ST.modalDiscardFilter.has(f.discard_reason));
+    if (ST.modalDiscardFilterNot.size > 0) pageFiles = pageFiles.filter(f => !ST.modalDiscardFilterNot.has(f.discard_reason));
+    if (ST.modalDiscardFilter.size > 0)    pageFiles = pageFiles.filter(f => ST.modalDiscardFilter.has(f.discard_reason));
   }
 
-  // Cancel reason filter chips
+  // Cancel reason filter chips — counts from current page only
   const cancelReasons = ['user', 'auto'];
   const cancelCounts = status === 'cancelled'
-    ? Object.fromEntries(cancelReasons.map(r => [r, filtered.filter(f => f.cancel_reason === r).length]))
+    ? Object.fromEntries(cancelReasons.map(r => [r, pageFiles.filter(f => f.cancel_reason === r).length]))
     : {};
   if (status === 'cancelled') {
-    if (ST.modalCancelFilterNot.size > 0) filtered = filtered.filter(f => !ST.modalCancelFilterNot.has(f.cancel_reason));
-    if (ST.modalCancelFilter.size > 0)    filtered = filtered.filter(f => ST.modalCancelFilter.has(f.cancel_reason));
+    if (ST.modalCancelFilterNot.size > 0) pageFiles = pageFiles.filter(f => !ST.modalCancelFilterNot.has(f.cancel_reason));
+    if (ST.modalCancelFilter.size > 0)    pageFiles = pageFiles.filter(f => ST.modalCancelFilter.has(f.cancel_reason));
   }
 
   const labels = {
@@ -2188,35 +2164,16 @@ function renderStatusModal() {
 
   const cols = _modalCols(status);
 
-  const {col, dir} = ST.modalSort;
-  const m = dir === 'asc' ? 1 : -1;
-  const sorted = [...filtered].sort((a, b) => {
-    switch (col) {
-      case 'file_path':   return m * (a.file_path||'').localeCompare(b.file_path||'');
-      case 'status':      return m * (a.status||'').localeCompare(b.status||'');
-      case 'worker_id':   return m * (a.worker_id||'').localeCompare(b.worker_id||'');
-      case 'file_size':   return m * ((a.file_size||0) - (b.file_size||0));
-      case 'resolution':  return m * ((a.width||0)*(a.height||0) - (b.width||0)*(b.height||0));
-      case 'saved':       return m * (((a.file_size||0)-(a.output_size||0)) - ((b.file_size||0)-(b.output_size||0)));
-      case 'cancel_reason': return m * (a.cancel_reason||'').localeCompare(b.cancel_reason||'');
-      case 'discard_reason': return m * (a.discard_reason||'').localeCompare(b.discard_reason||'');
-      case 'finished_at': return m * (a.finished_at||'').localeCompare(b.finished_at||'');
-      default:            return m * (a.created_at||'').localeCompare(b.created_at||'');
-    }
-  });
-
-  const totalPages = Math.max(1, Math.ceil(sorted.length / FILES_PAGE_SIZE));
-  const page = Math.min(ST.modalPage, totalPages - 1);
-  const pageFiles = sorted.slice(page * FILES_PAGE_SIZE, (page + 1) * FILES_PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(total / FILES_PAGE_SIZE));
+  const page = ST.modalPage;
   const pageIds = pageFiles.map(f => f.id);
 
   const nSel = ST.modalSelected.size;
   const allPageSelected = pageIds.length > 0 && pageIds.every(id => ST.modalSelected.has(id));
   const somePageSelected = pageIds.some(id => ST.modalSelected.has(id));
-  const allPagesSelectable = allPageSelected && nSel < filtered.length;
 
   document.getElementById('status-modal-title').textContent =
-    `${labels[status] || status} — ${filtered.length} file${filtered.length !== 1 ? 's' : ''}`;
+    `${labels[status] || status} — ${total} file${total !== 1 ? 's' : ''}`;
 
   const body = document.getElementById('status-modal-body');
 
@@ -2231,7 +2188,7 @@ function renderStatusModal() {
         return '';
       }).filter((x,i,a) => x && (x !== a[i-1])).join('')}
       <button class="btn btn-sm" onclick="setModalPage(${page+1})" ${page===totalPages-1?'disabled':''}>→</button>
-      <span style="color:var(--text-faint);font-size:12px;margin-left:4px">${sorted.length} files</span>
+      <span style="color:var(--text-faint);font-size:12px;margin-left:4px">${total} files</span>
       <select class="input" style="margin-left:auto;width:auto;padding:2px 6px;font-size:12px" onchange="setPageSize(+this.value)">
         ${FILES_PAGE_SIZES.map(n => `<option value="${n}"${n===FILES_PAGE_SIZE?' selected':''}>${n} / page</option>`).join('')}
       </select>
@@ -2242,13 +2199,9 @@ function renderStatusModal() {
       </select>
     </div>`;
 
-  const selectBanner = allPagesSelectable ? `
+  const selectBanner = nSel > 0 ? `
     <div class="select-all-banner">
-      ${nSel} files on this page selected —
-      <a href="#" onclick="selectAllModalFiles(event)">Select all ${filtered.length} matching files</a>
-    </div>` : nSel > 0 && nSel >= filtered.length && totalPages > 1 ? `
-    <div class="select-all-banner">
-      All ${nSel} matching files selected —
+      ${nSel} file${nSel !== 1 ? 's' : ''} selected —
       <a href="#" onclick="ST.modalSelected.clear();renderStatusModal()">Clear selection</a>
     </div>` : '';
 
@@ -2348,23 +2301,7 @@ function toggleModalFile(id) {
 }
 
 function toggleAllModal(src) {
-  const files = (ST.data && ST.data.files) || [];
-  const filtered = ST.modalStatus === 'all' ? files : files.filter(f => f.status === ST.modalStatus);
-  const {col, dir} = ST.modalSort; const m = dir==='asc'?1:-1;
-  const sorted = [...filtered].sort((a,b) => {
-    switch(col) {
-      case 'file_path':   return m*(a.file_path||'').localeCompare(b.file_path||'');
-      case 'status':      return m*(a.status||'').localeCompare(b.status||'');
-      case 'worker_id':   return m*(a.worker_id||'').localeCompare(b.worker_id||'');
-      case 'file_size':   return m*((a.file_size||0)-(b.file_size||0));
-      case 'resolution':  return m*((a.width||0)*(a.height||0)-(b.width||0)*(b.height||0));
-      case 'saved':       return m*(((a.file_size||0)-(a.output_size||0))-((b.file_size||0)-(b.output_size||0)));
-      case 'finished_at': return m*(a.finished_at||'').localeCompare(b.finished_at||'');
-      default:            return m*(a.created_at||'').localeCompare(b.created_at||'');
-    }
-  });
-  const page = Math.min(ST.modalPage, Math.max(0, Math.ceil(sorted.length/FILES_PAGE_SIZE)-1));
-  const pageIds = sorted.slice(page*FILES_PAGE_SIZE, (page+1)*FILES_PAGE_SIZE).map(f=>f.id);
+  const pageIds = (ST.modalResult.items || []).map(f => f.id);
   if (src.checked) pageIds.forEach(id => ST.modalSelected.add(id));
   else ST.modalSelected.clear();
   renderStatusModal();
@@ -2372,9 +2309,7 @@ function toggleAllModal(src) {
 
 function selectAllModalFiles(e) {
   e.preventDefault();
-  const files = (ST.data && ST.data.files) || [];
-  const filtered = ST.modalStatus === 'all' ? files : files.filter(f => f.status === ST.modalStatus);
-  filtered.forEach(f => ST.modalSelected.add(f.id));
+  (ST.modalResult.items || []).forEach(f => ST.modalSelected.add(f.id));
   renderStatusModal();
 }
 
@@ -2415,12 +2350,12 @@ function setModalSort(col) {
     ST.modalSort = {col, dir: (col === 'created_at' || col === 'finished_at') ? 'desc' : 'asc'};
   }
   ST.modalPage = 0;
-  renderStatusModal();
+  fetchModalPage();
 }
 
 function setModalPage(p) {
   ST.modalPage = p;
-  renderStatusModal();
+  fetchModalPage();
 }
 
 function toggleModalBulkMenu(e) {
@@ -2439,8 +2374,7 @@ async function modalBulkSetStatus(status) {
     if (!r.ok) throw new Error(await r.text());
     toast(`${ids.length} records updated`, 'success');
     ST.modalSelected.clear();
-    await fetchAll();
-    renderStatusModal();
+    await Promise.all([fetchAll(), fetchModalPage()]);
   } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
 }
 
@@ -2454,8 +2388,7 @@ async function modalBulkDelete() {
     if (!r.ok) throw new Error(await r.text());
     toast(`${ids.length} records deleted`, 'success');
     ST.modalSelected.clear();
-    await fetchAll();
-    renderStatusModal();
+    await Promise.all([fetchAll(), fetchModalPage()]);
   } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
 }
 
@@ -2469,14 +2402,13 @@ async function modalBulkQueue(workerConfigId) {
     const res = await r.json();
     toast(`Queued ${res.assigned || ids.length} files`, 'success');
     ST.modalSelected.clear();
-    await fetchAll();
-    renderStatusModal();
+    await Promise.all([fetchAll(), fetchModalPage()]);
   } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
 }
 
 function copyCmd(fileId, event) {
   event.stopPropagation();
-  const f = ((ST.data && ST.data.files) || []).find(f => f.id === fileId);
+  const f = (ST.modalResult.items || []).find(f => f.id === fileId);
   if (!f || !f.ffmpeg_cmd) return;
   navigator.clipboard.writeText(f.ffmpeg_cmd).then(
     () => toast('Command copied to clipboard', 'success'),
@@ -2493,8 +2425,7 @@ async function modalBulkForceEncode(skipSizeCheck) {
     if (!r.ok) throw new Error(await r.text());
     toast(`Queued ${ids.length} file(s) for re-encode`, 'success');
     ST.modalSelected.clear();
-    await fetchAll();
-    renderStatusModal();
+    await Promise.all([fetchAll(), fetchModalPage()]);
   } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
 }
 
