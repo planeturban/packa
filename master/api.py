@@ -722,12 +722,14 @@ def get_master_stats(db: Session = Depends(get_db)):
         .scalar() or 0
     )
     overall = crud.get_stats(db).get("overall", {})
+    from shared.version import VERSION
     return {
         "scanning_queue": scanning_queue,
         "probe_rate_per_s": _probe_rate_per_s(),
         "scan_rate_per_s": _scan.scan_rate(),
         "avg_conversion_s": overall.get("avg_duration_seconds"),
         "avg_fps": overall.get("avg_fps"),
+        "version": VERSION,
     }
 
 

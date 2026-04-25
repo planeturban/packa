@@ -1198,7 +1198,7 @@ function renderWorkerCard(s) {
     <div class="worker-header">
       <div class="worker-header-info">
         <div class="worker-name">${esc(s.hostname)}</div>
-        <div class="worker-meta">${esc(s.config_id)} · ${esc(s.url)}</div>
+        <div class="worker-meta">${esc(s.config_id)} · ${esc(s.url)} · ${esc(s.version || '?')}</div>
       </div>
       ${badge(statusStr)}
     </div>
@@ -1478,6 +1478,7 @@ function renderScan() {
   const found = scan.found || 0;
   const scanPct = total > 0 ? Math.round(scanned / total * 100) : 0;
 
+  const masterVersion = meta.version || '?';
   const avgConvS = meta.avg_conversion_s;
   const avgConvStr = avgConvS != null ? fmtDuration(avgConvS) : '—';
   const probeRate = meta.probe_rate_per_s;
@@ -1495,6 +1496,7 @@ function renderScan() {
 
   el.innerHTML = `
     <div style="max-width:720px">
+      <div style="font-size:11px;color:var(--text-faint);font-family:'IBM Plex Mono',monospace;margin-bottom:12px">master · ${esc(masterVersion)}</div>
       <div class="stats-grid" style="margin-bottom:20px;grid-template-columns:repeat(4,1fr)">
         <div class="stat-card">
           <div class="stat-label">Avg conversion</div>
