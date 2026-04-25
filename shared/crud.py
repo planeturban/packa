@@ -58,6 +58,64 @@ def get_all_records(db: Session, status: FileStatus | None = None) -> list[FileR
     return q.all()
 
 
+def get_status_counts(db: Session) -> dict:
+    """Return per-status counts and per-worker complete/error counts in two queries."""
+    rows = db.query(FileRecord.status, func.count()).group_by(FileRecord.status).all()
+    by_status = {s.value: 0 for s in FileStatus}
+    for status, count in rows:
+        by_status[status.value] = count
+
+    worker_rows = (
+        db.query(FileRecord.worker_id, FileRecord.status, func.count())
+        .filter(FileRecord.status.in_([FileStatus.COMPLETE, FileStatus.ERROR]))
+        .filter(FileRecord.worker_id.isnot(None))
+        .group_by(FileRecord.worker_id, FileRecord.status)
+        .all()
+    )
+    worker_stats: dict[str, dict] = {}
+    for worker_id, status, count in worker_rows:
+        w = worker_stats.setdefault(worker_id, {"complete": 0, "error": 0})
+        w[status.value] = count
+
+    return {"by_status": by_status, "worker_stats": worker_stats}
+
+
+_SORT_COLUMNS = {
+    "file_name": FileRecord.file_name,
+    "file_path": FileRecord.file_path,
+    "file_size": FileRecord.file_size,
+    "output_size": FileRecord.output_size,
+    "created_at": FileRecord.created_at,
+    "finished_at": FileRecord.finished_at,
+    "status": FileRecord.status,
+    "worker_id": FileRecord.worker_id,
+    "cancel_reason": FileRecord.cancel_reason,
+    "discard_reason": FileRecord.discard_reason,
+}
+
+
+def get_records_page(
+    db: Session,
+    status: FileStatus | None = None,
+    search: str | None = None,
+    sort_by: str = "created_at",
+    sort_dir: str = "desc",
+    page: int = 0,
+    page_size: int = 100,
+) -> tuple[list[FileRecord], int]:
+    """Return one page of records and the total matching count."""
+    q = db.query(FileRecord)
+    if status is not None:
+        q = q.filter(FileRecord.status == status)
+    if search:
+        q = q.filter(FileRecord.file_name.ilike(f"%{search}%"))
+    col = _SORT_COLUMNS.get(sort_by, FileRecord.created_at)
+    q = q.order_by(col.desc() if sort_dir == "desc" else col.asc())
+    total = q.count()
+    items = q.offset(page * page_size).limit(page_size).all()
+    return items, total
+
+
 def delete_file_record(db: Session, record_id: int) -> bool:
     record = get_file_record(db, record_id)
     if not record:

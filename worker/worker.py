@@ -382,6 +382,7 @@ async def _process(job: Job) -> None:
                     avg_fps=avg_fps, avg_speed=avg_speed,
                     ffmpeg_cmd=worker_state.current_cmd,
                 )
+            worker_state.record_success() if cancel_reason else worker_state.record_error()
             return
 
         output_size = Path(output_path).stat().st_size
@@ -408,6 +409,7 @@ async def _process(job: Job) -> None:
                 cancel_reason="auto", encoder=encoder,
                 avg_fps=avg_fps, avg_speed=avg_speed,
             )
+            worker_state.record_success()
         else:
             if worker_state.replace_original:
                 try:
@@ -430,6 +432,7 @@ async def _process(job: Job) -> None:
                         encoder=encoder,
                         avg_fps=avg_fps, avg_speed=avg_speed,
                     )
+                    worker_state.record_error()
                     return
 
             update_conversion_result(
@@ -452,6 +455,7 @@ async def _process(job: Job) -> None:
                 encoder=encoder,
                 avg_fps=avg_fps, avg_speed=avg_speed,
             )
+            worker_state.record_success()
 
     except Exception as exc:
         print(f"[worker] record {job.record_id} exception: {exc}")
@@ -464,6 +468,7 @@ async def _process(job: Job) -> None:
             job.record_id, FileStatus.ERROR, finished_at=finished_at,
             ffmpeg_cmd=worker_state.current_cmd or None,
         )
+        worker_state.record_error()
     finally:
         db.close()
 

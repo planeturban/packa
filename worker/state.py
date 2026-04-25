@@ -44,8 +44,11 @@ class WorkerState:
         self.paused: bool = False
         self.drain: bool = False
         self.sleeping: bool = False
+        self.sleep_reason: str | None = None
         self.unconfigured: bool = False
         self.disk_full: bool = False
+        self.consecutive_errors: int = 0
+        self.error_threshold: int = 0
         self.cancel_reason: str | None = None
         self.cancel_detail: str | None = None
         self.encoder: str = "libx265"
@@ -65,6 +68,16 @@ class WorkerState:
         self.path_prefix: str = ""
 
         self._skip_ids: set[int] = set()
+
+    def record_error(self) -> None:
+        self.consecutive_errors += 1
+        if self.error_threshold > 0 and self.consecutive_errors >= self.error_threshold:
+            self.sleeping = True
+            self.sleep_reason = f"auto-paused: {self.consecutive_errors} consecutive errors"
+            print(f"[worker] auto-paused after {self.consecutive_errors} consecutive errors")
+
+    def record_success(self) -> None:
+        self.consecutive_errors = 0
 
     def cancel_queued(self, record_id: int) -> None:
         """Mark a queued (not yet active) job to be skipped by the worker."""

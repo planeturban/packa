@@ -186,6 +186,12 @@ poll_interval = 5
 # Env: PACKA_WORKER_CANCEL_THRESHOLDS  (format: "10.0:1.10,25.0:1.05,50.0:1.0")
 # cancel_thresholds = [[20.0, 1.15], [40.0, 1.05], [60.0, 1.0]]
 
+# Auto-sleep after N consecutive errors (0 = disabled).
+# The worker enters sleep mode and shows the reason on the dashboard.
+# Wake it manually from the Workers tab to reset the counter and resume.
+# Env: PACKA_WORKER_ERROR_THRESHOLD
+# error_threshold = 5
+
 # ---------------------------------------------------------------------------
 # Web frontend
 # ---------------------------------------------------------------------------

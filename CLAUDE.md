@@ -198,6 +198,7 @@ Before starting ffmpeg, `ffprobe` checks the video codec. If the file is already
 | `PACKA_WORKER_FFMPEG_EXTRA_ARGS` | `[worker.ffmpeg].extra_args` |
 | `PACKA_WORKER_BATCH_SIZE` | `[worker.worker].batch_size` |
 | `PACKA_WORKER_POLL_INTERVAL` | `[worker.worker].poll_interval` |
+| `PACKA_WORKER_ERROR_THRESHOLD` | `[worker.worker].error_threshold` |
 | `PACKA_WORKER_BOOTSTRAP_TOKEN` | `[worker].bootstrap_token` |
 | `PACKA_WORKER_TLS_CERT` | `[worker.tls].cert` |
 | `PACKA_WORKER_TLS_KEY` | `[worker.tls].key` |
