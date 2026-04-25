@@ -25,8 +25,8 @@ spec:
                 topologyKey: kubernetes.io/hostname
       containers:
         - name: worker
-          image: ghcr.io/planeturban/packa:latest
-          workingDir: /app
+          image: ghcr.io/planeturban/packa:v0.15.12
+          workingDir: /data
           ports:
             - containerPort: 8000
           resources:
@@ -41,6 +41,8 @@ spec:
               value: worker
             - name: PACKA_CONFIG
               value: /etc/packa/packa.toml
+            - name: PYTHONPATH
+              value: /app
             # - name: PACKA_WORKER_ID
             #   value: "worker-01"   # omit to auto-generate a unique ID from worker.db
             - name: PACKA_WORKER_BOOTSTRAP_TOKEN
@@ -58,7 +60,7 @@ spec:
             - name: data
               mountPath: /data
             - name: media
-              mountPath: /media
+              mountPath: /mnt
             - name: output
               mountPath: /output
       volumes:
@@ -71,8 +73,8 @@ spec:
         # Source media — NFS mount from NAS (adjust server/path):
         - name: media
           nfs:
-            server: nas.local       # NAS hostname or IP
-            path: /volume1/media    # exported NFS path
+            server: syno.planeturban.net
+            path: /volume3/tv-archive
             readOnly: true
         # CIFS/SMB alternative — requires cifs-utils on nodes and a Secret with credentials:
         # - name: media
@@ -84,27 +86,20 @@ spec:
         #     secretRef:
         #       name: packa-cifs-credentials
 
-        # Output directory — NFS mount from NAS:
-        - name: output
-          nfs:
-            server: nas.local       # NAS hostname or IP
-            path: /volume1/output   # exported NFS path
-            readOnly: false
-        # CIFS/SMB alternative:
-        # - name: output
-        #   flexVolume:
-        #     driver: fstab/cifs
-        #     options:
-        #       networkPath: "//nas.local/output"
-        #       mountOptions: "uid=1000,gid=1000,file_mode=0644,dir_mode=0755"
-        #     secretRef:
-        #       name: packa-cifs-credentials
   volumeClaimTemplates:
+    - metadata:
+        name: output
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: synology-iscsi
+        resources:
+          requests:
+            storage: 50G
     - metadata:
         name: data
       spec:
         accessModes: ["ReadWriteOnce"]
+        storageClassName: synology-iscsi
         resources:
           requests:
             storage: 512Mi
-        # storageClassName: standard

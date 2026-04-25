@@ -17,8 +17,8 @@ spec:
       serviceAccountName: packa-master
       containers:
         - name: master
-          image: ghcr.io/planeturban/packa:latest
-          workingDir: /app
+          image: ghcr.io/planeturban/packa:v0.15.12
+          workingDir: /data
           ports:
             - containerPort: 9000
           volumeMounts:
@@ -27,7 +27,7 @@ spec:
             - name: data
               mountPath: /data
             - name: media
-              mountPath: /media
+              mountPath: /mnt
               readOnly: true
           resources:
             requests:
@@ -39,6 +39,8 @@ spec:
           env:
             - name: PACKA_CONFIG
               value: /etc/packa/packa.toml
+            - name: PYTHONPATH
+              value: /app
           # Optional overrides:
           # - name: PACKA_MASTER_PREFIX
           #   value: "/media"
@@ -89,8 +91,8 @@ spec:
                 path: packa.toml
         - name: media
           nfs:
-            server: nas.local
-            path: /volume1/media
+            server: syno.planeturban.net
+            path: /volume3/tv-archive
             readOnly: true
         # CIFS/SMB alternative:
         # - name: media
@@ -106,7 +108,7 @@ spec:
         name: data
       spec:
         accessModes: ["ReadWriteOnce"]
+        storageClassName: synology-iscsi
         resources:
           requests:
             storage: 1Gi
-        # storageClassName: standard

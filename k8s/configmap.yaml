@@ -10,7 +10,7 @@ data:
     api_port = 9000
 
     [master.paths]
-    prefix = "/media"    # matches the NFS mount in master/statefulset.yaml
+    prefix = "/mnt"    # matches the NFS mount in master/statefulset.yaml
 
     [master.scan]
     extensions = [".mkv", ".mp4", ".avi", ".mov"]
@@ -28,7 +28,7 @@ data:
     # id is set per-worker via PACKA_WORKER_ID env var
 
     [worker.paths]
-    prefix = "/media"    # matches the NFS mount in worker/statefulset.yaml
+    prefix = "/mnt"    # matches the NFS mount in worker/statefulset.yaml
 
     [worker.ffmpeg]
     bin        = "ffmpeg"

@@ -10,5 +10,4 @@ spec:
     - name: http
       port: 8080
       targetPort: 8080
-  type: ClusterIP   # change to LoadBalancer or NodePort to expose externally,
-                    # or pair with an Ingress below
+  type: LoadBalancer
