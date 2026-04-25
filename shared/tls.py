@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 
 @dataclass
 class TlsConfig:
-    disabled: bool = False   # explicit opt-out from auto mTLS
     # File-path overrides (manual / bring-your-own-cert)
     cert: str = ""
     key: str = ""
@@ -19,8 +18,6 @@ class TlsConfig:
 
     @property
     def enabled(self) -> bool:
-        if self.disabled:
-            return False
         return bool(
             (self.cert_pem and self.key_pem and self.ca_pem)
             or (self.cert and self.key and self.ca)
@@ -47,8 +44,13 @@ class TlsConfig:
         ctx.load_cert_chain(self.cert, self.key)
         return ctx
 
-    def uvicorn_tls_kwargs(self) -> dict:
-        """Return keyword args to pass to uvicorn.Config for TLS."""
+    def uvicorn_tls_kwargs(self, require_client_cert: bool = True) -> dict:
+        """Return keyword args to pass to uvicorn.Config for TLS.
+
+        require_client_cert=False is used by master, which must stay reachable
+        during bootstrap before nodes have obtained their client certificates.
+        Workers use the default True so only CA-signed clients can connect.
+        """
         if not self.enabled:
             return {}
         from .pki import write_tls_files
@@ -56,19 +58,17 @@ class TlsConfig:
             cp, kp, cap = write_tls_files(self.cert_pem, self.key_pem, self.ca_pem)
         else:
             cp, kp, cap = self.cert, self.key, self.ca
-        return {
-            "ssl_certfile":  cp,
-            "ssl_keyfile":   kp,
-            "ssl_ca_certs":  cap,
-            "ssl_cert_reqs": ssl.CERT_REQUIRED,
+        kwargs = {
+            "ssl_certfile": cp,
+            "ssl_keyfile":  kp,
+            "ssl_ca_certs": cap,
         }
+        if require_client_cert:
+            kwargs["ssl_cert_reqs"] = ssl.CERT_REQUIRED
+        return kwargs
 
     def httpx_kwargs(self) -> dict:
         """Return keyword args for httpx.AsyncClient."""
         if not self.enabled:
             return {}
         return {"verify": self.client_ssl_context()}
-
-
-def scheme(tls: TlsConfig) -> str:
-    return "https" if tls.enabled else "http"

@@ -34,7 +34,6 @@ from shared.db import migrate
 from shared.version import VERSION as _VERSION
 from shared.models import Base, FileStatus
 from shared.schemas import FileRecordCreate, FileRecordOut, StatusUpdate
-from shared.tls import scheme
 
 from . import config_store
 from .database import engine, get_db
@@ -82,18 +81,14 @@ async def _register_and_poll() -> None:
     """Retry registration until master is reachable, then keep registration fresh and run the poller."""
     global _worker_config_id
     payload = {"config_id": _worker_config_id, "host": _advertise_host, "api_port": _config.api_port,
-               "scheme": scheme(_config.tls)}
+               "scheme": "https" if _config.tls.enabled else "http"}
 
-    # Build candidate (master_base, tls_kw) pairs to try.
-    # When we have a cert, use it over HTTPS. Otherwise probe both schemes so
-    # the worker can reach a master that upgraded to TLS without a local cert yet.
+    master_https = f"https://{_config.master_host}:{_config.master_port}"
     if _config.tls.enabled:
-        candidates = [(f"https://{_config.master_host}:{_config.master_port}", _config.tls.httpx_kwargs())]
+        candidates = [(master_https, _config.tls.httpx_kwargs())]
     else:
-        candidates = [
-            (f"https://{_config.master_host}:{_config.master_port}", {"verify": False}),
-            (f"http://{_config.master_host}:{_config.master_port}",  {}),
-        ]
+        # No client cert yet — use HTTPS with TOFU until bootstrap completes
+        candidates = [(master_https, {"verify": False})]
 
     master_base: str = candidates[0][0]
     tls_kw: dict     = candidates[0][1]
@@ -478,21 +473,15 @@ class TlsBootstrapRequest(BaseModel):
 @app.post("/tls/bootstrap")
 async def tls_bootstrap(body: TlsBootstrapRequest):
     """Fetch a TLS cert bundle from master using a bootstrap token. Restart required after."""
-    r = None
-    for s, verify in (("https", False), ("http", True)):
-        try:
-            async with httpx.AsyncClient(timeout=10, verify=verify) as client:
-                resp = await client.post(
-                    f"{s}://{_config.master_host}:{_config.master_port}/bootstrap",
-                    json={"token": body.token, "cn": _worker_config_id or "worker"},
-                )
-                resp.raise_for_status()
-                r = resp
-                break
-        except Exception:
-            r = None
-    if r is None:
-        raise HTTPException(status_code=502, detail="Could not reach master for TLS bootstrap")
+    try:
+        async with httpx.AsyncClient(timeout=10, verify=False) as client:
+            r = await client.post(
+                f"https://{_config.master_host}:{_config.master_port}/bootstrap",
+                json={"token": body.token, "cn": _worker_config_id or "worker"},
+            )
+            r.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not reach master for TLS bootstrap: {exc}")
     bundle = r.json()
     set_setting("tls.cert", bundle["cert_pem"])
     set_setting("tls.key",  bundle["key_pem"])
