@@ -21,10 +21,19 @@ spec:
             - |
               MASTER=https://master.packa.svc.cluster.local:9000
               echo "[init] waiting for master bootstrap token..."
-              until curl -sfk "$MASTER/tls/token" | grep -q '"token"'; do
+              while true; do
+                RESP=$(curl -sfk "$MASTER/tls/token" 2>/dev/null)
+                TOKEN=$(echo "$RESP" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+                if [ -n "$TOKEN" ]; then
+                  echo "$TOKEN" > /run/bootstrap/token
+                  echo "[init] token written, starting web"
+                  break
+                fi
                 sleep 5
               done
-              echo "[init] token available, starting web"
+          volumeMounts:
+            - name: bootstrap
+              mountPath: /run/bootstrap
           resources:
             requests:
               cpu: 10m
@@ -34,17 +43,24 @@ spec:
               memory: 32Mi
       containers:
         - name: web
-          image: ghcr.io/planeturban/packa:latest
+          image: ghcr.io/planeturban/packa:v0.15.12
           workingDir: /app
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              if [ -s /run/bootstrap/token ]; then
+                export PACKA_WEB_BOOTSTRAP_TOKEN=$(cat /run/bootstrap/token)
+              fi
+              exec /app/entrypoint.sh
           ports:
             - containerPort: 8080
           resources:
             requests:
               cpu: "100m"
-              memory: "128Mi"
+              memory: "256Mi"
             limits:
               cpu: "500m"
-              memory: "256Mi"
+              memory: "512Mi"
           env:
             - name: PACKA_ROLE
               value: web
@@ -71,6 +87,8 @@ spec:
               mountPath: /etc/packa
             - name: data
               mountPath: /data
+            - name: bootstrap
+              mountPath: /run/bootstrap
       volumes:
         - name: config
           configMap:
@@ -80,3 +98,5 @@ spec:
                 path: packa.toml
         - name: data
           emptyDir: {}   # web.db only; replace with PVC if you want sessions to survive pod restarts
+        - name: bootstrap
+          emptyDir: {}   # fresh bootstrap token written by init container, read at web startup
