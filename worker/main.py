@@ -47,7 +47,6 @@ import uvicorn
 
 from shared.config import load_worker
 from shared.log import UVICORN_LOG_CONFIG
-from shared.tls import scheme
 
 from . import config_store
 from .api import app, set_config, set_config_layers, set_registration_params
@@ -79,22 +78,16 @@ def _bootstrap_tls(config) -> None:
     if not config.bootstrap_token:
         return
 
-    # Try HTTPS first (verify=False — TOFU on first connection), then fall back to HTTP.
-    r = None
-    for scheme, verify in (("https", False), ("http", True)):
-        try:
-            r = httpx.post(
-                f"{scheme}://{config.master_host}:{config.master_port}/bootstrap",
-                json={"token": config.bootstrap_token, "cn": config.worker_id or "worker"},
-                verify=verify,
-                timeout=10,
-            )
-            r.raise_for_status()
-            break
-        except Exception:
-            r = None
-    if r is None:
-        print("[worker] TLS bootstrap failed: could not reach master on https or http")
+    try:
+        r = httpx.post(
+            f"https://{config.master_host}:{config.master_port}/bootstrap",
+            json={"token": config.bootstrap_token, "cn": config.worker_id or "worker"},
+            verify=False,  # TOFU — master cert not yet trusted
+            timeout=10,
+        )
+        r.raise_for_status()
+    except Exception as exc:
+        print(f"[worker] TLS bootstrap failed: {exc}")
         return
     try:
         bundle = r.json()
@@ -195,7 +188,7 @@ def main() -> None:
 
     print(f"[worker] bind: {bind}:{api_port}")
     print(f"[worker] path_prefix: {config.path_prefix!r}")
-    print(f"[worker] tls: {'enabled' if config.tls.enabled else 'disabled'}")
+    print(f"[worker] tls: {'bootstrapped' if config.tls.enabled else 'pending bootstrap'}")
 
     asyncio.run(_main(
         bind=bind,

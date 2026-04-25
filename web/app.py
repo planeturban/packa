@@ -21,7 +21,6 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from shared.config import WebConfig
-from shared.tls import scheme
 
 from .client import fetch_dashboard
 from .store import set_setting
@@ -104,11 +103,11 @@ def _logged_in(request: Request) -> bool:
 
 
 def _master_url() -> str:
-    return f"{scheme(_config.tls)}://{_config.master_host}:{_config.master_port}"
+    return f"https://{_config.master_host}:{_config.master_port}"
 
 
-def _worker_url(host: str, api_port: int, worker_scheme: str | None = None) -> str:
-    return f"{worker_scheme or scheme(_config.tls)}://{host}:{api_port}"
+def _worker_url(host: str, api_port: int, worker_scheme: str = "https") -> str:
+    return f"{worker_scheme}://{host}:{api_port}"
 
 
 def _httpx_kw() -> dict:
@@ -167,22 +166,15 @@ def setup_bootstrap_page(request: Request):
 async def setup_bootstrap(request: Request, token: str = Form()):
     if _config.tls.enabled:
         return RedirectResponse("/login", status_code=303)
-    r = None
-    master_host = _config.master_host
-    master_port = _config.master_port
-    for s, verify in (("https", False), ("http", True)):
-        try:
-            r = httpx.post(
-                f"{s}://{master_host}:{master_port}/bootstrap",
-                json={"token": token, "cn": "web"},
-                verify=verify,
-                timeout=10,
-            )
-            r.raise_for_status()
-            break
-        except Exception:
-            r = None
-    if r is None:
+    try:
+        r = httpx.post(
+            f"https://{_config.master_host}:{_config.master_port}/bootstrap",
+            json={"token": token, "cn": "web"},
+            verify=False,  # TOFU — master cert not yet trusted
+            timeout=10,
+        )
+        r.raise_for_status()
+    except Exception:
         return _templates.TemplateResponse(
             request, "login.html",
             {"needs_bootstrap": True,

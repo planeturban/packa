@@ -8,17 +8,13 @@
 # Every setting below has a corresponding environment variable (see each section).
 #
 # ── mTLS quickstart ──────────────────────────────────────────────────────────
-# TLS is enabled by default. On first start, master generates a self-signed CA
-# and prints a bootstrap token (valid 10 min). Workers and web exchange that
-# token for a client certificate on their first start. Certs are stored in each
-# node's local database and renewed automatically.
+# Master generates a self-signed CA on first start and prints a bootstrap token
+# (valid 10 min). Workers and web exchange that token for a client certificate.
+# Certs are stored in each node's local database and renewed automatically.
 #
 # 1. Start master → note the bootstrap token in the log.
 # 2. Set bootstrap_token below in [worker] and [web].
 # 3. Start worker and web — they obtain certs and use HTTPS from that point on.
-#
-# To disable TLS entirely (plain HTTP): uncomment [master.tls] disabled = true
-# and remove the bootstrap_token lines from worker and web.
 
 # ---------------------------------------------------------------------------
 # Master
@@ -28,12 +24,6 @@
 [master]
 bind     = "localhost"   # use "any" for 0.0.0.0
 api_port = 9000
-
-# TLS — master generates its own CA and cert on first start.
-# Uncomment to disable TLS and use plain HTTP instead.
-# Env: (no env var — use this flag or bring-your-own certs below)
-# [master.tls]
-# disabled = true
 
 # Bring-your-own certificates (overrides auto-generated certs).
 # Env: PACKA_MASTER_TLS_CERT, PACKA_MASTER_TLS_KEY, PACKA_TLS_CA

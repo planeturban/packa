@@ -152,7 +152,7 @@ def main() -> None:
 
     print(f"[web] bind: {bind}:{config.port}")
     print(f"[web] master: {config.master_host}:{config.master_port}")
-    print(f"[web] tls: {'enabled' if config.tls.enabled else 'disabled'}")
+    print(f"[web] tls: {'bootstrapped' if config.tls.enabled else 'pending bootstrap'}")
 
     asyncio.run(_main(bind=bind, port=config.port))
 
