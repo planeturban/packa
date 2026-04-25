@@ -115,6 +115,16 @@ def _httpx_kw() -> dict:
     return _config.tls.httpx_kwargs()
 
 
+async def _assert_known_worker(host: str, port: int) -> None:
+    """Raise HTTPException 400 if host:port is not a registered worker."""
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
+        r = await client.get(f"{_master_url()}/workers")
+        r.raise_for_status()
+        workers = r.json()
+    if not any(w["host"] == host and w["api_port"] == port for w in workers):
+        raise HTTPException(status_code=400, detail="Unknown worker")
+
+
 def _redirect_login():
     return RedirectResponse("/login", status_code=303)
 
@@ -669,6 +679,7 @@ async def data_worker_tls_onboard(request: Request):
     body = await request.json()
     host = body.get("host")
     port = body.get("port")
+    await _assert_known_worker(host, port)
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         # Ensure a valid token exists
         token_r = await client.get(f"{_master_url()}/tls/token")

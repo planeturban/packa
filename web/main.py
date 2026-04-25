@@ -153,6 +153,8 @@ def main() -> None:
     print(f"[web] bind: {bind}:{config.port}")
     print(f"[web] master: {config.master_host}:{config.master_port}")
     print(f"[web] tls: {'bootstrapped' if config.tls.enabled else 'pending bootstrap'}")
+    if not (config.username and config.password):
+        print("[web] WARNING: authentication is disabled — the dashboard is accessible without login")
 
     asyncio.run(_main(bind=bind, port=config.port))
 

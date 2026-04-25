@@ -26,7 +26,7 @@ The compose file expects `packa.toml` in the current directory. A single image c
 
 ## Security
 
-Packa has no authentication between nodes and is intended for use on trusted networks only. See [Architecture — Security](docs/architecture.md#security) for details.
+All inter-node communication uses mutual TLS. Master auto-generates a CA on first start and prints a bootstrap token; workers and the web process exchange that token for a signed client certificate. See [Architecture — Security](docs/architecture.md#security) for details.
 
 ---
 

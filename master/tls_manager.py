@@ -136,8 +136,15 @@ def get_token_info(db: Session) -> dict | None:
 
 
 def consume_token(db: Session, token: str) -> bool:
-    """Validate the token (multi-use within TTL). Returns True if valid."""
+    """Validate and consume the token (single-use). Returns True if valid."""
     info = get_token_info(db)
     if not info:
         return False
-    return secrets.compare_digest(info["token"], token)
+    if not secrets.compare_digest(info["token"], token):
+        return False
+    # Invalidate immediately so the token cannot be reused
+    db.query(MasterSetting).filter(
+        MasterSetting.key.in_([_KEY_TOKEN, _KEY_TOKEN_EXP])
+    ).delete(synchronize_session=False)
+    db.commit()
+    return True

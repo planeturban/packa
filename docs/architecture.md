@@ -110,15 +110,15 @@ A worker's ID is resolved in this order:
 
 ## Security
 
-**mTLS is opt-in and recommended.**
+**mTLS is mandatory for all inter-node communication.**
 
 - On first start master auto-generates a CA and server cert (stored in `master.db`) and prints a **bootstrap token** (valid 10 minutes, multi-use) to the log.
 - Workers and the web process exchange this token for a signed client cert via `POST /bootstrap`. The first connection uses TOFU (`verify=False`); all subsequent connections verify against the CA.
 - Bootstrapped certs are persisted in `worker.db` and `web.db` and loaded automatically on restart.
-- Set `[master.tls] disabled = true` to opt out entirely.
 - BYO certs are supported — set `cert`/`key` in the relevant `[*.tls]` section and those override any bootstrapped certs.
+- Master runs with `CERT_OPTIONAL` so `/bootstrap` stays reachable before a node has a cert. Workers run with `CERT_REQUIRED` — once bootstrapped they only accept connections from CA-signed clients.
 - Web authentication (username/password) is optional and protects the browser-facing interface. `secret_key` is auto-generated and persisted in `web.db`.
-- Master and worker APIs have no per-request authentication beyond mTLS — do not expose them to untrusted networks without TLS enabled.
+- Master and worker APIs have no per-request authentication beyond mTLS — do not expose them to untrusted networks.
 
 ---
 

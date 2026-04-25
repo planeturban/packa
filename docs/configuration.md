@@ -40,9 +40,8 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 # enabled  = false            # periodic re-scan of the path prefix
 # interval = 60               # seconds between periodic scans (min 10)
 
-# [master.tls]                # TLS is auto-configured on first start
-# disabled = true             # opt out entirely
-# cert = "/etc/packa/master.crt"   # BYO cert (overrides auto-generated)
+# [master.tls]                # BYO cert (overrides auto-generated)
+# cert = "/etc/packa/master.crt"
 # key  = "/etc/packa/master.key"
 ```
 
@@ -59,7 +58,6 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 | `PACKA_MASTER_PROBE_INTERVAL` | `master.scan.probe_interval` |
 | `PACKA_MASTER_SCAN_PERIODIC_ENABLED` | `master.scan.periodic.enabled` |
 | `PACKA_MASTER_SCAN_INTERVAL` | `master.scan.periodic.interval` (seconds) |
-| `PACKA_MASTER_TLS_DISABLED` | `master.tls.disabled` |
 | `PACKA_MASTER_TLS_CERT` | `master.tls.cert` |
 | `PACKA_MASTER_TLS_KEY` | `master.tls.key` |
 | `PACKA_TLS_CA` | `tls.ca` (shared CA for BYO-cert setups) |
@@ -97,6 +95,7 @@ output_dir = "/mnt/output"
 [worker.worker]
 poll_interval     = 5   # seconds between polls when queue is empty
 cancel_thresholds = [[10.0, 1.10], [25.0, 1.05], [50.0, 1.0]]
+# error_threshold = 5   # auto-sleep after N consecutive errors (0 = disabled)
 
 # [worker.tls]                     # BYO cert (overrides bootstrapped certs)
 # cert = "/etc/packa/worker.crt"
@@ -119,6 +118,7 @@ cancel_thresholds = [[10.0, 1.10], [25.0, 1.05], [50.0, 1.0]]
 | `PACKA_WORKER_FFMPEG_EXTRA_ARGS` | `worker.ffmpeg.extra_args` |
 | `PACKA_WORKER_POLL_INTERVAL` | `worker.worker.poll_interval` |
 | `PACKA_WORKER_CANCEL_THRESHOLDS` | `worker.worker.cancel_thresholds` (format: `"10.0:1.10,25.0:1.05"`) |
+| `PACKA_WORKER_ERROR_THRESHOLD` | `worker.worker.error_threshold` |
 | `PACKA_WORKER_BOOTSTRAP_TOKEN` | `worker.bootstrap_token` |
 | `PACKA_WORKER_TLS_CERT` | `worker.tls.cert` |
 | `PACKA_WORKER_TLS_KEY` | `worker.tls.key` |
@@ -195,3 +195,23 @@ password   = "change-me"
 | `PACKA_WEB_TLS_CERT` | `web.tls.cert` |
 | `PACKA_WEB_TLS_KEY` | `web.tls.key` |
 | `PACKA_TLS_CA` | `tls.ca` (shared CA for BYO-cert setups) |
+
+---
+
+## Docker — runtime user
+
+By default the container process runs as uid/gid `1000`. Set `PUID` and `PGID` to run as a different user, for example to match the owner of your media files:
+
+```bash
+PUID=1001 PGID=1001 docker compose up
+```
+
+Or in `docker-compose.yml`:
+
+```yaml
+environment:
+  PUID: "1001"
+  PGID: "1001"
+```
+
+When the container starts as root the entrypoint creates the user at the specified uid/gid and drops privileges via `gosu` before launching the app. When the container is already non-root (e.g. Kubernetes `runAsUser`) this step is skipped entirely.
