@@ -294,6 +294,12 @@ async def _process(job: Job) -> None:
         worker_state.current_cmd = ' '.join(cmd)
         print(f"[worker] record {job.record_id} encoder={encoder!r} → {worker_state.current_cmd}")
 
+        # Store cmd before launching so it's captured even if subprocess creation fails
+        record = get_file_record(db, job.record_id)
+        if record:
+            record.ffmpeg_cmd = worker_state.current_cmd
+            db.commit()
+
         started_at = _utcnow()
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -309,7 +315,6 @@ async def _process(job: Job) -> None:
             record.status = FileStatus.PROCESSING
             record.encoder = encoder
             record.started_at = started_at
-            record.ffmpeg_cmd = worker_state.current_cmd
             db.commit()
         print(f"[worker] record {job.record_id} pid={proc.pid}  duration={duration_s}s  source={source_size}B")
         await _update_master_status(job.record_id, "processing")
@@ -455,7 +460,10 @@ async def _process(job: Job) -> None:
             update_status(db, job.record_id, FileStatus.ERROR)
         except Exception:
             pass
-        await _report_result_to_master(job.record_id, FileStatus.ERROR, finished_at=finished_at)
+        await _report_result_to_master(
+            job.record_id, FileStatus.ERROR, finished_at=finished_at,
+            ffmpeg_cmd=worker_state.current_cmd or None,
+        )
     finally:
         db.close()
 
