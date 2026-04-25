@@ -143,6 +143,7 @@ async def fetch_dashboard(master_url: str, httpx_kwargs: dict | None = None) -> 
             "batch_size": (st or {}).get("batch_size", 1),
             "replace_original": (st or {}).get("replace_original", False),
             "tls_enabled": (st or {}).get("tls_enabled", False),
+            "version": (st or {}).get("version", "?"),
             "converted": converted,
             "errors": errors,
             "worker_config": worker_cfg,
