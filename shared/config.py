@@ -138,7 +138,6 @@ def load_master(config_path: str | None) -> Config:
         api_port=_env_int("PACKA_MASTER_API_PORT", master.get("api_port", 9000)),
         path_prefix=_env("PACKA_MASTER_PREFIX", paths.get("prefix", "")),
         tls=TlsConfig(
-            disabled=tls_data.get("disabled", False),
             cert=tls_data.get("cert", ""),
             key=tls_data.get("key", ""),
             ca=tls_data.get("ca", ""),
@@ -226,7 +225,6 @@ def load_worker(config_path: str | None) -> Config:
             error_threshold=_env_int("PACKA_WORKER_ERROR_THRESHOLD", worker_data.get("error_threshold", 0)),
         ),
         tls=TlsConfig(
-            disabled=worker_tls.get("disabled", False),
             cert=worker_tls.get("cert", ""),
             key=worker_tls.get("key", ""),
             ca=_env("PACKA_TLS_CA", worker_tls.get("ca", shared_tls.get("ca", ""))),
@@ -254,7 +252,6 @@ def load_web(config_path: str | None) -> WebConfig:
         port=_env_int("PACKA_WEB_PORT", web.get("port", 8080)),
         bootstrap_token=_env("PACKA_WEB_BOOTSTRAP_TOKEN", web.get("bootstrap_token", "")),
         tls=TlsConfig(
-            disabled=web_tls.get("disabled", False),
             cert=web_tls.get("cert", ""),
             key=web_tls.get("key", ""),
             ca=_env("PACKA_TLS_CA", web_tls.get("ca", shared_tls_w.get("ca", ""))),
