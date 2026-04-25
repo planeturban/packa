@@ -30,7 +30,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -835,8 +835,7 @@ async def delete_file(record_id: int, db: Session = Depends(get_db)):
     if record.worker_id:
         worker = registry.get_by_config_id(record.worker_id)
         if worker:
-            from shared.tls import scheme as _scheme
-            url = f"{_scheme(_config.tls)}://{worker.host}:{worker.api_port}/files/{record_id}"
+            url = f"https://{worker.host}:{worker.api_port}/files/{record_id}"
             try:
                 async with httpx.AsyncClient(timeout=5, **_config.tls.httpx_kwargs()) as client:
                     await client.delete(url)
@@ -858,14 +857,13 @@ async def bulk_delete_files(body: BulkDeleteRequest, db: Session = Depends(get_d
         if rec.worker_id:
             by_worker.setdefault(rec.worker_id, []).append(rec.id)
     if by_worker:
-        from shared.tls import scheme as _scheme
         async with httpx.AsyncClient(timeout=10, **_config.tls.httpx_kwargs()) as client:
             tasks = []
             for worker_cfg_id, rec_ids in by_worker.items():
                 worker = registry.get_by_config_id(worker_cfg_id)
                 if not worker:
                     continue
-                base = f"{_scheme(_config.tls)}://{worker.host}:{worker.api_port}"
+                base = f"https://{worker.host}:{worker.api_port}"
                 tasks.extend(client.delete(f"{base}/files/{rid}") for rid in rec_ids)
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
@@ -921,9 +919,7 @@ class CertBundle(BaseModel):
 
 @app.post("/bootstrap", response_model=CertBundle)
 def bootstrap_node(body: BootstrapRequest, db: Session = Depends(get_db)):
-    """Exchange a valid bootstrap token for a client cert bundle (TLS must be enabled)."""
-    if _config.tls.disabled:
-        raise HTTPException(status_code=400, detail="TLS is disabled on this master")
+    """Exchange a valid bootstrap token for a client cert bundle."""
     if not consume_token(db, body.token):
         raise HTTPException(status_code=401, detail="Invalid or expired bootstrap token")
     cn = body.cn or "node"
@@ -933,14 +929,14 @@ def bootstrap_node(body: BootstrapRequest, db: Session = Depends(get_db)):
 
 
 def _require_localhost_or_mtls(request: Request) -> None:
+    """Guard for token endpoints. Master uses CERT_OPTIONAL so /bootstrap stays reachable
+    pre-cert; HTTPS here means the connection at least went through TLS."""
     host = request.client.host if request.client else ""
     if host in ("127.0.0.1", "::1"):
         return
-    # Master requires ssl_cert_reqs=CERT_REQUIRED, so any HTTPS request
-    # that completed the TLS handshake has already presented a valid client cert
     if request.url.scheme == "https":
         return
-    raise HTTPException(status_code=403, detail="Token endpoints require localhost or mTLS")
+    raise HTTPException(status_code=403, detail="Token endpoints require mTLS")
 
 
 @app.get("/tls/token")
@@ -965,6 +961,6 @@ def get_tls_status(db: Session = Depends(get_db)):
     """Return TLS state and CA fingerprint."""
     fp = get_ca_fingerprint(db)
     return {
-        "enabled": not _config.tls.disabled,
+        "enabled": True,
         "ca_fingerprint": fp,
     }
