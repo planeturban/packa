@@ -14,6 +14,12 @@ spec:
       labels:
         app: packa-worker
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -25,8 +31,12 @@ spec:
                 topologyKey: kubernetes.io/hostname
       containers:
         - name: worker
-          image: ghcr.io/planeturban/packa:v0.15.12
+          image: ghcr.io/planeturban/packa:v0.17.0
           workingDir: /data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8000
           resources:

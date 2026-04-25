@@ -1,6 +1,9 @@
 services:
   master:
     image: ghcr.io/planeturban/packa
+    environment:
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
     ports:
       - "9000:9000"
     volumes:
@@ -13,6 +16,8 @@ services:
     image: ghcr.io/planeturban/packa
     environment:
       PACKA_ROLE: worker
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
       PACKA_WORKER_MASTER_HOST: master
       PACKA_WORKER_ADVERTISE_HOST: worker
     ports:
@@ -30,6 +35,8 @@ services:
     image: ghcr.io/planeturban/packa
     environment:
       PACKA_ROLE: web
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
       PACKA_WEB_MASTER_HOST: master
     ports:
       - "8080:8080"
