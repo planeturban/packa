@@ -1,0 +1,19 @@
+services:
+  worker:
+    image: ghcr.io/planeturban/packa:v0.16.1
+    environment:
+      PACKA_ROLE: worker
+      PACKA_WORKER_ADVERTISE_HOST: "172.16.1.192"
+      PACKA_WORKER_BOOTSTRAP_TOKEN: "${PACKA_WORKER_BOOTSTRAP_TOKEN}"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./packa.worker.toml:/data/packa.toml:ro
+      - worker-mac-data:/data
+      - worker-mac-output:/output
+      - /Volumes/tv-archive:/mnt:ro
+    restart: unless-stopped
+
+volumes:
+  worker-mac-data:
+  worker-mac-output:
