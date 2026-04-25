@@ -326,15 +326,25 @@ async def data_auth_save(request: Request):
 
 
 @app.get("/data/files")
-async def data_files(request: Request, status: str | None = Query(default=None)):
+async def data_files(
+    request: Request,
+    status: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    sort_by: str = Query(default="created_at"),
+    sort_dir: str = Query(default="desc"),
+    page: int = Query(default=0, ge=0),
+    page_size: int = Query(default=100, ge=1, le=500),
+):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    url = f"{_master_url()}/files"
+    params: dict = {"sort_by": sort_by, "sort_dir": sort_dir, "page": page, "page_size": page_size}
     if status:
-        url += f"?status={status}"
+        params["status"] = status
+    if search:
+        params["search"] = search
     async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
         try:
-            r = await client.get(url)
+            r = await client.get(f"{_master_url()}/files", params=params)
             r.raise_for_status()
             return JSONResponse(r.json())
         except Exception as exc:

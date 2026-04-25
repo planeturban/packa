@@ -777,9 +777,32 @@ def list_duplicate_pairs(db: Session = Depends(get_db)):
     return result
 
 
-@app.get("/files", response_model=list[FileRecordOut])
-def list_files(status: FileStatus | None = None, db: Session = Depends(get_db)):
-    return crud.get_all_records(db, status=status)
+@app.get("/files/counts")
+def file_counts(db: Session = Depends(get_db)):
+    return crud.get_status_counts(db)
+
+
+@app.get("/files")
+def list_files(
+    status: FileStatus | None = None,
+    search: str | None = Query(default=None),
+    sort_by: str = Query(default="created_at"),
+    sort_dir: str = Query(default="desc"),
+    page: int = Query(default=0, ge=0),
+    page_size: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    items, total = crud.get_records_page(
+        db, status=status, search=search,
+        sort_by=sort_by, sort_dir=sort_dir,
+        page=page, page_size=page_size,
+    )
+    return {
+        "items": [FileRecordOut.model_validate(r) for r in items],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @app.get("/files/{record_id}", response_model=FileRecordOut)
