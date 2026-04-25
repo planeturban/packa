@@ -17,10 +17,10 @@ async def fetch_dashboard(master_url: str, httpx_kwargs: dict | None = None) -> 
     kw = httpx_kwargs or {}
     async with httpx.AsyncClient(timeout=5.0, **kw) as client:
         try:
-            workers_r, scan_r, files_r, stats_r, meta_r, cfg_r, tls_status_r, tls_token_r = await asyncio.gather(
+            workers_r, scan_r, counts_r, stats_r, meta_r, cfg_r, tls_status_r, tls_token_r = await asyncio.gather(
                 client.get(f"{master_url}/workers"),
                 client.get(f"{master_url}/scan/status"),
-                client.get(f"{master_url}/files"),
+                client.get(f"{master_url}/files/counts"),
                 client.get(f"{master_url}/stats"),
                 client.get(f"{master_url}/master/stats"),
                 client.get(f"{master_url}/master/config"),
@@ -29,7 +29,7 @@ async def fetch_dashboard(master_url: str, httpx_kwargs: dict | None = None) -> 
             )
             workers_list: list = workers_r.json()
             scan: dict = scan_r.json()
-            files: list = files_r.json()
+            counts_data: dict = counts_r.json()
             master_stats: dict = stats_r.json()
             master_meta: dict = meta_r.json()
             master_config: dict = cfg_r.json()
@@ -41,7 +41,6 @@ async def fetch_dashboard(master_url: str, httpx_kwargs: dict | None = None) -> 
                 "master_error": str(exc),
                 "scan": None,
                 "file_counts": {s: 0 for s in _STATUSES},
-                "files": [],
                 "workers": [],
                 "stats": {"total": 0, "converted": 0, "pending": 0, "processing": 0,
                           "error": 0, "duplicate": 0, "saved_bytes": 0},
@@ -52,11 +51,8 @@ async def fetch_dashboard(master_url: str, httpx_kwargs: dict | None = None) -> 
                 "tls_token": {},
             }
 
-        file_counts = {s: 0 for s in _STATUSES}
-        for f in files:
-            s = f.get("status", "")
-            if s in file_counts:
-                file_counts[s] += 1
+        file_counts = counts_data.get("by_status", {s: 0 for s in _STATUSES})
+        worker_stats = counts_data.get("worker_stats", {})
 
         overall = (master_stats.get("overall") or {})
         stats = {
@@ -110,14 +106,9 @@ async def fetch_dashboard(master_url: str, httpx_kwargs: dict | None = None) -> 
                 pass
 
         config_id = info["config_id"]
-        converted = sum(
-            1 for f in files
-            if f.get("worker_id") == config_id and f.get("status") == "complete"
-        )
-        errors = sum(
-            1 for f in files
-            if f.get("worker_id") == config_id and f.get("status") == "error"
-        )
+        ws = worker_stats.get(config_id, {})
+        converted = ws.get("complete", 0)
+        errors = ws.get("error", 0)
 
         workers.append({
             "id": info["id"],
@@ -144,6 +135,8 @@ async def fetch_dashboard(master_url: str, httpx_kwargs: dict | None = None) -> 
             "replace_original": (st or {}).get("replace_original", False),
             "tls_enabled": (st or {}).get("tls_enabled", False),
             "version": (st or {}).get("version", "?"),
+            "consecutive_errors": (st or {}).get("consecutive_errors", 0),
+            "sleep_reason": (st or {}).get("sleep_reason"),
             "converted": converted,
             "errors": errors,
             "worker_config": worker_cfg,
@@ -154,7 +147,6 @@ async def fetch_dashboard(master_url: str, httpx_kwargs: dict | None = None) -> 
         "master_error": master_error,
         "scan": scan,
         "file_counts": file_counts,
-        "files": files,
         "workers": workers,
         "stats": stats,
         "master_stats": master_stats,

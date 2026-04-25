@@ -174,6 +174,7 @@ async def lifespan(app: FastAPI):
     worker_state.available_encoders = _config.ffmpeg.available_encoders
     worker_state.replace_original = get_setting("replace_original") == "true"
     worker_state.cancel_thresholds = _config.worker.cancel_thresholds
+    worker_state.error_threshold = _config.worker.error_threshold
     worker_state.ffmpeg_bin = _config.ffmpeg.bin
     worker_state.output_dir = _config.ffmpeg.output_dir
     worker_state.extra_args = _config.ffmpeg.extra_args
@@ -252,6 +253,8 @@ class WorkerStatus(BaseModel):
     tls_enabled: bool = False
     petname: str = ""
     version: str = "dev"
+    consecutive_errors: int = 0
+    sleep_reason: str | None = None
 
 
 class EncoderUpdate(BaseModel):
@@ -285,6 +288,8 @@ def get_status():
         tls_enabled=_config.tls.enabled,
         petname=worker_state.petname,
         version=_VERSION,
+        consecutive_errors=worker_state.consecutive_errors,
+        sleep_reason=worker_state.sleep_reason,
         progress=ProgressOut(
             percent=p.percent,
             speed=p.speed,
@@ -419,6 +424,8 @@ def wake_conversion():
     worker_state.sleeping = False
     worker_state.drain = False
     worker_state.disk_full = False
+    worker_state.consecutive_errors = 0
+    worker_state.sleep_reason = None
 
 
 # ---------------------------------------------------------------------------
