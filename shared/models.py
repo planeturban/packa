@@ -46,6 +46,8 @@ class FileRecord(Base):
     pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     encoder: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ffmpeg_cmd: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    ffmpeg_stderr: Mapped[str | None] = mapped_column(String(4096), nullable=True)
     avg_fps: Mapped[float | None] = mapped_column(Float, nullable=True)
     avg_speed: Mapped[float | None] = mapped_column(Float, nullable=True)
     duplicate_of_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

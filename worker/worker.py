@@ -194,6 +194,7 @@ async def _report_result_to_master(
     encoder: str | None = None,
     avg_fps: float | None = None,
     avg_speed: float | None = None,
+    ffmpeg_cmd: str | None = None,
 ) -> None:
     if not worker_state.master_url:
         return
@@ -217,6 +218,8 @@ async def _report_result_to_master(
         body["avg_fps"] = round(avg_fps, 1)
     if avg_speed is not None:
         body["avg_speed"] = round(avg_speed, 2)
+    if ffmpeg_cmd is not None:
+        body["ffmpeg_cmd"] = ffmpeg_cmd
     try:
         async with httpx.AsyncClient(timeout=10, **worker_state.tls.httpx_kwargs()) as client:
             response = await client.patch(url, json=body)
@@ -291,6 +294,12 @@ async def _process(job: Job) -> None:
         worker_state.current_cmd = ' '.join(cmd)
         print(f"[worker] record {job.record_id} encoder={encoder!r} → {worker_state.current_cmd}")
 
+        # Store cmd before launching so it's captured even if subprocess creation fails
+        record = get_file_record(db, job.record_id)
+        if record:
+            record.ffmpeg_cmd = worker_state.current_cmd
+            db.commit()
+
         started_at = _utcnow()
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -359,6 +368,10 @@ async def _process(job: Job) -> None:
                     encoder=encoder,
                     avg_fps=avg_fps, avg_speed=avg_speed,
                 )
+                record = get_file_record(db, job.record_id)
+                if record:
+                    record.ffmpeg_stderr = stderr_output[-4096:] if stderr_output else None
+                    db.commit()
                 print(f"[worker] record {job.record_id} error (exit {proc.returncode}):")
                 for line in stderr_output.splitlines():
                     print(f"[ffmpeg]   {line}")
@@ -367,6 +380,7 @@ async def _process(job: Job) -> None:
                     pid=proc.pid, started_at=started_at, finished_at=finished_at,
                     encoder=encoder,
                     avg_fps=avg_fps, avg_speed=avg_speed,
+                    ffmpeg_cmd=worker_state.current_cmd,
                 )
             return
 
@@ -446,7 +460,10 @@ async def _process(job: Job) -> None:
             update_status(db, job.record_id, FileStatus.ERROR)
         except Exception:
             pass
-        await _report_result_to_master(job.record_id, FileStatus.ERROR, finished_at=finished_at)
+        await _report_result_to_master(
+            job.record_id, FileStatus.ERROR, finished_at=finished_at,
+            ffmpeg_cmd=worker_state.current_cmd or None,
+        )
     finally:
         db.close()
 

@@ -11,6 +11,7 @@ Master REST API.
   GET    /files[?status=]      — list records, filterable by status
   GET    /files/{id}           — get a single record
   DELETE /files/{id}           — delete a record (cascades to worker)
+  POST   /files/bulk-delete   — delete many records in one shot {ids:[...]} (cascades to workers)
   POST   /scan/start           — start background directory scan
   POST   /scan/stop            — cancel running scan
   GET    /scan/status          — scan progress
@@ -446,6 +447,7 @@ class FileResultUpdate(BaseModel):
     height: int | None = None
     bitrate: int | None = None
     duration: float | None = None
+    ffmpeg_cmd: str | None = None
 
 
 class ScanStatus(BaseModel):
@@ -593,6 +595,7 @@ def update_file_result(record_id: int, body: FileResultUpdate, db: Session = Dep
         height=body.height,
         bitrate=body.bitrate,
         duration=body.duration,
+        ffmpeg_cmd=body.ffmpeg_cmd,
     )
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
@@ -719,12 +722,14 @@ def get_master_stats(db: Session = Depends(get_db)):
         .scalar() or 0
     )
     overall = crud.get_stats(db).get("overall", {})
+    from shared.version import VERSION
     return {
         "scanning_queue": scanning_queue,
         "probe_rate_per_s": _probe_rate_per_s(),
         "scan_rate_per_s": _scan.scan_rate(),
         "avg_conversion_s": overall.get("avg_duration_seconds"),
         "avg_fps": overall.get("avg_fps"),
+        "version": VERSION,
     }
 
 
@@ -795,6 +800,33 @@ async def delete_file(record_id: int, db: Session = Depends(get_db)):
             except Exception:
                 pass
     crud.delete_file_record(db, record_id)
+
+
+class BulkDeleteRequest(BaseModel):
+    ids: list[int]
+
+
+@app.post("/files/bulk-delete", status_code=200)
+async def bulk_delete_files(body: BulkDeleteRequest, db: Session = Depends(get_db)):
+    records = crud.delete_file_records_bulk(db, body.ids)
+    # Group by worker and fan out deletions in parallel
+    by_worker: dict[str, list[int]] = {}
+    for rec in records:
+        if rec.worker_id:
+            by_worker.setdefault(rec.worker_id, []).append(rec.id)
+    if by_worker:
+        from shared.tls import scheme as _scheme
+        async with httpx.AsyncClient(timeout=10, **_config.tls.httpx_kwargs()) as client:
+            tasks = []
+            for worker_cfg_id, rec_ids in by_worker.items():
+                worker = registry.get_by_config_id(worker_cfg_id)
+                if not worker:
+                    continue
+                base = f"{_scheme(_config.tls)}://{worker.host}:{worker.api_port}"
+                tasks.extend(client.delete(f"{base}/files/{rid}") for rid in rec_ids)
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+    return {"deleted": len(records)}
 
 
 # ---------------------------------------------------------------------------
