@@ -1198,7 +1198,7 @@ function renderWorkerCard(s) {
     <div class="worker-header">
       <div class="worker-header-info">
         <div class="worker-name">${esc(s.hostname)}</div>
-        <div class="worker-meta">${esc(s.config_id)} · ${esc(s.url)}</div>
+        <div class="worker-meta">${esc(s.config_id)} · ${esc(s.url)} · ${esc(s.version || '?')}</div>
       </div>
       ${badge(statusStr)}
     </div>
@@ -1478,6 +1478,7 @@ function renderScan() {
   const found = scan.found || 0;
   const scanPct = total > 0 ? Math.round(scanned / total * 100) : 0;
 
+  const masterVersion = meta.version || '?';
   const avgConvS = meta.avg_conversion_s;
   const avgConvStr = avgConvS != null ? fmtDuration(avgConvS) : '—';
   const probeRate = meta.probe_rate_per_s;
@@ -1495,6 +1496,7 @@ function renderScan() {
 
   el.innerHTML = `
     <div style="max-width:720px">
+      <div style="font-size:11px;color:var(--text-faint);font-family:'IBM Plex Mono',monospace;margin-bottom:12px">master · ${esc(masterVersion)}</div>
       <div class="stats-grid" style="margin-bottom:20px;grid-template-columns:repeat(4,1fr)">
         <div class="stat-card">
           <div class="stat-label">Avg conversion</div>
@@ -2130,6 +2132,12 @@ function _modalCols(status) {
       key: 'finished_at', label: 'Finished',
       td: (f) => cell(fmtDate(f.finished_at)),
     },
+    cmd: {
+      key: 'cmd', label: '',
+      td: (f) => f.ffmpeg_cmd
+        ? `<td style="padding:7px 6px 7px 0;white-space:nowrap"><button class="btn btn-sm" title="${esc(f.ffmpeg_cmd)}" onclick="copyCmd(${f.id},event)" style="font-size:10px;padding:2px 7px">CMD</button></td>`
+        : `<td style="padding:7px 6px 7px 0"></td>`,
+    },
   };
   switch (status) {
     case 'scanning':   return [cols.path, cols.size, cols.added];
@@ -2138,7 +2146,7 @@ function _modalCols(status) {
     case 'processing': return [cols.path, cols.worker, cols.resolution, cols.size, cols.added];
     case 'complete':   return [cols.path, cols.worker, cols.resolution, cols.original, cols.saved, cols.added, cols.finished];
     case 'cancelled':  return [cols.path, cols.worker, cols.resolution, cols.original, cols.saved, cols.added, cols.finished, cols.cancelReason];
-    case 'error':      return [cols.path, cols.worker, cols.resolution, cols.size, cols.added, cols.finished];
+    case 'error':      return [cols.path, cols.worker, cols.resolution, cols.size, cols.added, cols.finished, cols.cmd];
     case 'discarded':  return [cols.path, cols.size, cols.added, cols.finished, cols.discardReason];
     case 'duplicate':  return [cols.path, cols.size, cols.added];
     default:           return [cols.path, cols.status, cols.worker, cols.resolution, cols.size, cols.added, cols.finished];
@@ -2464,6 +2472,16 @@ async function modalBulkQueue(workerConfigId) {
     await fetchAll();
     renderStatusModal();
   } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+function copyCmd(fileId, event) {
+  event.stopPropagation();
+  const f = ((ST.data && ST.data.files) || []).find(f => f.id === fileId);
+  if (!f || !f.ffmpeg_cmd) return;
+  navigator.clipboard.writeText(f.ffmpeg_cmd).then(
+    () => toast('Command copied to clipboard', 'success'),
+    () => toast(f.ffmpeg_cmd, 'info'),
+  );
 }
 
 async function modalBulkForceEncode(skipSizeCheck) {

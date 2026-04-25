@@ -5,7 +5,7 @@ session factories, and FastAPI dependency callables.
 
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
@@ -24,11 +24,24 @@ _MIGRATE_COLS = [
     ("bitrate", "INTEGER"),
     ("duration", "REAL"),
     ("force_encode", "INTEGER NOT NULL DEFAULT 0"),
+    ("ffmpeg_cmd", "VARCHAR(2048)"),
+    ("ffmpeg_stderr", "VARCHAR(4096)"),
 ]
 
 
 def make_engine(url: str):
-    return create_engine(url, connect_args={"check_same_thread": False}, poolclass=NullPool)
+    engine = create_engine(
+        url,
+        connect_args={"check_same_thread": False, "timeout": 15},
+        poolclass=NullPool,
+    )
+
+    @event.listens_for(engine, "connect")
+    def _set_wal(conn, _):
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+
+    return engine
 
 
 def make_session_factory(engine) -> sessionmaker:

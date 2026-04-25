@@ -347,39 +347,14 @@ async def data_files_delete(request: Request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     body = await request.json()
     ids: list[int] = body.get("ids", [])
-    async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
+    if not ids:
+        return JSONResponse({"ok": True})
+    async with httpx.AsyncClient(timeout=60, **_httpx_kw()) as client:
         try:
-            workers_r = await client.get(f"{_master_url()}/workers")
-            workers_map = {s["config_id"]: s for s in workers_r.json()}
-        except Exception:
-            workers_map = {}
-
-        file_results = await asyncio.gather(
-            *[client.get(f"{_master_url()}/files/{i}") for i in ids],
-            return_exceptions=True,
-        )
-        await asyncio.gather(
-            *[client.delete(f"{_master_url()}/files/{i}") for i in ids],
-            return_exceptions=True,
-        )
-
-        worker_deletes = []
-        for result in file_results:
-            if isinstance(result, Exception):
-                continue
-            try:
-                rec = result.json()
-                worker_cfg = rec.get("worker_id")
-                if worker_cfg and worker_cfg in workers_map:
-                    s = workers_map[worker_cfg]
-                    worker_deletes.append(
-                        client.delete(f"{_worker_url(s['host'], s['api_port'])}/files/{rec['id']}")
-                    )
-            except Exception:
-                pass
-        if worker_deletes:
-            await asyncio.gather(*worker_deletes, return_exceptions=True)
-
+            r = await client.post(f"{_master_url()}/files/bulk-delete", json={"ids": ids})
+            r.raise_for_status()
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
     return JSONResponse({"ok": True})
 
 
