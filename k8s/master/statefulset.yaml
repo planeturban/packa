@@ -15,10 +15,20 @@ spec:
         app: packa-master
     spec:
       serviceAccountName: packa-master
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: master
-          image: ghcr.io/planeturban/packa:v0.15.12
+          image: ghcr.io/planeturban/packa:v0.17.0
           workingDir: /data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 9000
           volumeMounts:
@@ -47,6 +57,10 @@ spec:
 
         - name: token-exporter
           image: curlimages/curl:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           command: ["/bin/sh", "-c"]
           args:
             - |
