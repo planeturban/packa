@@ -33,6 +33,7 @@ import uvicorn
 
 from shared.config import Config, _env, _env_int
 from shared.log import UVICORN_LOG_CONFIG
+from shared.tls import TlsConfig
 
 from . import config_store
 from .api import app, set_config, set_config_layers
