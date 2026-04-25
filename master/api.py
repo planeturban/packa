@@ -181,81 +181,101 @@ async def _hevc_check_loop() -> None:
     global _hevc_cursor
     await asyncio.sleep(15)
     while True:
-        db = SessionLocal()
         try:
-            records = (
-                db.query(FileRecord)
-                .filter(
-                    FileRecord.status == FileStatus.SCANNING,
-                    FileRecord.id > _hevc_cursor,
-                )
-                .order_by(FileRecord.id)
-                .limit(_config.scan.probe_batch_size)
-                .all()
-            )
-            if not records:
-                _hevc_cursor = 0
-                await asyncio.sleep(_config.scan.probe_interval)
-                continue
-            loop = asyncio.get_event_loop()
-            probes, checksums = await asyncio.gather(
-                asyncio.gather(*[_probe_file(r.file_path) for r in records]),
-                asyncio.gather(*[
-                    loop.run_in_executor(
-                        None, compute_checksum, r.file_path, r.file_size or 0,
-                        _config.scan.checksum_bytes,
+            db = SessionLocal()
+            try:
+                records = (
+                    db.query(FileRecord)
+                    .filter(
+                        FileRecord.status == FileStatus.SCANNING,
+                        FileRecord.id > _hevc_cursor,
                     )
-                    for r in records
-                ]),
-            )
-            for record, (codec, width, height, bitrate, duration, discard_reason), checksum in zip(records, probes, checksums):
-                record.width = width
-                record.height = height
-                record.bitrate = bitrate
-                record.duration = duration
-                record.checksum = checksum
-                existing = crud.get_record_by_checksum(db, checksum)
-                if existing:
-                    record.status = FileStatus.DUPLICATE
-                    record.duplicate_of_id = existing.id
-                    record.finished_at = datetime.now(timezone.utc)
-                    print(f"[master] record {record.id} duplicate of {existing.id} ({record.file_name!r})")
-                elif discard_reason:
-                    record.status = FileStatus.DISCARDED
-                    record.discard_reason = discard_reason
-                    record.finished_at = datetime.now(timezone.utc)
-                    print(f"[master] record {record.id} discarded — {discard_reason} ({record.file_name!r})")
-                elif codec == "hevc":
-                    record.status = FileStatus.DISCARDED
-                    record.discard_reason = "hevc"
-                    record.finished_at = datetime.now(timezone.utc)
-                    print(f"[master] record {record.id} discarded — already HEVC ({record.file_name!r})")
-                else:
-                    record.status = FileStatus.PENDING
-            db.commit()
-            _hevc_cursor = records[-1].id
-            _record_probes(len(records))
-        finally:
-            db.close()
-        await asyncio.sleep(0)
+                    .order_by(FileRecord.id)
+                    .limit(_config.scan.probe_batch_size)
+                    .all()
+                )
+                if not records:
+                    _hevc_cursor = 0
+                    await asyncio.sleep(_config.scan.probe_interval)
+                    continue
+                loop = asyncio.get_event_loop()
+                probes, checksums = await asyncio.gather(
+                    asyncio.gather(*[_probe_file(r.file_path) for r in records], return_exceptions=True),
+                    asyncio.gather(*[
+                        loop.run_in_executor(
+                            None, compute_checksum, r.file_path, r.file_size or 0,
+                            _config.scan.checksum_bytes,
+                        )
+                        for r in records
+                    ], return_exceptions=True),
+                )
+                for record, probe_result, checksum_result in zip(records, probes, checksums):
+                    if isinstance(probe_result, Exception):
+                        print(f"[probe] record {record.id} probe error: {probe_result}")
+                        continue
+                    if isinstance(checksum_result, Exception):
+                        print(f"[probe] record {record.id} checksum error: {checksum_result}")
+                        continue
+                    codec, width, height, bitrate, duration, discard_reason = probe_result
+                    checksum = checksum_result
+                    record.width = width
+                    record.height = height
+                    record.bitrate = bitrate
+                    record.duration = duration
+                    record.checksum = checksum
+                    existing = crud.get_record_by_checksum(db, checksum)
+                    if existing:
+                        record.status = FileStatus.DUPLICATE
+                        record.duplicate_of_id = existing.id
+                        record.finished_at = datetime.now(timezone.utc)
+                        print(f"[master] record {record.id} duplicate of {existing.id} ({record.file_name!r})")
+                    elif discard_reason:
+                        record.status = FileStatus.DISCARDED
+                        record.discard_reason = discard_reason
+                        record.finished_at = datetime.now(timezone.utc)
+                        print(f"[master] record {record.id} discarded — {discard_reason} ({record.file_name!r})")
+                    elif codec == "hevc":
+                        record.status = FileStatus.DISCARDED
+                        record.discard_reason = "hevc"
+                        record.finished_at = datetime.now(timezone.utc)
+                        print(f"[master] record {record.id} discarded — already HEVC ({record.file_name!r})")
+                    else:
+                        record.status = FileStatus.PENDING
+                db.commit()
+                _hevc_cursor = records[-1].id
+                _record_probes(len(records))
+            finally:
+                db.close()
+            await asyncio.sleep(0)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[probe] loop error: {exc} — retrying in 5s")
+            await asyncio.sleep(5)
 
 
 async def _periodic_scan_loop() -> None:
     global _last_periodic_start
     while True:
-        await asyncio.sleep(5)
-        if not _config.path_prefix or not _config.scan.periodic_enabled or _scan.running:
-            continue
-        interval = max(10, _config.scan.periodic_interval)
-        now = datetime.now(timezone.utc)
-        if _last_periodic_start is None or (now - _last_periodic_start).total_seconds() >= interval:
-            _last_periodic_start = now
-            extensions = {e if e.startswith(".") else f".{e}" for e in _config.scan.extensions}
-            _scan._task = asyncio.create_task(_scan_task(
-                _config.path_prefix, extensions,
-                _config.scan.min_size, _config.scan.max_size,
-            ))
-            print(f"[master] periodic scan started (interval={interval}s)")
+        try:
+            await asyncio.sleep(5)
+            if not _config.path_prefix or not _config.scan.periodic_enabled or _scan.running:
+                continue
+            interval = max(10, _config.scan.periodic_interval)
+            now = datetime.now(timezone.utc)
+            if _last_periodic_start is None or (now - _last_periodic_start).total_seconds() >= interval:
+                _last_periodic_start = now
+                extensions = {e if e.startswith(".") else f".{e}" for e in _config.scan.extensions}
+                _scan._task = asyncio.create_task(_scan_task(
+                    _config.path_prefix, extensions,
+                    _config.scan.min_size, _config.scan.max_size,
+                ))
+                print(f"[master] periodic scan started (interval={interval}s)")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[scan] periodic loop error: {exc} — retrying in 5s")
+            await asyncio.sleep(5)
 
 
 @asynccontextmanager
