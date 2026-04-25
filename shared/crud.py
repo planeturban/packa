@@ -67,6 +67,17 @@ def delete_file_record(db: Session, record_id: int) -> bool:
     return True
 
 
+def delete_file_records_bulk(db: Session, ids: list[int]) -> list[FileRecord]:
+    """Delete multiple records in one query. Returns the records as they were before deletion."""
+    if not ids:
+        return []
+    records = db.query(FileRecord).filter(FileRecord.id.in_(ids)).all()
+    for r in records:
+        db.delete(r)
+    db.commit()
+    return records
+
+
 def update_status(db: Session, record_id: int, status: FileStatus) -> FileRecord | None:
     record = get_file_record(db, record_id)
     if record:
@@ -312,6 +323,7 @@ def update_conversion_result(
     height: int | None = None,
     bitrate: int | None = None,
     duration: float | None = None,
+    ffmpeg_cmd: str | None = None,
 ) -> FileRecord | None:
     record = get_file_record(db, record_id)
     if record:
@@ -336,6 +348,8 @@ def update_conversion_result(
             record.bitrate = bitrate
         if duration is not None:
             record.duration = duration
+        if ffmpeg_cmd is not None:
+            record.ffmpeg_cmd = ffmpeg_cmd
         db.commit()
         db.refresh(record)
     return record

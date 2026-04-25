@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from shared import crud
 from shared.config import Config
 from shared.db import migrate
+from shared.version import VERSION as _VERSION
 from shared.models import Base, FileStatus
 from shared.schemas import FileRecordCreate, FileRecordOut, StatusUpdate
 from shared.tls import scheme
@@ -250,6 +251,7 @@ class WorkerStatus(BaseModel):
     replace_original: bool
     tls_enabled: bool = False
     petname: str = ""
+    version: str = "dev"
 
 
 class EncoderUpdate(BaseModel):
@@ -282,6 +284,7 @@ def get_status():
         replace_original=worker_state.replace_original,
         tls_enabled=_config.tls.enabled,
         petname=worker_state.petname,
+        version=_VERSION,
         progress=ProgressOut(
             percent=p.percent,
             speed=p.speed,
