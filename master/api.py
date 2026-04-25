@@ -11,6 +11,7 @@ Master REST API.
   GET    /files[?status=]      — list records, filterable by status
   GET    /files/{id}           — get a single record
   DELETE /files/{id}           — delete a record (cascades to worker)
+  POST   /files/bulk-delete   — delete many records in one shot {ids:[...]} (cascades to workers)
   POST   /scan/start           — start background directory scan
   POST   /scan/stop            — cancel running scan
   GET    /scan/status          — scan progress
@@ -797,6 +798,33 @@ async def delete_file(record_id: int, db: Session = Depends(get_db)):
             except Exception:
                 pass
     crud.delete_file_record(db, record_id)
+
+
+class BulkDeleteRequest(BaseModel):
+    ids: list[int]
+
+
+@app.post("/files/bulk-delete", status_code=200)
+async def bulk_delete_files(body: BulkDeleteRequest, db: Session = Depends(get_db)):
+    records = crud.delete_file_records_bulk(db, body.ids)
+    # Group by worker and fan out deletions in parallel
+    by_worker: dict[str, list[int]] = {}
+    for rec in records:
+        if rec.worker_id:
+            by_worker.setdefault(rec.worker_id, []).append(rec.id)
+    if by_worker:
+        from shared.tls import scheme as _scheme
+        async with httpx.AsyncClient(timeout=10, **_config.tls.httpx_kwargs()) as client:
+            tasks = []
+            for worker_cfg_id, rec_ids in by_worker.items():
+                worker = registry.get_by_config_id(worker_cfg_id)
+                if not worker:
+                    continue
+                base = f"{_scheme(_config.tls)}://{worker.host}:{worker.api_port}"
+                tasks.extend(client.delete(f"{base}/files/{rid}") for rid in rec_ids)
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+    return {"deleted": len(records)}
 
 
 # ---------------------------------------------------------------------------
