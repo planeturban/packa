@@ -5,6 +5,8 @@ metadata:
   namespace: packa
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: packa-web
@@ -53,7 +55,7 @@ spec:
               memory: 32Mi
       containers:
         - name: web
-          image: ghcr.io/planeturban/packa:v0.18.2
+          image: ghcr.io/planeturban/packa:v0.18.3
           workingDir: /data
           securityContext:
             allowPrivilegeEscalation: false
