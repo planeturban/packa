@@ -23,7 +23,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: master
-          image: ghcr.io/planeturban/packa:v0.17.0
+          image: ghcr.io/planeturban/packa:v0.17.2
           workingDir: /data
           securityContext:
             allowPrivilegeEscalation: false
