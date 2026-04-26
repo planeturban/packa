@@ -400,6 +400,16 @@ function renderOverview() {
         <div class="stat-value">${etaSecs != null ? fmtDuration(etaSecs) : '—'}</div>
         <div class="stat-sub">${etaSecs != null ? `${remaining.toLocaleString()} files · ${availableWorkers.length} worker${availableWorkers.length !== 1 ? 's' : ''}` : 'no estimate available'}</div>
       </div>
+      <div class="stat-card${stats.projected_low_confidence ? ' stat-card-dim' : ''}">
+        <div class="stat-label">Projected Savings</div>
+        <div class="stat-value${stats.projected_low_confidence ? ' stat-dim' : ' stat-accent'}">${stats.projected_files > 0 ? fmtBytes(stats.projected_saved_bytes) : '—'}</div>
+        <div class="stat-sub">${stats.projected_files > 0 ? `${stats.projected_files.toLocaleString()} pending files${stats.projected_low_confidence ? ' · low confidence' : ''}` : 'no estimate available'}</div>
+      </div>
+      <div class="stat-card${stats.projected_low_confidence ? ' stat-card-dim' : ''}">
+        <div class="stat-label">Total Savings Est.</div>
+        <div class="stat-value${stats.projected_low_confidence ? ' stat-dim' : ' stat-accent'}">${fmtBytes((stats.saved_bytes || 0) + (stats.projected_saved_bytes || 0))}</div>
+        <div class="stat-sub">${stats.projected_files > 0 ? `saved + projected${stats.projected_low_confidence ? ' · low confidence' : ''}` : 'saved so far'}</div>
+      </div>
     </div>
 
     <div class="status-grid">
