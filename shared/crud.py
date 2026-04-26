@@ -116,6 +116,20 @@ def get_records_page(
     return items, total
 
 
+def get_record_ids(
+    db: Session,
+    status: FileStatus | None = None,
+    search: str | None = None,
+) -> list[int]:
+    """Return all matching record IDs (no pagination)."""
+    q = db.query(FileRecord.id)
+    if status is not None:
+        q = q.filter(FileRecord.status == status)
+    if search:
+        q = q.filter(FileRecord.file_name.ilike(f"%{search}%"))
+    return [row[0] for row in q.all()]
+
+
 def delete_file_record(db: Session, record_id: int) -> bool:
     record = get_file_record(db, record_id)
     if not record:
@@ -260,6 +274,7 @@ def get_stats(db: Session) -> dict:
                             "total_saved_bytes": 0, "bitrate_samples": []}
 
     by_resolution: dict[str, dict] = {}
+    tier_complete: dict[str, dict] = {}  # for projected savings ratio
     for h, br, dur, fsz, osz, st in db.query(
         FileRecord.height, FileRecord.bitrate, FileRecord.duration,
         FileRecord.file_size, FileRecord.output_size, FileRecord.status,
@@ -272,10 +287,38 @@ def get_stats(db: Session) -> dict:
         if br:  t["bitrate_samples"].append(br)
         if st == FileStatus.COMPLETE and fsz and osz:
             t["total_saved_bytes"] += max(0, fsz - osz)
+            tc = tier_complete.setdefault(tier, {"total_in": 0, "total_out": 0, "n": 0})
+            tc["total_in"] += fsz
+            tc["total_out"] += osz
+            tc["n"] += 1
     for t in by_resolution.values():
         samples = t.pop("bitrate_samples")
         t["avg_bitrate_bps"] = round(sum(samples) / len(samples), 0) if samples else None
         t["total_duration_seconds"] = round(t["total_duration_seconds"], 0)
+
+    # Projected savings: apply per-tier ratio to pending/assigned files
+    proj_saved = 0
+    proj_files = 0
+    proj_low_conf = False
+    for h, fsz, st in db.query(
+        FileRecord.height, FileRecord.file_size, FileRecord.status,
+    ).filter(
+        FileRecord.status.in_([FileStatus.PENDING, FileStatus.ASSIGNED]),
+        FileRecord.height.isnot(None),
+        FileRecord.file_size.isnot(None),
+    ).all():
+        tier = _res_tier(h)
+        tc = tier_complete.get(tier)
+        if not tc or tc["total_in"] == 0:
+            continue
+        ratio = tc["total_out"] / tc["total_in"]
+        proj_saved += fsz * (1 - ratio)
+        proj_files += 1
+        if tc["n"] < 10:
+            proj_low_conf = True
+    overall["projected_saved_bytes"] = round(proj_saved)
+    overall["projected_files"] = proj_files
+    overall["projected_low_confidence"] = proj_low_conf
 
     by_bitrate_tier: dict[str, dict] = {}
     for br, fsz, osz, st in db.query(
