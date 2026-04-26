@@ -5,8 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Packa</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f59e0b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z'/%3E%3C/svg%3E">
-  <script>(function(){var t=localStorage.getItem('packa-theme')||'system';var r=t==='system'?(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t;document.documentElement.setAttribute('data-theme',r);})();</script>
-  <link rel="stylesheet" href="/static/style.css?v={{ commit }}">
+  <script>(function(){var t=localStorage.getItem('packa-theme')||'system';var r=t==='system'?(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t;document.documentElement.setAttribute('data-theme',r);window._DEV=localStorage.getItem('packa-dev')==='1';})();</script>
+  <script>document.write('<link rel="stylesheet" href="'+(window._DEV?'https://raw.githubusercontent.com/planeturban/packa/main/web/static/style.css?nc='+Date.now():'/static/style.css?v={{ commit }}')+'">');
+</script>
 </head>
 <body>
 {% block content %}{% endblock %}
