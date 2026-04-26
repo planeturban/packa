@@ -181,6 +181,8 @@ def get_stats(db: Session) -> dict:
     _avg_dur = avg_dur or 0
     _mb_per_s = ((total_in / jobs) / 1_048_576 / _avg_dur) if (jobs and _avg_dur) else None
 
+    current_library_bytes = db.query(func.sum(FileRecord.file_size)).scalar() or 0
+
     # Library-wide totals — include COMPLETE + DISCARDED (both have been ffprobed)
     _lf = [FileRecord.status.in_([FileStatus.COMPLETE, FileStatus.DISCARDED])]
     lib_total_duration, lib_avg_bitrate = db.query(
@@ -327,6 +329,7 @@ def get_stats(db: Session) -> dict:
     overall["projected_saved_bytes"] = round(proj_saved)
     overall["projected_files"] = proj_files
     overall["projected_low_confidence"] = proj_low_conf
+    overall["current_library_bytes"] = current_library_bytes
 
     by_bitrate_tier: dict[str, dict] = {}
     for br, fsz, osz, st in db.query(

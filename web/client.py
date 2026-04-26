@@ -68,6 +68,7 @@ async def fetch_dashboard(master_url: str, httpx_kwargs: dict | None = None) -> 
             "projected_saved_bytes": overall.get("projected_saved_bytes", 0),
             "projected_files": overall.get("projected_files", 0),
             "projected_low_confidence": overall.get("projected_low_confidence", False),
+            "current_library_bytes": overall.get("current_library_bytes", 0),
         }
 
         status_results, config_results, worker_stat_results = await asyncio.gather(
