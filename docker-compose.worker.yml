@@ -1,8 +1,9 @@
 services:
   worker:
-    image: ghcr.io/planeturban/packa:v0.16.1
+    image: ghcr.io/planeturban/packa:v0.17.2
     environment:
       PACKA_ROLE: worker
+      PACKA_CONFIG: /etc/packa/packa.toml
       PACKA_WORKER_ADVERTISE_HOST: "172.16.1.192"
       PACKA_WORKER_BOOTSTRAP_TOKEN: "${PACKA_WORKER_BOOTSTRAP_TOKEN}"
       PUID: "${PUID:-1000}"
@@ -10,7 +11,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./packa.worker.toml:/data/packa.toml:ro
+      - ./packa.worker.toml:/etc/packa/packa.toml:ro
       - worker-mac-data:/data
       - worker-mac-output:/output
       - /Volumes/tv-archive:/mnt:ro
