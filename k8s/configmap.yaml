@@ -36,8 +36,9 @@ data:
     extra_args = ""
 
     [worker.worker]
-    batch_size    = 1
-    poll_interval = 5
+    batch_size        = 1
+    poll_interval     = 5
+    cancel_thresholds = [[20.0, 1.15], [40.0, 1.05], [60.0, 1.0]]
 
     [web]
     bind        = "0.0.0.0"
