@@ -53,8 +53,8 @@ spec:
               memory: 32Mi
       containers:
         - name: web
-          image: ghcr.io/planeturban/packa:v0.17.0
-          workingDir: /app
+          image: ghcr.io/planeturban/packa:v0.17.2
+          workingDir: /data
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -80,6 +80,8 @@ spec:
               value: web
             - name: PACKA_CONFIG
               value: /etc/packa/packa.toml
+            - name: PYTHONPATH
+              value: /app
             - name: PACKA_WEB_BOOTSTRAP_TOKEN
               valueFrom:
                 secretKeyRef:
