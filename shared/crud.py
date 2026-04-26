@@ -116,6 +116,20 @@ def get_records_page(
     return items, total
 
 
+def get_record_ids(
+    db: Session,
+    status: FileStatus | None = None,
+    search: str | None = None,
+) -> list[int]:
+    """Return all matching record IDs (no pagination)."""
+    q = db.query(FileRecord.id)
+    if status is not None:
+        q = q.filter(FileRecord.status == status)
+    if search:
+        q = q.filter(FileRecord.file_name.ilike(f"%{search}%"))
+    return [row[0] for row in q.all()]
+
+
 def delete_file_record(db: Session, record_id: int) -> bool:
     record = get_file_record(db, record_id)
     if not record:
