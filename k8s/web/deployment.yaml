@@ -113,6 +113,7 @@ spec:
               - key: packa.toml
                 path: packa.toml
         - name: data
-          emptyDir: {}   # web.db only; replace with PVC if you want sessions to survive pod restarts
+          persistentVolumeClaim:
+            claimName: data-web
         - name: bootstrap
           emptyDir: {}   # fresh bootstrap token written by init container, read at web startup
