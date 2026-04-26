@@ -1,6 +1,6 @@
 services:
   worker:
-    image: ghcr.io/planeturban/packa:v0.17.2
+    image: ghcr.io/planeturban/packa:v0.17.7
     environment:
       PACKA_ROLE: worker
       PACKA_CONFIG: /etc/packa/packa.toml
