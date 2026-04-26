@@ -21,6 +21,8 @@ COPY shared/       shared/
 COPY entrypoint.sh entrypoint.sh
 RUN chmod +x entrypoint.sh
 
+RUN mkdir -p /etc/packa /output
+
 VOLUME ["/data"]
 
 ENV PACKA_CONFIG=/data/packa.toml
