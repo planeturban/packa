@@ -64,19 +64,26 @@ def _bootstrap_tls(config: WebConfig) -> None:
         return
 
     # Try HTTPS first (verify=False — TOFU on first connection), then fall back to HTTP.
+    # Retry up to 5 times to handle transient startup timing issues.
     r = None
-    for scheme, verify in (("https", False), ("http", True)):
-        try:
-            r = httpx.post(
-                f"{scheme}://{config.master_host}:{config.master_port}/bootstrap",
-                json={"token": config.bootstrap_token, "cn": "web"},
-                verify=verify,
-                timeout=10,
-            )
-            r.raise_for_status()
+    for attempt in range(5):
+        if attempt:
+            import time as _time
+            _time.sleep(3)
+        for scheme, verify in (("https", False), ("http", True)):
+            try:
+                r = httpx.post(
+                    f"{scheme}://{config.master_host}:{config.master_port}/bootstrap",
+                    json={"token": config.bootstrap_token, "cn": "web"},
+                    verify=verify,
+                    timeout=10,
+                )
+                r.raise_for_status()
+                break
+            except Exception:
+                r = None
+        if r is not None:
             break
-        except Exception:
-            r = None
     if r is None:
         print("[web] TLS bootstrap failed: could not reach master on https or http")
         return
