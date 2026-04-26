@@ -11,11 +11,13 @@ cd /data
 if [ "$(id -u)" = "0" ]; then
     PUID=${PUID:-1000}
     PGID=${PGID:-1000}
-    groupadd -f -g "${PGID}" packa
-    useradd -u "${PUID}" -g "${PGID}" -s /bin/sh -M -N packa 2>/dev/null || true
-    chown packa:packa /data 2>/dev/null || true
-    [ -d /output ] && chown packa:packa /output 2>/dev/null || true
-    exec gosu packa "$0"
+    if [ "${PUID}" != "0" ]; then
+        groupadd -f -g "${PGID}" packa
+        useradd -u "${PUID}" -g "${PGID}" -s /bin/sh -M -N packa 2>/dev/null || true
+        chown packa:packa /data 2>/dev/null || true
+        [ -d /output ] && chown packa:packa /output 2>/dev/null || true
+        exec gosu packa "$0"
+    fi
 fi
 
 case "$ROLE" in
