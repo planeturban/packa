@@ -782,6 +782,15 @@ def file_counts(db: Session = Depends(get_db)):
     return crud.get_status_counts(db)
 
 
+@app.get("/files/ids")
+def list_file_ids(
+    status: FileStatus | None = None,
+    search: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    return {"ids": crud.get_record_ids(db, status=status, search=search)}
+
+
 @app.get("/files")
 def list_files(
     status: FileStatus | None = None,

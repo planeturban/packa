@@ -353,6 +353,28 @@ async def data_files(
             return JSONResponse({"error": str(exc)}, status_code=502)
 
 
+@app.get("/data/files/ids")
+async def data_file_ids(
+    request: Request,
+    status: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    params: dict = {}
+    if status:
+        params["status"] = status
+    if search:
+        params["search"] = search
+    async with httpx.AsyncClient(timeout=30, **_httpx_kw()) as client:
+        try:
+            r = await client.get(f"{_master_url()}/files/ids", params=params)
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
 @app.post("/data/files/delete")
 async def data_files_delete(request: Request):
     if not _logged_in(request):

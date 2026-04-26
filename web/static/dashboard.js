@@ -592,6 +592,7 @@ function renderFiles() {
       ${nSel > 0 ? `
       <div class="select-all-banner">
         ${nSel} file${nSel !== 1 ? 's' : ''} selected —
+        ${nSel < total ? `<a href="#" onclick="selectAllFilesAcrossPages(event)">Select all ${total}</a> — ` : ''}
         <a href="#" onclick="clearSelection()">Clear selection</a>
       </div>` : ''}
       <div class="table-wrap">
@@ -755,6 +756,18 @@ function toggleAllFiles(src) {
 function selectAllFilteredFiles(e) {
   e.preventDefault();
   (ST.filesResult.items || []).forEach(f => ST.fileSelected.add(f.id));
+  renderFiles();
+}
+
+async function selectAllFilesAcrossPages(e) {
+  e.preventDefault();
+  const params = new URLSearchParams();
+  if (ST.fileFilters.size === 1) params.set('status', [...ST.fileFilters][0]);
+  if (ST.fileSearch) params.set('search', ST.fileSearch);
+  const r = await fetch('/data/files/ids?' + params);
+  if (!r.ok) return;
+  const data = await r.json();
+  (data.ids || []).forEach(id => ST.fileSelected.add(id));
   renderFiles();
 }
 
@@ -2202,6 +2215,7 @@ function renderStatusModal() {
   const selectBanner = nSel > 0 ? `
     <div class="select-all-banner">
       ${nSel} file${nSel !== 1 ? 's' : ''} selected —
+      ${nSel < total ? `<a href="#" onclick="selectAllModalFilesAcrossPages(event)">Select all ${total}</a> — ` : ''}
       <a href="#" onclick="ST.modalSelected.clear();renderStatusModal()">Clear selection</a>
     </div>` : '';
 
@@ -2310,6 +2324,17 @@ function toggleAllModal(src) {
 function selectAllModalFiles(e) {
   e.preventDefault();
   (ST.modalResult.items || []).forEach(f => ST.modalSelected.add(f.id));
+  renderStatusModal();
+}
+
+async function selectAllModalFilesAcrossPages(e) {
+  e.preventDefault();
+  const params = new URLSearchParams();
+  if (ST.modalStatus && ST.modalStatus !== 'all') params.set('status', ST.modalStatus);
+  const r = await fetch('/data/files/ids?' + params);
+  if (!r.ok) return;
+  const data = await r.json();
+  (data.ids || []).forEach(id => ST.modalSelected.add(id));
   renderStatusModal();
 }
 
