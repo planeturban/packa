@@ -148,6 +148,9 @@ body {
   overflow-x: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
+  position: sticky;
+  top: 52px;
+  z-index: 99;
 }
 .tabs-bar::-webkit-scrollbar { display: none; }
 .tab {

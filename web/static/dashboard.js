@@ -1952,6 +1952,18 @@ function renderSettings() {
           </div>
         </div>
       </div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-title">Developer</div>
+        <div class="settings-row">
+          <div class="settings-label">
+            <strong>Dev mode</strong>
+            <p>Load CSS and JS directly from GitHub main — changes apply immediately without a build</p>
+          </div>
+          <button class="btn btn-sm ${window._DEV ? 'btn-danger' : 'btn-primary'}" onclick="toggleDevMode()">
+            ${window._DEV ? 'Disable' : 'Enable'}
+          </button>
+        </div>
+      </div>
       <div class="card">
         <div class="card-title">Connection</div>
         <div class="settings-row">
@@ -1983,6 +1995,15 @@ function renderSettings() {
 
     </div>
   `;
+}
+
+function toggleDevMode() {
+  if (window._DEV) {
+    localStorage.removeItem('packa-dev');
+  } else {
+    localStorage.setItem('packa-dev', '1');
+  }
+  location.reload();
 }
 
 async function saveAuth() {
