@@ -40,7 +40,7 @@ from .database import engine, get_db
 from .poller import poller_loop
 from .state import FfmpegProgress, Job, worker_state
 from .store import get_setting, set_setting
-from .worker import recover, worker_loop
+from .worker import recover, sync_loop, worker_loop
 
 Base.metadata.create_all(bind=engine)
 migrate(engine)
@@ -198,6 +198,7 @@ async def lifespan(app: FastAPI):
     if worker_state.output_dir:
         recover()
         tasks.append(asyncio.create_task(worker_loop()))
+    tasks.append(asyncio.create_task(sync_loop()))
     tasks.append(asyncio.create_task(_register_and_poll()))
     yield
     for task in tasks:

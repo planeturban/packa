@@ -55,6 +55,7 @@ class FileRecord(Base):
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     bitrate: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration: Mapped[float | None] = mapped_column(Float, nullable=True)
+    master_synced: Mapped[bool] = mapped_column(Integer, nullable=False, default=1)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

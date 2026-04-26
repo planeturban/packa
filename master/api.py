@@ -209,6 +209,7 @@ async def _hevc_check_loop() -> None:
                         for r in records
                     ], return_exceptions=True),
                 )
+                batch_checksums: dict[str, int] = {}  # checksum → first record id in this batch
                 for record, probe_result, checksum_result in zip(records, probes, checksums):
                     if isinstance(probe_result, Exception):
                         print(f"[probe] record {record.id} probe error: {probe_result}")
@@ -224,6 +225,8 @@ async def _hevc_check_loop() -> None:
                     record.duration = duration
                     record.checksum = checksum
                     existing = crud.get_record_by_checksum(db, checksum)
+                    if not existing and checksum in batch_checksums:
+                        existing = db.get(FileRecord, batch_checksums[checksum])
                     if existing:
                         record.status = FileStatus.DUPLICATE
                         record.duplicate_of_id = existing.id
@@ -241,6 +244,8 @@ async def _hevc_check_loop() -> None:
                         print(f"[master] record {record.id} discarded — already HEVC ({record.file_name!r})")
                     else:
                         record.status = FileStatus.PENDING
+                        if checksum:
+                            batch_checksums.setdefault(checksum, record.id)
                 db.commit()
                 _hevc_cursor = records[-1].id
                 _record_probes(len(records))

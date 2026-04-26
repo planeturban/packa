@@ -436,6 +436,7 @@ def update_conversion_result(
     bitrate: int | None = None,
     duration: float | None = None,
     ffmpeg_cmd: str | None = None,
+    master_synced: bool = False,
 ) -> FileRecord | None:
     record = get_file_record(db, record_id)
     if record:
@@ -462,6 +463,7 @@ def update_conversion_result(
             record.duration = duration
         if ffmpeg_cmd is not None:
             record.ffmpeg_cmd = ffmpeg_cmd
+        record.master_synced = master_synced
         db.commit()
         db.refresh(record)
     return record
