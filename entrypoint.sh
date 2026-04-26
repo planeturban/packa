@@ -3,6 +3,7 @@ set -e
 
 ROLE=${PACKA_ROLE:-${1:-master}}
 CONFIG=${PACKA_CONFIG:-/data/packa.toml}
+export PYTHONPATH=/app
 cd /data
 
 # When running as root (standalone Docker), drop to PUID/PGID before starting.
