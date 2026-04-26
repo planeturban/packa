@@ -557,7 +557,7 @@ function renderFiles() {
     processing: 'Processing', complete: 'Done', error: 'Error',
     duplicate: 'Duplicate', discarded: 'Discarded', cancelled: 'Cancelled',
   };
-  const visibleChips = ['all','scanning','pending','processing','complete','error','duplicate','discarded','cancelled'];
+  const visibleChips = ['all','scanning','pending','assigned','processing','complete','error','duplicate','discarded','cancelled'];
 
   const paginationBar = totalPages > 1 ? `
     <div class="pagination-bar">

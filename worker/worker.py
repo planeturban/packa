@@ -567,6 +567,17 @@ def recover() -> None:
             db.commit()
             print(f"[worker] reset {len(interrupted)} interrupted record(s) to pending")
 
+        assigned = (
+            db.query(FileRecord)
+            .filter(FileRecord.status == FileStatus.ASSIGNED)
+            .all()
+        )
+        for record in assigned:
+            record.status = FileStatus.PENDING
+        if assigned:
+            db.commit()
+            print(f"[worker] reset {len(assigned)} assigned record(s) to pending")
+
         pending = (
             db.query(FileRecord)
             .filter(FileRecord.status == FileStatus.PENDING)
