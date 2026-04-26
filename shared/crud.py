@@ -296,7 +296,13 @@ def get_stats(db: Session) -> dict:
         t["avg_bitrate_bps"] = round(sum(samples) / len(samples), 0) if samples else None
         t["total_duration_seconds"] = round(t["total_duration_seconds"], 0)
 
-    # Projected savings: apply per-tier ratio to pending/assigned files
+    # Projected savings: apply per-tier ratio to pending/assigned files.
+    # Tiers with <5 samples fall back to global ratio; files with no height use global ratio too.
+    _CONF_THRESHOLD = 5
+    global_in  = sum(tc["total_in"]  for tc in tier_complete.values())
+    global_out = sum(tc["total_out"] for tc in tier_complete.values())
+    global_ratio = global_out / global_in if global_in else None
+
     proj_saved = 0
     proj_files = 0
     proj_low_conf = False
@@ -304,18 +310,20 @@ def get_stats(db: Session) -> dict:
         FileRecord.height, FileRecord.file_size, FileRecord.status,
     ).filter(
         FileRecord.status.in_([FileStatus.PENDING, FileStatus.ASSIGNED]),
-        FileRecord.height.isnot(None),
         FileRecord.file_size.isnot(None),
     ).all():
-        tier = _res_tier(h)
-        tc = tier_complete.get(tier)
-        if not tc or tc["total_in"] == 0:
+        tier = _res_tier(h) if h else None
+        tc = tier_complete.get(tier) if tier else None
+        if tc and tc["total_in"] > 0 and tc["n"] >= _CONF_THRESHOLD:
+            ratio = tc["total_out"] / tc["total_in"]
+        elif global_ratio is not None:
+            ratio = global_ratio
+            if not tc or tc["n"] < _CONF_THRESHOLD:
+                proj_low_conf = True
+        else:
             continue
-        ratio = tc["total_out"] / tc["total_in"]
         proj_saved += fsz * (1 - ratio)
         proj_files += 1
-        if tc["n"] < 10:
-            proj_low_conf = True
     overall["projected_saved_bytes"] = round(proj_saved)
     overall["projected_files"] = proj_files
     overall["projected_low_confidence"] = proj_low_conf
