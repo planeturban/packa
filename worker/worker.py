@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
+from sqlalchemy.orm import Session
 
 from shared.crud import get_file_record, update_conversion_result, update_status
 from shared.models import FileRecord, FileStatus
