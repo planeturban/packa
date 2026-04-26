@@ -182,7 +182,52 @@ async def _update_master_status(record_id: int, status: str) -> None:
         print(f"[worker] failed to update master status for record {record_id}: {exc}")
 
 
+_TERMINAL_STATUSES = {FileStatus.COMPLETE, FileStatus.CANCELLED, FileStatus.ERROR}
+
+
+def _build_report_body(record: FileRecord) -> dict:
+    body: dict = {"status": record.status.value}
+    if record.pid is not None:
+        body["pid"] = record.pid
+    if record.output_size is not None:
+        body["output_size"] = record.output_size
+    if record.started_at is not None:
+        body["started_at"] = record.started_at.isoformat()
+    if record.finished_at is not None:
+        body["finished_at"] = record.finished_at.isoformat()
+    if record.cancel_reason is not None:
+        body["cancel_reason"] = record.cancel_reason
+    if record.cancel_detail is not None:
+        body["cancel_detail"] = record.cancel_detail
+    if record.encoder is not None:
+        body["encoder"] = record.encoder
+    if record.avg_fps is not None:
+        body["avg_fps"] = round(record.avg_fps, 1)
+    if record.avg_speed is not None:
+        body["avg_speed"] = round(record.avg_speed, 2)
+    if record.ffmpeg_cmd is not None:
+        body["ffmpeg_cmd"] = record.ffmpeg_cmd
+    return body
+
+
+async def _send_report(record_id: int, body: dict) -> bool:
+    """Send a result report to master. Returns True on success."""
+    if not worker_state.master_url:
+        return True
+    url = f"{worker_state.master_url}/files/{record_id}/result"
+    try:
+        async with httpx.AsyncClient(timeout=10, **worker_state.tls.httpx_kwargs()) as client:
+            response = await client.patch(url, json=body)
+            response.raise_for_status()
+        print(f"[worker] master updated record {record_id} → {body['status']}")
+        return True
+    except Exception as exc:
+        print(f"[worker] failed to update master for record {record_id}: {exc}")
+        return False
+
+
 async def _report_result_to_master(
+    db: Session,
     record_id: int,
     status: FileStatus,
     pid: int | None = None,
@@ -196,9 +241,6 @@ async def _report_result_to_master(
     avg_speed: float | None = None,
     ffmpeg_cmd: str | None = None,
 ) -> None:
-    if not worker_state.master_url:
-        return
-    url = f"{worker_state.master_url}/files/{record_id}/result"
     body: dict = {"status": status.value}
     if pid is not None:
         body["pid"] = pid
@@ -220,13 +262,43 @@ async def _report_result_to_master(
         body["avg_speed"] = round(avg_speed, 2)
     if ffmpeg_cmd is not None:
         body["ffmpeg_cmd"] = ffmpeg_cmd
-    try:
-        async with httpx.AsyncClient(timeout=10, **worker_state.tls.httpx_kwargs()) as client:
-            response = await client.patch(url, json=body)
-            response.raise_for_status()
-        print(f"[worker] master updated record {record_id} → {status.value}")
-    except Exception as exc:
-        print(f"[worker] failed to update master for record {record_id}: {exc}")
+    ok = await _send_report(record_id, body)
+    if ok:
+        record = get_file_record(db, record_id)
+        if record:
+            record.master_synced = True
+            db.commit()
+
+
+async def sync_loop() -> None:
+    """Retry reporting terminal records that weren't synced to master."""
+    print("[worker] sync loop started")
+    while True:
+        await asyncio.sleep(30)
+        if not worker_state.master_url:
+            continue
+        db = SessionLocal()
+        try:
+            unsynced = (
+                db.query(FileRecord)
+                .filter(
+                    FileRecord.status.in_(list(_TERMINAL_STATUSES)),
+                    FileRecord.master_synced == False,  # noqa: E712
+                )
+                .limit(50)
+                .all()
+            )
+            for record in unsynced:
+                body = _build_report_body(record)
+                ok = await _send_report(record.id, body)
+                if ok:
+                    record.master_synced = True
+            if unsynced:
+                db.commit()
+        except Exception as exc:
+            print(f"[worker] sync loop error: {exc}")
+        finally:
+            db.close()
 
 
 async def _monitor_output_size(output_path: str, source_size: int, proc: asyncio.subprocess.Process, output_dir: str) -> None:
@@ -353,7 +425,7 @@ async def _process(job: Job) -> None:
                 )
                 print(f"[worker] record {job.record_id} cancelled ({cancel_reason})")
                 await _report_result_to_master(
-                    job.record_id, FileStatus.CANCELLED,
+                    db, job.record_id, FileStatus.CANCELLED,
                     pid=proc.pid, started_at=started_at, finished_at=finished_at,
                     cancel_reason=cancel_reason, cancel_detail=cancel_detail,
                     encoder=encoder,
@@ -376,7 +448,7 @@ async def _process(job: Job) -> None:
                 for line in stderr_output.splitlines():
                     print(f"[ffmpeg]   {line}")
                 await _report_result_to_master(
-                    job.record_id, FileStatus.ERROR,
+                    db, job.record_id, FileStatus.ERROR,
                     pid=proc.pid, started_at=started_at, finished_at=finished_at,
                     encoder=encoder,
                     avg_fps=avg_fps, avg_speed=avg_speed,
@@ -403,7 +475,7 @@ async def _process(job: Job) -> None:
                 f"output ({output_size} B) >= source ({source_size} B)"
             )
             await _report_result_to_master(
-                job.record_id, FileStatus.CANCELLED,
+                db, job.record_id, FileStatus.CANCELLED,
                 pid=proc.pid, output_size=output_size,
                 started_at=started_at, finished_at=finished_at,
                 cancel_reason="auto", encoder=encoder,
@@ -426,7 +498,7 @@ async def _process(job: Job) -> None:
                         avg_fps=avg_fps, avg_speed=avg_speed,
                     )
                     await _report_result_to_master(
-                        job.record_id, FileStatus.ERROR,
+                        db, job.record_id, FileStatus.ERROR,
                         pid=proc.pid, output_size=output_size,
                         started_at=started_at, finished_at=finished_at,
                         encoder=encoder,
@@ -449,7 +521,7 @@ async def _process(job: Job) -> None:
                 f"({100 * (source_size - output_size) // source_size}%)"
             )
             await _report_result_to_master(
-                job.record_id, FileStatus.COMPLETE,
+                db, job.record_id, FileStatus.COMPLETE,
                 pid=proc.pid, output_size=output_size,
                 started_at=started_at, finished_at=finished_at,
                 encoder=encoder,
@@ -465,7 +537,7 @@ async def _process(job: Job) -> None:
         except Exception:
             pass
         await _report_result_to_master(
-            job.record_id, FileStatus.ERROR, finished_at=finished_at,
+            db, job.record_id, FileStatus.ERROR, finished_at=finished_at,
             ffmpeg_cmd=worker_state.current_cmd or None,
         )
         worker_state.record_error()
