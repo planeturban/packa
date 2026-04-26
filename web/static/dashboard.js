@@ -384,7 +384,7 @@ function renderOverview() {
   el.innerHTML = `
     ${ST.demo ? `<div class="demo-banner">⚡ Demo mode — master unreachable. Showing last known data.</div>` : ''}
 
-    <div class="stats-grid" style="margin-bottom:12px">
+    <div class="stats-grid" style="margin-bottom:12px;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px">
       <div class="stat-card">
         <div class="stat-label">Total Files</div>
         <div class="stat-value">${(stats.total || 0).toLocaleString()}</div>
