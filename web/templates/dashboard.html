@@ -85,5 +85,5 @@
 </div>
 
 <script>window._INIT_DATA = {{ data | tojson }};</script>
-<script>document.write('<script src="'+(window._DEV?'https://raw.githubusercontent.com/planeturban/packa/main/web/static/dashboard.js?nc='+Date.now():'/static/dashboard.js?v={{ commit }}')+'"><\/script>');</script>
+<script>document.write('<script src="'+(window._DEV?'https://cdn.jsdelivr.net/gh/planeturban/packa@main/web/static/dashboard.js?nc='+Date.now():'/static/dashboard.js?v={{ commit }}')+'"><\/script>');</script>
 {% endblock %}
