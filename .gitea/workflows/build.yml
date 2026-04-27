@@ -13,11 +13,13 @@ jobs:
       - name: Build and push with Kaniko
         env:
           TAG: ${{ gitea.ref_name }}
-          REPO_URL: ${{ gitea.server_url }}/${{ gitea.repository }}
+          GITEA_INTERNAL_URL: http://gitea-http.harbour.svc.cluster.local:3000
+          REPO_PATH: ${{ gitea.repository }}
           COMMIT: ${{ gitea.sha }}
         run: |
           SAFE_TAG=$(echo "$TAG" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
           JOB_NAME="kaniko-${SAFE_TAG}-$(date +%s | rev | cut -c1-6 | rev)"
+          CLONE_URL="${GITEA_INTERNAL_URL}/${REPO_PATH}.git"
 
           cat <<EOF | kubectl apply -f -
           apiVersion: batch/v1
@@ -31,11 +33,24 @@ jobs:
             template:
               spec:
                 restartPolicy: Never
+                initContainers:
+                  - name: git-clone
+                    image: alpine/git:latest
+                    command:
+                      - git
+                      - clone
+                      - --depth=1
+                      - --branch=${TAG}
+                      - ${CLONE_URL}
+                      - /workspace
+                    volumeMounts:
+                      - name: workspace
+                        mountPath: /workspace
                 containers:
                   - name: kaniko
                     image: gcr.io/kaniko-project/executor:latest
                     args:
-                      - "--context=${REPO_URL}.git#refs/tags/${TAG}"
+                      - "--context=dir:///workspace"
                       - "--destination=registry.k.int/packa/packa:${TAG}"
                       - "--destination=registry.k.int/packa/packa:latest"
                       - "--build-arg=PACKA_VERSION=${TAG}"
@@ -44,14 +59,13 @@ jobs:
                       - "--cache-repo=registry.k.int/packa/packa-cache"
                       - "--skip-tls-verify"
                     volumeMounts:
+                      - name: workspace
+                        mountPath: /workspace
                       - name: kaniko-creds
                         mountPath: /kaniko/.docker
-                    securityContext:
-                      allowPrivilegeEscalation: false
-                      capabilities:
-                        drop: ["ALL"]
-                        add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID"]
                 volumes:
+                  - name: workspace
+                    emptyDir: {}
                   - name: kaniko-creds
                     secret:
                       secretName: kaniko-harbor-creds
