@@ -1,0 +1,20 @@
+# Remove hardcoded loadBalancerIP from web service — let MetalLB auto-assign
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: packa
+  annotations:
+    metallb.universe.tf/allow-shared-ip: packa-dev
+spec:
+  loadBalancerIP: ""
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: master-lb
+  namespace: packa
+  annotations:
+    metallb.universe.tf/allow-shared-ip: packa-dev
+spec:
+  loadBalancerIP: ""

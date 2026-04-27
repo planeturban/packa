@@ -1,0 +1,115 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: worker
+  namespace: packa
+spec:
+  serviceName: worker
+  replicas: 0
+  selector:
+    matchLabels:
+      app: packa-worker
+  template:
+    metadata:
+      labels:
+        app: packa-worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: packa-worker
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: worker
+          image: ghcr.io/planeturban/packa:v0.19.0
+          workingDir: /data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          env:
+            - name: PACKA_ROLE
+              value: worker
+            - name: PACKA_CONFIG
+              value: /etc/packa/packa.toml
+            - name: PYTHONPATH
+              value: /app
+            # - name: PACKA_WORKER_ID
+            #   value: "worker-01"   # omit to auto-generate a unique ID from worker.db
+            - name: PACKA_WORKER_BOOTSTRAP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: packa-bootstrap-token
+                  key: token
+                  optional: true
+            # Override ffmpeg extra args per worker, e.g. for hardware encoding:
+            # - name: PACKA_WORKER_FFMPEG_EXTRA_ARGS
+            #   value: "-c:v hevc_nvenc -preset p4 -cq 28"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/packa
+            - name: data
+              mountPath: /data
+            - name: media
+              mountPath: /mnt
+            - name: output
+              mountPath: /output
+      volumes:
+        - name: config
+          configMap:
+            name: packa-config
+            items:
+              - key: packa.toml
+                path: packa.toml
+        # Source media — NFS mount from NAS (adjust server/path):
+        - name: media
+          nfs:
+            server: syno.planeturban.net
+            path: /volume3/tv-archive
+            readOnly: true
+        # CIFS/SMB alternative — requires cifs-utils on nodes and a Secret with credentials:
+        # - name: media
+        #   flexVolume:
+        #     driver: fstab/cifs
+        #     options:
+        #       networkPath: "//nas.local/media"
+        #       mountOptions: "uid=1000,gid=1000,file_mode=0444,dir_mode=0555"
+        #     secretRef:
+        #       name: packa-cifs-credentials
+
+  volumeClaimTemplates:
+    - metadata:
+        name: output
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: synology-iscsi
+        resources:
+          requests:
+            storage: 50G
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: synology-iscsi
+        resources:
+          requests:
+            storage: 512Mi

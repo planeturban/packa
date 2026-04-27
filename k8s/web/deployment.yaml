@@ -1,0 +1,127 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: packa
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: packa-web
+  template:
+    metadata:
+      labels:
+        app: packa-web
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait-for-token
+          image: curlimages/curl:8.19.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              if [ -f /data/web.db ]; then
+                echo "[init] already bootstrapped, skipping token fetch"
+                exit 0
+              fi
+              MASTER=https://master.packa.svc.cluster.local:9000
+              echo "[init] waiting for master bootstrap token..."
+              while true; do
+                RESP=$(curl -sfk "$MASTER/tls/token" 2>/dev/null)
+                TOKEN=$(echo "$RESP" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+                if [ -n "$TOKEN" ]; then
+                  echo "$TOKEN" > /run/bootstrap/token
+                  echo "[init] token written, starting web"
+                  break
+                fi
+                sleep 5
+              done
+          volumeMounts:
+            - name: bootstrap
+              mountPath: /run/bootstrap
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+      containers:
+        - name: web
+          image: ghcr.io/planeturban/packa:v0.20.1
+          workingDir: /data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              if [ -s /run/bootstrap/token ]; then
+                export PACKA_WEB_BOOTSTRAP_TOKEN=$(cat /run/bootstrap/token)
+              fi
+              exec /app/entrypoint.sh
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          env:
+            - name: PACKA_ROLE
+              value: web
+            - name: PACKA_CONFIG
+              value: /etc/packa/packa.toml
+            - name: PYTHONPATH
+              value: /app
+            - name: PACKA_WEB_BOOTSTRAP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: packa-bootstrap-token
+                  key: token
+                  optional: true   # pod starts even if secret is empty; retries on next restart
+          # - name: PACKA_WEB_USERNAME
+          #   valueFrom:
+          #     secretKeyRef:
+          #       name: packa-secret
+          #       key: web-username
+          # - name: PACKA_WEB_PASSWORD
+          #   valueFrom:
+          #     secretKeyRef:
+          #       name: packa-secret
+          #       key: web-password
+          volumeMounts:
+            - name: config
+              mountPath: /etc/packa
+            - name: data
+              mountPath: /data
+            - name: bootstrap
+              mountPath: /run/bootstrap
+      volumes:
+        - name: config
+          configMap:
+            name: packa-config
+            items:
+              - key: packa.toml
+                path: packa.toml
+        - name: data
+          persistentVolumeClaim:
+            claimName: data-web
+        - name: bootstrap
+          emptyDir: {}   # fresh bootstrap token written by init container, read at web startup

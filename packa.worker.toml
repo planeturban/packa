@@ -1,0 +1,26 @@
+[worker]
+bind        = "0.0.0.0"
+api_port    = 8000
+master_host = "10.0.100.72"
+master_port = 9000
+id          = "mac-local"
+# bootstrap_token — set via PACKA_WORKER_BOOTSTRAP_TOKEN env in compose file
+
+[worker.paths]
+prefix = "/mnt"
+
+[worker.ffmpeg]
+bin        = "ffmpeg"
+output_dir = "/output"
+
+[worker.ffmpeg.encoder.libx265]
+display_name = "Software"
+video_args   = "-c:v libx265"
+
+[worker.ffmpeg.encoder.videotoolbox]
+display_name = "Apple"
+video_args   = "-c:v hevc_videotoolbox -q:v 65"
+
+[worker.worker]
+batch_size    = 1
+poll_interval = 5
