@@ -1053,7 +1053,6 @@ function renderStats() {
               return order.filter(k => byResolution[k]).map(k => {
                 const r = byResolution[k];
                 const pct = Math.round((r.count||0) / resTotal * 100);
-                const dur = r.total_duration_seconds || 0;
                 return `<div style="margin-bottom:14px">
                   <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px">
                     <span style="font-weight:500">${esc(k)}</span>
@@ -1064,16 +1063,16 @@ function renderStats() {
                   </div>
                   <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px;font-family:'IBM Plex Mono',monospace">
                     <div style="background:var(--surface2);border-radius:6px;padding:5px 8px">
-                      <div style="color:var(--text-faint);margin-bottom:2px">Avg bitrate</div>
-                      <div>${r.avg_bitrate_bps != null ? fmtBitrate(r.avg_bitrate_bps) : '—'}</div>
-                    </div>
-                    <div style="background:var(--surface2);border-radius:6px;padding:5px 8px">
-                      <div style="color:var(--text-faint);margin-bottom:2px">Playtime</div>
-                      <div>${dur ? fmtDuration(dur) : '—'}</div>
+                      <div style="color:var(--text-faint);margin-bottom:2px">Original</div>
+                      <div>${r.total_input_bytes ? fmtBytes(r.total_input_bytes) : '—'}</div>
                     </div>
                     <div style="background:var(--surface2);border-radius:6px;padding:5px 8px">
                       <div style="color:var(--text-faint);margin-bottom:2px">Saved</div>
                       <div style="color:var(--green)">${r.total_saved_bytes ? fmtBytes(r.total_saved_bytes) : '—'}</div>
+                    </div>
+                    <div style="background:var(--surface2);border-radius:6px;padding:5px 8px">
+                      <div style="color:var(--text-faint);margin-bottom:2px">Projected</div>
+                      <div style="color:var(--blue)">${r.projected_saved_bytes ? fmtBytes(r.projected_saved_bytes) : '—'}</div>
                     </div>
                   </div>
                 </div>`;

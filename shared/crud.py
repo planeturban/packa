@@ -293,10 +293,13 @@ def get_stats(db: Session) -> dict:
             tc["total_in"] += fsz
             tc["total_out"] += osz
             tc["n"] += 1
-    for t in by_resolution.values():
+    for tier, t in by_resolution.items():
         samples = t.pop("bitrate_samples")
         t["avg_bitrate_bps"] = round(sum(samples) / len(samples), 0) if samples else None
         t["total_duration_seconds"] = round(t["total_duration_seconds"], 0)
+        tc = tier_complete.get(tier)
+        t["total_input_bytes"] = tc["total_in"] if tc else 0
+        t["projected_saved_bytes"] = 0
 
     # Projected savings: apply per-tier ratio to pending/assigned files.
     # Tiers with <5 samples fall back to global ratio; files with no height use global ratio too.
@@ -324,8 +327,11 @@ def get_stats(db: Session) -> dict:
                 proj_low_conf = True
         else:
             continue
-        proj_saved += fsz * (1 - ratio)
+        tier_savings = round(fsz * (1 - ratio))
+        proj_saved += tier_savings
         proj_files += 1
+        if tier and tier in by_resolution:
+            by_resolution[tier]["projected_saved_bytes"] += tier_savings
     overall["projected_saved_bytes"] = round(proj_saved)
     overall["projected_files"] = proj_files
     overall["projected_low_confidence"] = proj_low_conf
