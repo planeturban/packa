@@ -299,6 +299,7 @@ def get_stats(db: Session) -> dict:
         t["total_duration_seconds"] = round(t["total_duration_seconds"], 0)
         tc = tier_complete.get(tier)
         t["total_input_bytes"] = tc["total_in"] if tc else 0
+        t["total_output_bytes"] = tc["total_out"] if tc else 0
         t["projected_saved_bytes"] = 0
 
     # Projected savings: apply per-tier ratio to pending/assigned files.
