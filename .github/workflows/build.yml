@@ -26,11 +26,20 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Log in to Harbor
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ secrets.HARBOUR_REGISTRY }}
+        username: ${{ secrets.HARBOUR_USERNAME }}
+        password: ${{ secrets.HARBOUR_PASSWORD }}
+
     - name: Extract metadata
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: ghcr.io/${{ github.repository }}
+        images: |
+          ghcr.io/${{ github.repository }}
+          ${{ secrets.HARBOUR_REGISTRY }}/packa/packa
         tags: |
           type=ref,event=tag
           type=raw,value=latest
