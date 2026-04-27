@@ -23,7 +23,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: wait-for-token
-          image: curlimages/curl:latest
+          image: curlimages/curl:8.19.0
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
