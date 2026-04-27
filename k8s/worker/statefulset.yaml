@@ -31,7 +31,7 @@ spec:
                 topologyKey: kubernetes.io/hostname
       containers:
         - name: worker
-          image: ghcr.io/planeturban/packa:v0.18.2
+          image: ghcr.io/planeturban/packa:v0.19.0
           workingDir: /data
           securityContext:
             allowPrivilegeEscalation: false
