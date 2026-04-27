@@ -1,0 +1,72 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: [self-hosted, linux]
+
+    steps:
+      - name: Build and push with Kaniko
+        env:
+          TAG: ${{ gitea.ref_name }}
+          REPO_URL: ${{ gitea.server_url }}/${{ gitea.repository }}
+          COMMIT: ${{ gitea.sha }}
+        run: |
+          SAFE_TAG=$(echo "$TAG" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+          JOB_NAME="kaniko-${SAFE_TAG}-$(date +%s | rev | cut -c1-6 | rev)"
+
+          cat <<EOF | kubectl apply -f -
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: ${JOB_NAME}
+            namespace: harbour
+          spec:
+            ttlSecondsAfterFinished: 300
+            backoffLimit: 0
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: kaniko
+                    image: gcr.io/kaniko-project/executor:latest
+                    args:
+                      - "--context=${REPO_URL}.git#refs/tags/${TAG}"
+                      - "--destination=registry.k.int/packa/packa:${TAG}"
+                      - "--destination=registry.k.int/packa/packa:latest"
+                      - "--build-arg=PACKA_VERSION=${TAG}"
+                      - "--build-arg=PACKA_COMMIT=${COMMIT}"
+                      - "--cache=true"
+                      - "--cache-repo=registry.k.int/packa/packa-cache"
+                      - "--skip-tls-verify"
+                    volumeMounts:
+                      - name: kaniko-creds
+                        mountPath: /kaniko/.docker
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      capabilities:
+                        drop: ["ALL"]
+                        add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID"]
+                volumes:
+                  - name: kaniko-creds
+                    secret:
+                      secretName: kaniko-harbor-creds
+                      items:
+                        - key: config.json
+                          path: config.json
+          EOF
+
+          echo "Waiting for Kaniko job ${JOB_NAME} to complete..."
+          if ! kubectl wait job/"${JOB_NAME}" -n harbour --for=condition=complete --timeout=1200s; then
+            echo "--- Kaniko logs ---"
+            kubectl logs -n harbour -l job-name="${JOB_NAME}" --tail=100
+            kubectl delete job/"${JOB_NAME}" -n harbour --ignore-not-found
+            exit 1
+          fi
+
+          echo "Build complete."
+          kubectl delete job/"${JOB_NAME}" -n harbour --ignore-not-found
