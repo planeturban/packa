@@ -6,3 +6,4 @@
 localtodo
 .claude/
 packa.toml
+.k8s/
