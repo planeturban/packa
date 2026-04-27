@@ -14,3 +14,4 @@ images:
 patches:
   - path: patch-services.yaml
   - path: patch-web-init.yaml
+  - path: patch-web-tls.yaml

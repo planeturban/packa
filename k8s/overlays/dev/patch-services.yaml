@@ -6,6 +6,7 @@ metadata:
   namespace: packa
   annotations:
     metallb.universe.tf/allow-shared-ip: packa-dev
+    external-dns.alpha.kubernetes.io/hostname: packa.k.int
 spec:
   loadBalancerIP: ""
 ---
