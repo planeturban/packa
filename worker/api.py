@@ -24,7 +24,7 @@ from sqlalchemy.exc import IntegrityError
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -474,6 +474,11 @@ class TlsBootstrapRequest(BaseModel):
 @app.post("/tls/bootstrap")
 async def tls_bootstrap(body: TlsBootstrapRequest):
     """Fetch a TLS cert bundle from master using a bootstrap token. Restart required after."""
+    if get_setting("tls.cert") and get_setting("tls.key") and get_setting("tls.ca"):
+        raise HTTPException(
+            status_code=409,
+            detail="Worker is already bootstrapped. Remove stored TLS settings and restart to re-bootstrap.",
+        )
     try:
         async with httpx.AsyncClient(timeout=10, verify=False) as client:
             r = await client.post(
@@ -496,8 +501,18 @@ async def tls_bootstrap(body: TlsBootstrapRequest):
     return {"ok": True}
 
 
+def _require_localhost_or_mtls(request: Request) -> None:
+    host = request.client.host if request.client else ""
+    if host in ("127.0.0.1", "::1"):
+        return
+    if request.url.scheme == "https":
+        return
+    raise HTTPException(status_code=403, detail="Requires mTLS or localhost")
+
+
 @app.post("/restart")
-def restart_worker():
+def restart_worker(request: Request):
+    _require_localhost_or_mtls(request)
     _schedule_restart()
     return {"ok": True}
 

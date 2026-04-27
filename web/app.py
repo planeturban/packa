@@ -23,7 +23,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from shared.config import WebConfig
 
 from .client import fetch_dashboard
-from .store import set_setting
+from .store import get_setting, set_setting
 
 _config: WebConfig = WebConfig()
 _VERSION = os.environ.get("PACKA_VERSION", "dev")
@@ -115,14 +115,19 @@ def _httpx_kw() -> dict:
     return _config.tls.httpx_kwargs()
 
 
+def _check_known_worker(host: str, port: int, workers: list) -> None:
+    """Raise HTTPException 400 if host:port is not in a pre-fetched worker list."""
+    if not any(w["host"] == host and w["api_port"] == port for w in workers):
+        raise HTTPException(status_code=400, detail="Unknown worker")
+
+
 async def _assert_known_worker(host: str, port: int) -> None:
     """Raise HTTPException 400 if host:port is not a registered worker."""
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         r = await client.get(f"{_master_url()}/workers")
         r.raise_for_status()
         workers = r.json()
-    if not any(w["host"] == host and w["api_port"] == port for w in workers):
-        raise HTTPException(status_code=400, detail="Unknown worker")
+    _check_known_worker(host, port, workers)
 
 
 def _redirect_login():
@@ -147,7 +152,8 @@ def login_page(request: Request):
 async def login(request: Request, username: str = Form(), password: str = Form()):
     if not _auth_enabled():
         return RedirectResponse("/", status_code=303)
-    if username == _config.username and password == _config.password:
+    if (secrets.compare_digest(username, _config.username or "")
+            and secrets.compare_digest(password, _config.password or "")):
         request.session["user"] = username
         return RedirectResponse("/", status_code=303)
     return _templates.TemplateResponse(
@@ -174,7 +180,7 @@ def setup_bootstrap_page(request: Request):
 
 @app.post("/setup/bootstrap")
 async def setup_bootstrap(request: Request, token: str = Form()):
-    if _config.tls.enabled:
+    if _config.tls.enabled or (get_setting("tls.cert") and get_setting("tls.key")):
         return RedirectResponse("/login", status_code=303)
     try:
         r = httpx.post(
@@ -437,6 +443,7 @@ async def data_files_pending(request: Request):
 async def data_worker_delete(request: Request, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
+    await _assert_known_worker(host, port)
     body = await request.json()
     ids: list[int] = body.get("ids", [])
     base = _worker_url(host, port)
@@ -512,6 +519,7 @@ async def data_files_force_encode(request: Request):
 async def data_worker_pending(request: Request, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
+    await _assert_known_worker(host, port)
     body = await request.json()
     ids: list[int] = body.get("ids", [])
     base = _worker_url(host, port)
@@ -528,6 +536,7 @@ async def data_worker_pending(request: Request, host: str = Query(), port: int =
 async def data_worker_cancel(request: Request, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
+    await _assert_known_worker(host, port)
     body = await request.json()
     ids: list[int] = body.get("ids", [])
     base = _worker_url(host, port)
@@ -663,6 +672,7 @@ async def data_worker_action(request: Request):
     action = body.get("action")
     if action not in ("pause", "resume", "stop", "drain", "sleep", "wake"):
         return JSONResponse({"error": "invalid action"}, status_code=400)
+    await _assert_known_worker(host, port)
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.post(f"{_worker_url(host, port)}/conversion/{action}")
@@ -729,6 +739,7 @@ async def data_worker_restart(request: Request):
     body = await request.json()
     host = body.get("host")
     port = body.get("port")
+    await _assert_known_worker(host, port)
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.post(f"{_worker_url(host, port)}/restart")
@@ -789,6 +800,7 @@ async def data_master_config_restore(request: Request, key: str):
 async def data_worker_config_set(request: Request, key: str, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
+    await _assert_known_worker(host, port)
     body = await request.json()
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
@@ -805,6 +817,7 @@ async def data_worker_config_set(request: Request, key: str, host: str = Query()
 async def data_worker_config_clear(request: Request, key: str, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
+    await _assert_known_worker(host, port)
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
             r = await client.delete(f"{_worker_url(host, port)}/config/{key}")
@@ -820,6 +833,7 @@ async def data_worker_config_clear(request: Request, key: str, host: str = Query
 async def data_worker_config_restore(request: Request, key: str, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
+    await _assert_known_worker(host, port)
     body = await request.json()
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
@@ -905,6 +919,7 @@ async def data_worker_encoder(request: Request):
     host = body.get("host")
     port = body.get("port")
     encoder = body.get("encoder")
+    await _assert_known_worker(host, port)
     payload: dict = {"encoder": encoder}
     if body.get("replace_original") is not None:
         payload["replace_original"] = bool(body["replace_original"])
@@ -921,6 +936,7 @@ async def data_worker_encoder(request: Request):
 async def data_worker(request: Request, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
+    await _assert_known_worker(host, port)
     base = _worker_url(host, port)
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         results = await asyncio.gather(

@@ -28,6 +28,7 @@ import time as _time
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -515,6 +516,14 @@ def transfer_file(body: TransferRequest, db: Session = Depends(get_db)):
         video = collect(body.file_path)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    if _config.path_prefix:
+        try:
+            Path(video.file_path).relative_to(_config.path_prefix)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"file_path must be under the configured prefix ({_config.path_prefix})",
+            )
     record = crud.create_file_record(db, FileRecordCreate(
         file_name=video.file_name,
         file_path=video.file_path,
@@ -729,7 +738,8 @@ def restore_master_config(key: str, body: ConfigRestore, db: Session = Depends(g
 
 
 @app.post("/restart")
-def restart_master():
+def restart_master(request: Request):
+    _require_localhost_or_mtls(request)
     import os, signal, threading
     threading.Thread(target=lambda: (
         __import__('time').sleep(0.2),
