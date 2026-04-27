@@ -31,6 +31,10 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
+              if [ -f /data/web.db ]; then
+                echo "[init] already bootstrapped, skipping token fetch"
+                exit 0
+              fi
               MASTER=https://master.packa.svc.cluster.local:9000
               echo "[init] waiting for master bootstrap token..."
               while true; do
@@ -46,6 +50,8 @@ spec:
           volumeMounts:
             - name: bootstrap
               mountPath: /run/bootstrap
+            - name: data
+              mountPath: /data
           resources:
             requests:
               cpu: 10m
