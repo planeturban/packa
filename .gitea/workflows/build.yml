@@ -13,13 +13,12 @@ jobs:
       - name: Build and push with Kaniko
         env:
           TAG: ${{ gitea.ref_name }}
-          GITEA_INTERNAL_URL: http://gitea-http.harbour.svc.cluster.local:3000
           REPO_PATH: ${{ gitea.repository }}
           COMMIT: ${{ gitea.sha }}
         run: |
           SAFE_TAG=$(echo "$TAG" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
           JOB_NAME="kaniko-${SAFE_TAG}-$(date +%s | rev | cut -c1-6 | rev)"
-          CLONE_URL="${GITEA_INTERNAL_URL}/${REPO_PATH}.git"
+          SSH_CLONE_URL="ssh://git@gitea-ssh.harbour.svc.cluster.local:22/${REPO_PATH}.git"
 
           cat <<EOF | kubectl apply -f -
           apiVersion: batch/v1
@@ -36,16 +35,20 @@ jobs:
                 initContainers:
                   - name: git-clone
                     image: alpine/git:latest
-                    command:
-                      - git
-                      - clone
-                      - --depth=1
-                      - --branch=${TAG}
-                      - ${CLONE_URL}
-                      - /workspace
+                    command: ["/bin/sh", "-c"]
+                    args:
+                      - |
+                        mkdir -p /root/.ssh
+                        cp /ssh/id_ed25519 /root/.ssh/id_ed25519
+                        chmod 600 /root/.ssh/id_ed25519
+                        ssh-keyscan -p 22 gitea-ssh.harbour.svc.cluster.local >> /root/.ssh/known_hosts 2>/dev/null
+                        git clone --depth=1 --branch=${TAG} ${SSH_CLONE_URL} /workspace
                     volumeMounts:
                       - name: workspace
                         mountPath: /workspace
+                      - name: ssh-key
+                        mountPath: /ssh
+                        readOnly: true
                 containers:
                   - name: kaniko
                     image: gcr.io/kaniko-project/executor:latest
@@ -66,6 +69,10 @@ jobs:
                 volumes:
                   - name: workspace
                     emptyDir: {}
+                  - name: ssh-key
+                    secret:
+                      secretName: gitea-ssh-deploy-key
+                      defaultMode: 0400
                   - name: kaniko-creds
                     secret:
                       secretName: kaniko-harbor-creds
