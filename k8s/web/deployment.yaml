@@ -61,7 +61,7 @@ spec:
               memory: 32Mi
       containers:
         - name: web
-          image: ghcr.io/planeturban/packa:v0.20.0
+          image: ghcr.io/planeturban/packa:v0.20.1
           workingDir: /data
           securityContext:
             allowPrivilegeEscalation: false
