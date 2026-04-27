@@ -1061,10 +1061,14 @@ function renderStats() {
                   <div class="progress-track" style="margin-bottom:8px">
                     <div style="height:100%;border-radius:2px;background:var(--blue);width:${pct}%;transition:width 0.4s ease"></div>
                   </div>
-                  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11px;font-family:'IBM Plex Mono',monospace">
+                  <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;font-size:11px;font-family:'IBM Plex Mono',monospace">
                     <div style="background:var(--surface2);border-radius:6px;padding:5px 8px">
                       <div style="color:var(--text-faint);margin-bottom:2px">Original</div>
                       <div>${r.total_input_bytes ? fmtBytes(r.total_input_bytes) : '—'}</div>
+                    </div>
+                    <div style="background:var(--surface2);border-radius:6px;padding:5px 8px">
+                      <div style="color:var(--text-faint);margin-bottom:2px">Compressed</div>
+                      <div>${r.total_output_bytes ? fmtBytes(r.total_output_bytes) : '—'}</div>
                     </div>
                     <div style="background:var(--surface2);border-radius:6px;padding:5px 8px">
                       <div style="color:var(--text-faint);margin-bottom:2px">Saved</div>
