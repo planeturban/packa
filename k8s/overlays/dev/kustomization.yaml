@@ -6,6 +6,11 @@ namespace: packa-dev
 resources:
   - ../../base
 
+images:
+  - name: ghcr.io/planeturban/packa
+    newName: registry.k.int/packa/packa
+    newTag: latest
+
 patches:
   - path: patch-services.yaml
   - path: patch-web-init.yaml
