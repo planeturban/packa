@@ -159,7 +159,6 @@ def _reapply_config() -> None:
     worker_state.poll_interval = _config.worker.poll_interval
     worker_state.batch_size = _config.worker.batch_size
     worker_state.stall_timeout = _config.worker.stall_timeout
-    worker_state.cancel_thresholds = _config.worker.cancel_thresholds
     worker_state.path_prefix = _config.path_prefix
 
 
