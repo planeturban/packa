@@ -104,6 +104,7 @@ const ST = {
   modalSort: {col: 'created_at', dir: 'desc'},
   // workers tab
   workerSettingsOpen: {},   // configId → bool
+  globalThresholds: null,   // null = uninitialized; [] = no thresholds; [[pct,ratio],...] = rows
   workerCmdOpen: {},        // configId → bool
   workerExpanded: new Set(), // configIds that are expanded in overview
   modalDiscardFilter: new Set(),
@@ -1568,8 +1569,28 @@ function renderScan() {
 
 function _cfgDisplayValue(field, value) {
   if (field.type === 'list[str]') return (value || []).join(', ');
+  if (field.type === 'thresholds') return _formatThresholds(value);
   if (value == null) return '';
   return String(value);
+}
+
+function _formatThresholds(value) {
+  if (!value || !Array.isArray(value) || value.length === 0) return '';
+  return '[[' + value.map(r => `${r[0]}, ${r[1]}`).join('], [') + ']]';
+}
+
+function _parseThresholdsText(s) {
+  s = (s || '').trim();
+  if (!s) return [];
+  try {
+    const parsed = JSON.parse(s);
+    if (Array.isArray(parsed)) return parsed.map(r => [Number(r[0]), Number(r[1])]);
+  } catch (_) {}
+  // env-var format fallback: "20:1.15,40:1.05"
+  return s.split(',').map(p => p.trim()).filter(p => p.includes(':')).map(p => {
+    const [a, b] = p.split(':');
+    return [Number(a.trim()), Number(b.trim())];
+  });
 }
 
 function renderMasterConfigCard(cfg) {
@@ -1654,6 +1675,9 @@ function _cfgCoerce(type, raw) {
   }
   if (type === 'list[str]') {
     return String(raw).split(',').map(s => s.trim()).filter(Boolean);
+  }
+  if (type === 'thresholds') {
+    return _parseThresholdsText(String(raw));
   }
   return String(raw);
 }
@@ -1794,11 +1818,19 @@ function renderWorkerConfigRow(f, value, source, fileV, envV, cliV, host, port) 
     : '';
   const display = esc(_cfgDisplayValue(f, value));
   const inputType = f.type === 'int' ? 'number' : 'text';
-  const control = `<input class="input" type="${inputType}" value="${display}"
-                          data-cfg-key="${keyAttr}" data-cfg-type="${esc(f.type)}"
-                          style="flex:1;min-width:180px;font-family:'IBM Plex Mono',monospace;font-size:12px"
-                          onkeydown="if(event.key==='Enter'){this.blur();}"
-                          onblur="workerCfgSave('${host}',${port},'${keyAttr}','${esc(f.type)}',this.value)">`;
+  const monoStyle = `flex:1;min-width:180px;font-family:'IBM Plex Mono',monospace;font-size:12px`;
+  const control = f.type === 'thresholds'
+    ? `<input class="input" type="text" value="${display}"
+              data-cfg-key="${keyAttr}" data-cfg-type="thresholds"
+              placeholder="[[20.0, 1.15], [40.0, 1.05], [60.0, 1.0]]"
+              style="${monoStyle}"
+              onkeydown="if(event.key==='Enter'){this.blur();}"
+              onblur="workerCfgSave('${host}',${port},'${keyAttr}','thresholds',this.value)">`
+    : `<input class="input" type="${inputType}" value="${display}"
+              data-cfg-key="${keyAttr}" data-cfg-type="${esc(f.type)}"
+              style="${monoStyle}"
+              onkeydown="if(event.key==='Enter'){this.blur();}"
+              onblur="workerCfgSave('${host}',${port},'${keyAttr}','${esc(f.type)}',this.value)">`;
   const revertTitle = (!hasFile && !hasEnv)
     ? 'No file or env value to revert to — use Default to reset'
     : 'Clear DB override; revert via priority chain';
@@ -1996,8 +2028,88 @@ function renderSettings() {
         </div>
       </div>
 
+      <div class="card" style="margin-top:16px">
+        <div class="card-title">Cancel Thresholds</div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+          Cancel encoding early if the projected output exceeds <em>source × ratio</em> at a given progress %.
+          "Apply to all workers" overwrites every worker's threshold setting.
+        </div>
+        ${_renderGlobalThresholds()}
+      </div>
+
     </div>
   `;
+}
+
+function _initGlobalThresholds() {
+  if (ST.globalThresholds !== null) return;
+  const workers = (ST.data || {}).workers || [];
+  for (const w of workers) {
+    const v = ((w.worker_config || {}).values || {}).cancel_thresholds;
+    if (v && Array.isArray(v) && v.length > 0) {
+      ST.globalThresholds = v.map(r => ({pct: String(r[0]), ratio: String(r[1])}));
+      return;
+    }
+  }
+  ST.globalThresholds = [{pct:'20',ratio:'1.15'},{pct:'40',ratio:'1.05'},{pct:'60',ratio:'1.0'}];
+}
+
+function _renderGlobalThresholds() {
+  _initGlobalThresholds();
+  const rows = ST.globalThresholds || [];
+  const rowsHtml = rows.length === 0
+    ? `<div style="font-size:12px;color:var(--text-faint);margin-bottom:8px">No thresholds — encoding is never cancelled based on projected size.</div>`
+    : `<div style="display:flex;gap:8px;font-size:10px;font-weight:600;text-transform:uppercase;color:var(--text-faint);margin-bottom:4px">
+         <span style="width:80px">At %</span><span style="width:80px">Max ratio</span>
+       </div>
+       ${rows.map((r, i) => `
+         <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+           <input class="input" type="number" value="${esc(r.pct)}" min="0" max="100" step="1"
+                  style="width:80px;font-family:'IBM Plex Mono',monospace;font-size:12px"
+                  oninput="ST.globalThresholds[${i}].pct=this.value">
+           <input class="input" type="number" value="${esc(r.ratio)}" min="0" step="0.01"
+                  style="width:80px;font-family:'IBM Plex Mono',monospace;font-size:12px"
+                  oninput="ST.globalThresholds[${i}].ratio=this.value">
+           <button class="btn btn-sm btn-danger" onclick="removeGlobalThresholdRow(${i})">−</button>
+         </div>`).join('')}`;
+  return `
+    ${rowsHtml}
+    <div style="display:flex;gap:8px;margin-top:4px;align-items:center">
+      <button class="btn btn-sm" onclick="addGlobalThresholdRow()">+ Add row</button>
+      <button class="btn btn-sm btn-primary" onclick="applyGlobalThresholds()">Apply to all workers</button>
+      <span id="global-thresholds-msg" style="font-size:12px;color:var(--text-dim)"></span>
+    </div>`;
+}
+
+function addGlobalThresholdRow() {
+  _initGlobalThresholds();
+  ST.globalThresholds.push({pct:'', ratio:''});
+  renderSettings();
+}
+
+function removeGlobalThresholdRow(i) {
+  _initGlobalThresholds();
+  ST.globalThresholds.splice(i, 1);
+  renderSettings();
+}
+
+async function applyGlobalThresholds() {
+  if (ST.demo) { toast('[Demo] Config unchanged', 'info'); return; }
+  _initGlobalThresholds();
+  const value = ST.globalThresholds
+    .filter(r => r.pct !== '' && r.ratio !== '')
+    .map(r => [Number(r.pct), Number(r.ratio)]);
+  try {
+    const r = await fetch('/data/workers/cancel_thresholds', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({value}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const res = await r.json();
+    toast(`Cancel thresholds applied to ${res.applied} worker(s)${res.errors.length ? ` (${res.errors.length} failed)` : ''}`, res.errors.length ? 'error' : 'success');
+    fetchAll();
+  } catch (e) { toast(`Failed: ${e.message}`, 'error'); }
 }
 
 function toggleDevMode() {
