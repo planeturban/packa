@@ -1,10 +1,17 @@
+import re
 from datetime import datetime
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from .models import FileRecord, FileStatus
 from .schemas import FileRecordCreate
+
+
+def _search_pattern(search: str) -> str:
+    """Convert a search string to a LIKE pattern treating dots, dashes, and underscores as wildcards."""
+    parts = [p for p in re.split(r'[\s.\-_]+', search) if p]
+    return '%' + '%'.join(parts) + '%'
 
 
 def create_file_record(db: Session, record: FileRecordCreate) -> FileRecord:
@@ -108,7 +115,8 @@ def get_records_page(
     if status is not None:
         q = q.filter(FileRecord.status == status)
     if search:
-        q = q.filter(FileRecord.file_name.ilike(f"%{search}%"))
+        pat = _search_pattern(search)
+        q = q.filter(or_(FileRecord.file_name.ilike(pat), FileRecord.file_path.ilike(pat)))
     col = _SORT_COLUMNS.get(sort_by, FileRecord.created_at)
     q = q.order_by(col.desc() if sort_dir == "desc" else col.asc())
     total = q.count()
@@ -126,7 +134,8 @@ def get_record_ids(
     if status is not None:
         q = q.filter(FileRecord.status == status)
     if search:
-        q = q.filter(FileRecord.file_name.ilike(f"%{search}%"))
+        pat = _search_pattern(search)
+        q = q.filter(or_(FileRecord.file_name.ilike(pat), FileRecord.file_path.ilike(pat)))
     return [row[0] for row in q.all()]
 
 

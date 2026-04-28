@@ -258,10 +258,6 @@ async function fetchFilesPage() {
     if (r.ok) {
       ST.filesResult = await r.json();
       renderFiles();
-      if (ST.fileSearch) {
-        const inp = document.getElementById('file-search-input');
-        if (inp && document.activeElement !== inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
-      }
     }
   } catch(e) { console.error('fetchFilesPage:', e); }
 }
@@ -590,6 +586,11 @@ function renderFiles() {
       </select>
     </div>`;
 
+  const _prevSearchEl = document.getElementById('file-search-input');
+  const _searchHadFocus = _prevSearchEl && document.activeElement === _prevSearchEl;
+  const _searchSelStart = _searchHadFocus ? _prevSearchEl.selectionStart : null;
+  const _searchSelEnd   = _searchHadFocus ? _prevSearchEl.selectionEnd   : null;
+
   el.innerHTML = `
     <div class="section-header">
       <div class="section-title">Files</div>
@@ -708,6 +709,11 @@ function renderFiles() {
   // Re-apply indeterminate state
   const hdr = el.querySelector('thead input[type="checkbox"]');
   if (hdr) hdr.indeterminate = somePageSelected && !allPageSelected;
+
+  if (_searchHadFocus) {
+    const inp = document.getElementById('file-search-input');
+    if (inp) { inp.focus(); inp.setSelectionRange(_searchSelStart, _searchSelEnd); }
+  }
 }
 
 function toggleFileFilter(s, event) {
