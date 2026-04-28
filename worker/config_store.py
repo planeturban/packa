@@ -13,7 +13,7 @@ import tomllib
 from dataclasses import dataclass
 from typing import Any
 
-from shared.config import Config, _parse_cancel_thresholds
+from shared.config import Config
 
 from .store import delete_setting, get_setting, get_settings_with_prefix, set_setting
 
@@ -52,9 +52,6 @@ WORKER_FIELDS: list[Field] = [
     Field("stall_timeout", "PACKA_WORKER_STALL_TIMEOUT", ("worker", "worker", "stall_timeout"),
           "int", 120,
           label="Stall timeout (s)", help="Seconds without ffmpeg progress before the job is cancelled. 0 disables the watchdog."),
-    Field("cancel_thresholds", "PACKA_WORKER_CANCEL_THRESHOLDS", ("worker", "worker", "cancel_thresholds"),
-          "thresholds", [],
-          label="Cancel thresholds", help="Cancel early if projected output exceeds source × ratio at the given progress %. Format: [[pct, ratio], ...] e.g. [[20.0, 1.15], [40.0, 1.05], [60.0, 1.0]]"),
 ]
 
 _FIELDS_BY_KEY = {f.key: f for f in WORKER_FIELDS}
@@ -81,24 +78,6 @@ def _coerce(value: Any, typ: str) -> Any:
         if isinstance(value, list):
             return [str(v).strip() for v in value if str(v).strip()]
         return [v.strip() for v in str(value).split(",") if v.strip()]
-    if typ == "thresholds":
-        if isinstance(value, list):
-            result = []
-            for item in value:
-                if isinstance(item, (list, tuple)) and len(item) == 2:
-                    result.append([float(item[0]), float(item[1])])
-            return result
-        s = str(value).strip() if value is not None else ""
-        if not s:
-            return []
-        try:
-            parsed = json.loads(s)
-            if isinstance(parsed, list):
-                return _coerce("thresholds", parsed)
-        except (ValueError, json.JSONDecodeError):
-            pass
-        # env-var format: "20:1.15,40:1.05"
-        return _coerce("thresholds", _parse_cancel_thresholds(s))
     raise ValueError(f"unsupported type {typ!r}")
 
 
@@ -209,8 +188,6 @@ def apply_to_config(values: dict[str, Any], config: Config) -> None:
     config.worker.poll_interval = max(1, int(values["poll_interval"]))
     config.worker.batch_size = max(1, int(values["batch_size"]))
     config.worker.stall_timeout = max(0, int(values["stall_timeout"]))
-    raw_ct = values.get("cancel_thresholds") or []
-    config.worker.cancel_thresholds = sorted((float(p), float(r)) for p, r in raw_ct)
 
 
 # ---------------------------------------------------------------------------
