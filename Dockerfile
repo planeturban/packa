@@ -11,13 +11,16 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY requirements.txt pyproject.toml ./
 RUN pip install --no-cache-dir -r requirements.txt --break-system-packages
 
 COPY master/       master/
 COPY worker/        worker/
 COPY web/          web/
 COPY shared/       shared/
+COPY packa/        packa/
+RUN pip install --no-cache-dir --no-deps -e . --break-system-packages
+
 COPY entrypoint.sh entrypoint.sh
 RUN chmod +x entrypoint.sh
 

@@ -22,13 +22,13 @@ fi
 
 case "$ROLE" in
   master)
-    exec python3 -m master.master --config "$CONFIG" --bind any
+    exec packa master --config "$CONFIG" --bind any
     ;;
   worker)
-    exec python3 -m worker.main --config "$CONFIG" --bind any
+    exec packa worker --config "$CONFIG" --bind any
     ;;
   web)
-    exec python3 -m web.main --config "$CONFIG" --bind any
+    exec packa web --config "$CONFIG" --bind any
     ;;
   *)
     echo "Unknown role: $ROLE. Must be master, worker, or web." >&2
