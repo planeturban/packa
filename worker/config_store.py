@@ -49,6 +49,9 @@ WORKER_FIELDS: list[Field] = [
     Field("batch_size", "PACKA_WORKER_BATCH_SIZE", ("worker", "worker", "batch_size"),
           "int", 1,
           label="Batch size", help="Number of jobs to claim per poll cycle."),
+    Field("stall_timeout", "PACKA_WORKER_STALL_TIMEOUT", ("worker", "worker", "stall_timeout"),
+          "int", 120,
+          label="Stall timeout (s)", help="Seconds without ffmpeg progress before the job is cancelled. 0 disables the watchdog."),
 ]
 
 _FIELDS_BY_KEY = {f.key: f for f in WORKER_FIELDS}
@@ -184,6 +187,7 @@ def apply_to_config(values: dict[str, Any], config: Config) -> None:
     config.ffmpeg.extra_args = values["extra_args"]
     config.worker.poll_interval = max(1, int(values["poll_interval"]))
     config.worker.batch_size = max(1, int(values["batch_size"]))
+    config.worker.stall_timeout = max(0, int(values["stall_timeout"]))
 
 
 # ---------------------------------------------------------------------------
