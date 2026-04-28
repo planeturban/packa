@@ -158,6 +158,7 @@ def _reapply_config() -> None:
     worker_state.extra_args = _config.ffmpeg.extra_args
     worker_state.poll_interval = _config.worker.poll_interval
     worker_state.batch_size = _config.worker.batch_size
+    worker_state.stall_timeout = _config.worker.stall_timeout
     worker_state.path_prefix = _config.path_prefix
 
 
@@ -170,6 +171,7 @@ async def lifespan(app: FastAPI):
     worker_state.replace_original = get_setting("replace_original") == "true"
     worker_state.cancel_thresholds = _config.worker.cancel_thresholds
     worker_state.error_threshold = _config.worker.error_threshold
+    worker_state.stall_timeout = _config.worker.stall_timeout
     worker_state.ffmpeg_bin = _config.ffmpeg.bin
     worker_state.output_dir = _config.ffmpeg.output_dir
     worker_state.extra_args = _config.ffmpeg.extra_args
