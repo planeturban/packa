@@ -16,3 +16,4 @@ patches:
   - path: patch-web-init.yaml
   - path: patch-web-tls.yaml
   - path: patch-worker.yaml
+  - path: patch-pull-policy.yaml
