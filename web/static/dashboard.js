@@ -255,7 +255,14 @@ async function fetchFilesPage() {
   if (ST.fileSearch) params.set('search', ST.fileSearch);
   try {
     const r = await fetch(`/data/files?${params}`);
-    if (r.ok) { ST.filesResult = await r.json(); renderFiles(); }
+    if (r.ok) {
+      ST.filesResult = await r.json();
+      renderFiles();
+      if (ST.fileSearch) {
+        const inp = document.getElementById('file-search-input');
+        if (inp && document.activeElement !== inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+      }
+    }
   } catch(e) { console.error('fetchFilesPage:', e); }
 }
 
@@ -735,8 +742,6 @@ function setFileSearch(q) {
   ST.fileSelected.clear();
   ST.filePage = 0;
   fetchFilesPage();
-  const inp = document.getElementById('file-search-input');
-  if (inp) { inp.focus(); inp.setSelectionRange(q.length, q.length); }
 }
 
 function setFileSort(col) {
