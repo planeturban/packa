@@ -57,6 +57,9 @@ class WorkerState:
         self.current_cmd: str = ""
         self.replace_original: bool = False
         self.cancel_thresholds: list[tuple[float, float]] = []
+        self.stall_timeout: int = 120
+        self.last_progress_at: float | None = None
+        self.stall_detail: str | None = None
         self.presets: dict[str, EncoderPreset] = {}
         self.available_encoders: list[str] = ["libx265", "nvenc", "vaapi", "videotoolbox"]
 
@@ -105,6 +108,8 @@ class WorkerState:
         self.cancel_detail = None
         self.current_file = ""
         self.current_cmd = ""
+        self.last_progress_at = None
+        self.stall_detail = None
 
     @property
     def queued(self) -> int:

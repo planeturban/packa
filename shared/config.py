@@ -76,6 +76,7 @@ class WorkerConfig:
     poll_interval: int = 5
     cancel_thresholds: list[tuple[float, float]] = field(default_factory=list)
     error_threshold: int = 0  # consecutive errors before auto-sleep; 0 = disabled
+    stall_timeout: int = 120  # seconds without progress before ffmpeg is killed; 0 = disabled
 
 
 @dataclass
@@ -223,6 +224,7 @@ def load_worker(config_path: str | None) -> Config:
             poll_interval=_env_int("PACKA_WORKER_POLL_INTERVAL", worker_data.get("poll_interval", 5)),
             cancel_thresholds=_cancel_thresholds,
             error_threshold=_env_int("PACKA_WORKER_ERROR_THRESHOLD", worker_data.get("error_threshold", 0)),
+            stall_timeout=_env_int("PACKA_WORKER_STALL_TIMEOUT", worker_data.get("stall_timeout", 120)),
         ),
         tls=TlsConfig(
             cert=worker_tls.get("cert", ""),

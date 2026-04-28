@@ -15,6 +15,7 @@ Progress is read from ffmpeg's -progress pipe:1 output.
 import asyncio
 import shlex
 import shutil
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -137,6 +138,7 @@ async def _stream_progress(
             p = _parse_progress(frame, duration_s, source_size, prev_out_time_us)
             prev_out_time_us = _safe_int(frame.get("out_time_us"))
             worker_state.progress = p
+            worker_state.last_progress_at = time.monotonic()
             if p.fps:
                 fps_samples.append(p.fps)
             if p.speed:
@@ -335,6 +337,29 @@ async def _monitor_output_size(output_path: str, source_size: int, proc: asyncio
             pass
 
 
+async def _monitor_stall(proc: asyncio.subprocess.Process, timeout_s: int) -> None:
+    if timeout_s <= 0:
+        return
+    start = time.monotonic()
+    while proc.returncode is None:
+        await asyncio.sleep(5)
+        now = time.monotonic()
+        last = worker_state.last_progress_at
+        elapsed = now - (last if last is not None else start)
+        if elapsed >= timeout_s:
+            if last is None:
+                detail = f"never started — no ffmpeg output after {timeout_s}s"
+            else:
+                detail = f"stalled — no progress for {round(elapsed)}s"
+            print(f"[worker] {detail} — terminating ffmpeg")
+            worker_state.stall_detail = detail
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
+            break
+
+
 async def _process(job: Job) -> None:
     ffmpeg_bin = worker_state.ffmpeg_bin
     output_dir = worker_state.output_dir
@@ -381,6 +406,8 @@ async def _process(job: Job) -> None:
             stderr=asyncio.subprocess.PIPE,
         )
         worker_state.proc = proc
+        worker_state.last_progress_at = None
+        worker_state.stall_detail = None
 
         record = get_file_record(db, job.record_id)
         if record:
@@ -395,6 +422,7 @@ async def _process(job: Job) -> None:
         tasks = [
             _stream_progress(proc.stdout, duration_s, source_size, proc, force_encode=job.force_encode),
             _collect_stderr(proc.stderr),
+            _monitor_stall(proc, worker_state.stall_timeout),
         ]
         if not job.force_encode:
             tasks.append(_monitor_output_size(output_path, source_size, proc, output_dir))
@@ -411,6 +439,30 @@ async def _process(job: Job) -> None:
                 await _update_master_status(job.record_id, "pending")
                 worker_state.sleeping = True
                 print(f"[worker] record {job.record_id} reset to pending — disk full")
+                return
+            stall_detail = worker_state.stall_detail
+            if stall_detail:
+                update_conversion_result(
+                    db, job.record_id,
+                    status=FileStatus.ERROR,
+                    pid=proc.pid, output_size=None,
+                    started_at=started_at, finished_at=finished_at,
+                    encoder=encoder,
+                    avg_fps=avg_fps, avg_speed=avg_speed,
+                )
+                record = get_file_record(db, job.record_id)
+                if record:
+                    record.ffmpeg_stderr = stall_detail
+                    db.commit()
+                print(f"[worker] record {job.record_id} error: {stall_detail}")
+                await _report_result_to_master(
+                    db, job.record_id, FileStatus.ERROR,
+                    pid=proc.pid, started_at=started_at, finished_at=finished_at,
+                    encoder=encoder,
+                    avg_fps=avg_fps, avg_speed=avg_speed,
+                    ffmpeg_cmd=worker_state.current_cmd,
+                )
+                worker_state.record_error()
                 return
             cancel_reason = worker_state.cancel_reason
             cancel_detail = worker_state.cancel_detail
