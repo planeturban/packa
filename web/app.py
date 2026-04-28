@@ -932,6 +932,31 @@ async def data_worker_encoder(request: Request):
             return JSONResponse({"error": str(exc)}, status_code=502)
 
 
+@app.post("/data/workers/cancel_thresholds")
+async def data_workers_cancel_thresholds(request: Request):
+    """Apply a cancel_thresholds value to all registered workers."""
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    value = body.get("value")  # list of [pct, ratio] pairs
+    async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
+        try:
+            workers_r = await client.get(f"{_master_url()}/workers")
+            workers_r.raise_for_status()
+            workers = workers_r.json()
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+        results = await asyncio.gather(*[
+            client.patch(
+                f"{_worker_url(w['host'], w['api_port'])}/config/cancel_thresholds",
+                json={"value": value},
+            )
+            for w in workers
+        ], return_exceptions=True)
+    errors = [str(r) for r in results if isinstance(r, Exception)]
+    return JSONResponse({"applied": len(workers) - len(errors), "errors": errors})
+
+
 @app.get("/data/worker")
 async def data_worker(request: Request, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
