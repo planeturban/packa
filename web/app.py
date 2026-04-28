@@ -106,7 +106,7 @@ def _master_url() -> str:
     return f"https://{_config.master_host}:{_config.master_port}"
 
 
-def _worker_url(host: str, api_port: int, worker_scheme: str = "https") -> str:
+def _worker_url(host: str, api_port: int, worker_scheme: str = "http") -> str:
     return f"{worker_scheme}://{host}:{api_port}"
 
 
@@ -427,7 +427,7 @@ async def data_files_pending(request: Request):
                     s = workers_map[worker_cfg]
                     worker_patches.append(
                         client.patch(
-                            f"{_worker_url(s['host'], s['api_port'])}/files/{i}/status",
+                            f"{_worker_url(s['host'], s['api_port'], s.get('scheme', 'http'))}/files/{i}/status",
                             json={"status": "pending"},
                         )
                     )
@@ -485,7 +485,7 @@ async def data_files_cancel(request: Request):
                     s = workers_map[worker_cfg]
                     worker_patches.append(
                         client.patch(
-                            f"{_worker_url(s['host'], s['api_port'])}/files/{i}/status",
+                            f"{_worker_url(s['host'], s['api_port'], s.get('scheme', 'http'))}/files/{i}/status",
                             json={"status": "cancelled"},
                         )
                     )
@@ -574,7 +574,7 @@ async def data_files_assign(request: Request):
         if jobs:
             try:
                 await client.post(
-                    f"{_worker_url(worker_info['host'], worker_info['api_port'])}/jobs/push",
+                    f"{_worker_url(worker_info['host'], worker_info['api_port'], worker_info.get('scheme', 'http'))}/jobs/push",
                     json=jobs,
                 )
             except Exception:
@@ -948,7 +948,7 @@ async def data_workers_cancel_thresholds(request: Request):
             return JSONResponse({"error": str(exc)}, status_code=502)
         results = await asyncio.gather(*[
             client.patch(
-                f"{_worker_url(w['host'], w['api_port'])}/config/cancel_thresholds",
+                f"{_worker_url(w['host'], w['api_port'], w.get('scheme', 'http'))}/config/cancel_thresholds",
                 json={"value": value},
             )
             for w in workers
