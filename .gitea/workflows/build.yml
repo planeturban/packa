@@ -38,7 +38,7 @@ jobs:
                     args:
                       - |
                         git clone --depth=1 --branch=${TAG} \
-                          http://token:\${GITEA_TOKEN}@gitea.harbour.svc.cluster.local:3000/${REPO_PATH}.git \
+                          http://token:\${GITEA_TOKEN}@gitea-http.harbour.svc.cluster.local:3000/${REPO_PATH}.git \
                           /workspace
                     env:
                       - name: GITEA_TOKEN
