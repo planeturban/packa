@@ -110,7 +110,6 @@ api_port         = 8000
 master_host      = "localhost"
 master_port      = 9000
 id               = "storage-01"   # unique ID; omit to auto-generate and persist a UUID
-# bootstrap_token = ""            # copy from master log on first run; stored after bootstrap
 
 [worker.paths]
 prefix = "/mnt/files/"   # prepended to paths from master; omit to reuse master prefix
@@ -131,7 +130,7 @@ cancel_thresholds = [[10.0, 1.10], [25.0, 1.05], [50.0, 1.0]]
 # key  = "/etc/packa/worker.key"
 ```
 
-> **Security:** The worker refuses to bind to a non-loopback address (`bind = "any"` / `0.0.0.0`) when TLS is not yet enabled. Provide a `bootstrap_token` or configure BYO certs before using a non-loopback bind. For development environments without TLS, pass `--insecure-no-tls`.
+> **Security:** The worker refuses to bind to a non-loopback address (`bind = "any"` / `0.0.0.0`) when TLS is not yet enabled. Use the web UI to onboard TLS (Onboard TLS button on the worker card), configure BYO certs, or pass `--insecure-no-tls` for development environments without TLS.
 
 `cancel_thresholds` is a list of `[progress%, ratio]` pairs. Once the given progress percentage is reached, ffmpeg is terminated early if the projected output size exceeds `source_size × ratio`. The tightest (highest progress) reached threshold applies. Set to `[]` to disable. As an environment variable: `PACKA_WORKER_CANCEL_THRESHOLDS=10.0:1.10,25.0:1.05,50.0:1.0`.
 
@@ -151,7 +150,6 @@ cancel_thresholds = [[10.0, 1.10], [25.0, 1.05], [50.0, 1.0]]
 | `PACKA_WORKER_POLL_INTERVAL` | `worker.worker.poll_interval` |
 | `PACKA_WORKER_CANCEL_THRESHOLDS` | `worker.worker.cancel_thresholds` (format: `"10.0:1.10,25.0:1.05"`) |
 | `PACKA_WORKER_ERROR_THRESHOLD` | `worker.worker.error_threshold` |
-| `PACKA_WORKER_BOOTSTRAP_TOKEN` | `worker.bootstrap_token` |
 | `PACKA_WORKER_TLS_CERT` | `worker.tls.cert` |
 | `PACKA_WORKER_TLS_KEY` | `worker.tls.key` |
 | `PACKA_TLS_CA` | `tls.ca` (shared CA for BYO-cert setups) |

@@ -16,7 +16,6 @@ Environment variables:
   PACKA_WORKER_FFMPEG_EXTRA_ARGS Extra ffmpeg arguments
   PACKA_WORKER_BATCH_SIZE        Jobs to claim per poll
   PACKA_WORKER_POLL_INTERVAL     Seconds between poll attempts
-  PACKA_WORKER_BOOTSTRAP_TOKEN   One-time token to obtain a TLS cert from master
 
 Flags:
   --bind             Address to bind the server ("any" → 0.0.0.0)
@@ -24,7 +23,6 @@ Flags:
   --master-host      Master hostname/IP
   --master-port      Master API port
   --advertise-host   IP/hostname to advertise to master (auto-detected if omitted)
-  --bootstrap-token  One-time token to obtain a TLS cert from master on first run
   --config           Path to TOML config file
 
 Usage:
@@ -42,7 +40,6 @@ def _ts_print(*args, **kwargs):
     _orig_print(datetime.now().strftime('%H:%M:%S'), *args, **kwargs)
 builtins.print = _ts_print
 
-import httpx
 import uvicorn
 
 from shared.config import load_worker
@@ -62,8 +59,8 @@ def _detect_host() -> str:
         return socket.gethostbyname(socket.gethostname())
 
 
-def _bootstrap_tls(config) -> None:
-    """Load stored TLS certs or fetch from master using bootstrap_token."""
+def _load_tls(config) -> None:
+    """Load stored TLS certs into config if available."""
     cert_pem = get_setting("tls.cert")
     key_pem  = get_setting("tls.key")
     ca_pem   = get_setting("tls.ca")
@@ -73,36 +70,6 @@ def _bootstrap_tls(config) -> None:
         config.tls.key_pem  = key_pem
         config.tls.ca_pem   = ca_pem
         print("[worker] TLS certs loaded from store")
-        return
-
-    if not config.bootstrap_token:
-        return
-
-    try:
-        r = httpx.post(
-            f"https://{config.master_host}:{config.master_port}/bootstrap",
-            json={"token": config.bootstrap_token, "cn": config.worker_id or "worker"},
-            verify=False,  # TOFU — master cert not yet trusted
-            timeout=10,
-        )
-        r.raise_for_status()
-    except Exception as exc:
-        print(f"[worker] TLS bootstrap failed: {exc}")
-        return
-    try:
-        bundle = r.json()
-        cert_pem = bundle["cert_pem"]
-        key_pem  = bundle["key_pem"]
-        ca_pem   = bundle["ca_pem"]
-        set_setting("tls.cert", cert_pem)
-        set_setting("tls.key",  key_pem)
-        set_setting("tls.ca",   ca_pem)
-        config.tls.cert_pem = cert_pem
-        config.tls.key_pem  = key_pem
-        config.tls.ca_pem   = ca_pem
-        print("[worker] TLS bootstrap successful")
-    except Exception as exc:
-        print(f"[worker] TLS bootstrap failed: {exc}")
 
 
 async def _main(bind: str, api_port: int, advertise_host: str | None, worker_id: str, tls) -> None:
@@ -128,8 +95,6 @@ def main() -> None:
     parser.add_argument("--master-port", type=int, default=None, help="Master API port")
     parser.add_argument("--advertise-host", default=None,
                         help="IP/hostname to advertise to master (auto-detected if omitted)")
-    parser.add_argument("--bootstrap-token", default=None,
-                        help="One-time token to obtain a TLS cert from master on first run")
     parser.add_argument("--insecure-no-tls", action="store_true",
                         help="Allow binding to a non-loopback address without TLS (unsafe)")
     parser.add_argument("--config", help="Path to TOML config file")
@@ -150,8 +115,6 @@ def main() -> None:
         args.advertise_host if args.advertise_host is not None
         else config.advertise_host or None
     )
-    if args.bootstrap_token is not None:
-        config.bootstrap_token = args.bootstrap_token
 
     # Seed/load worker config store (DB layer)
     file_values = config_store.read_file_values(args.config)
@@ -186,7 +149,7 @@ def main() -> None:
     if is_new:
         set_setting("first_run", "true")
 
-    _bootstrap_tls(config)
+    _load_tls(config)
 
     _loopback = {"127.0.0.1", "::1", "localhost"}
     if not config.tls.enabled and bind not in _loopback:
@@ -194,12 +157,12 @@ def main() -> None:
             print("[worker] WARNING: binding to non-loopback without TLS — unsafe, use only for testing")
         else:
             print("[worker] FATAL: refusing to bind to a non-loopback address without TLS. "
-                  "Provide a bootstrap_token, configure TLS certs, or pass --insecure-no-tls to override.")
+                  "Use the web UI to onboard TLS, configure BYO certs, or pass --insecure-no-tls to override.")
             import sys; sys.exit(1)
 
     print(f"[worker] bind: {bind}:{api_port}")
     print(f"[worker] path_prefix: {config.path_prefix!r}")
-    print(f"[worker] tls: {'bootstrapped' if config.tls.enabled else 'pending bootstrap'}")
+    print(f"[worker] tls: {'enabled' if config.tls.enabled else 'pending onboarding via web UI'}")
 
     asyncio.run(_main(
         bind=bind,
