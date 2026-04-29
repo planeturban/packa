@@ -266,7 +266,8 @@ class EncoderUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 
 @app.get("/status", response_model=WorkerStatus)
-def get_status():
+def get_status(request: Request):
+    _require_web_cert(request)
     p = worker_state.progress
     return WorkerStatus(
         state="processing" if worker_state.active else "idle",
@@ -305,7 +306,8 @@ def get_status():
 
 
 @app.post("/files", response_model=FileRecordOut, status_code=201)
-def submit_file(record: FileRecordCreate, db: Session = Depends(get_db)):
+def submit_file(record: FileRecordCreate, request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     if _config.path_prefix:
         record = record.model_copy(update={"file_path": _config.path_prefix + record.file_path})
     db_record = crud.create_file_record(db, record)
@@ -316,12 +318,14 @@ def submit_file(record: FileRecordCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/files", response_model=list[FileRecordOut])
-def list_files(status: FileStatus | None = None, db: Session = Depends(get_db)):
+def list_files(request: Request, status: FileStatus | None = None, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     return crud.get_all_records(db, status=status)
 
 
 @app.get("/files/{record_id}", response_model=FileRecordOut)
-def get_file(record_id: int, db: Session = Depends(get_db)):
+def get_file(record_id: int, request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     record = crud.get_file_record(db, record_id)
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
@@ -345,7 +349,8 @@ def delete_file(record_id: int, db: Session = Depends(get_db)):
 
 
 @app.patch("/files/{record_id}/status", response_model=FileRecordOut)
-def update_status(record_id: int, body: StatusUpdate, db: Session = Depends(get_db)):
+def update_status(record_id: int, body: StatusUpdate, request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     record = crud.update_status(db, record_id, body.status)
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
@@ -353,7 +358,8 @@ def update_status(record_id: int, body: StatusUpdate, db: Session = Depends(get_
 
 
 @app.post("/jobs/push", status_code=202)
-def push_jobs(jobs: list[FileRecordCreate], db: Session = Depends(get_db)):
+def push_jobs(jobs: list[FileRecordCreate], request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     queued = 0
     for job in jobs:
         full_path = (_config.path_prefix + job.file_path) if _config.path_prefix else job.file_path
@@ -378,7 +384,8 @@ def push_jobs(jobs: list[FileRecordCreate], db: Session = Depends(get_db)):
 
 
 @app.post("/conversion/stop")
-def stop_conversion():
+def stop_conversion(request: Request):
+    _require_web_cert(request)
     if not worker_state.active or worker_state.proc is None:
         raise HTTPException(status_code=409, detail="No conversion running")
     if worker_state.paused:
@@ -389,7 +396,8 @@ def stop_conversion():
 
 
 @app.post("/conversion/pause")
-def pause_conversion():
+def pause_conversion(request: Request):
+    _require_web_cert(request)
     if not worker_state.active or worker_state.proc is None:
         raise HTTPException(status_code=409, detail="No conversion running")
     if worker_state.paused:
@@ -399,7 +407,8 @@ def pause_conversion():
 
 
 @app.post("/conversion/resume")
-def resume_conversion():
+def resume_conversion(request: Request):
+    _require_web_cert(request)
     if worker_state.paused:
         if worker_state.proc is not None:
             worker_state.proc.send_signal(signal.SIGCONT)
@@ -408,18 +417,21 @@ def resume_conversion():
 
 
 @app.post("/conversion/drain")
-def drain_conversion():
+def drain_conversion(request: Request):
+    _require_web_cert(request)
     worker_state.drain = True
 
 
 @app.post("/conversion/sleep")
-def sleep_conversion():
+def sleep_conversion(request: Request):
+    _require_web_cert(request)
     worker_state.sleeping = True
     worker_state.drain = False
 
 
 @app.post("/conversion/wake")
-def wake_conversion():
+def wake_conversion(request: Request):
+    _require_web_cert(request)
     worker_state.sleeping = False
     worker_state.drain = False
     worker_state.disk_full = False
@@ -432,12 +444,14 @@ def wake_conversion():
 # ---------------------------------------------------------------------------
 
 @app.get("/settings")
-def get_settings():
+def get_settings(request: Request):
+    _require_web_cert(request)
     return {"encoder": worker_state.encoder, "batch_size": worker_state.batch_size, "replace_original": worker_state.replace_original}
 
 
 @app.post("/settings")
-def update_settings(body: EncoderUpdate):
+def update_settings(body: EncoderUpdate, request: Request):
+    _require_web_cert(request)
     if body.encoder not in worker_state.presets:
         raise HTTPException(
             status_code=400,
@@ -475,7 +489,8 @@ class TlsBootstrapRequest(BaseModel):
 
 
 @app.post("/tls/bootstrap")
-async def tls_bootstrap(body: TlsBootstrapRequest):
+async def tls_bootstrap(body: TlsBootstrapRequest, request: Request):
+    _require_web_cert(request)
     """Fetch a TLS cert bundle from master using a bootstrap token. Restart required after."""
     if get_setting("tls.cert") and get_setting("tls.key") and get_setting("tls.ca"):
         raise HTTPException(
@@ -513,6 +528,22 @@ def _peer_has_cert(request: Request) -> bool:
         return False
 
 
+def _peer_cn(request: Request) -> str | None:
+    """Return the CN from the peer's client cert, or None if absent or no TLS."""
+    try:
+        ssl_obj = request.scope["extensions"]["tls"]["ssl_object"]
+        cert = ssl_obj.getpeercert() if ssl_obj else None
+        if not cert:
+            return None
+        for rdn in cert.get("subject", ()):
+            for key, val in rdn:
+                if key == "commonName":
+                    return val
+    except (KeyError, TypeError, AttributeError):
+        pass
+    return None
+
+
 def _require_localhost_or_mtls(request: Request) -> None:
     host = request.client.host if request.client else ""
     if host in ("127.0.0.1", "::1"):
@@ -522,9 +553,21 @@ def _require_localhost_or_mtls(request: Request) -> None:
     raise HTTPException(status_code=403, detail="Requires mTLS or localhost")
 
 
+def _require_web_cert(request: Request) -> None:
+    """Require CN=web client cert. Loopback and non-TLS connections are exempt."""
+    host = request.client.host if request.client else ""
+    if host in ("127.0.0.1", "::1"):
+        return
+    cn = _peer_cn(request)
+    if cn is None:
+        return  # non-TLS deployment — no cert enforcement
+    if cn != "web":
+        raise HTTPException(status_code=403, detail="Web certificate required")
+
+
 @app.post("/restart")
 def restart_worker(request: Request):
-    _require_localhost_or_mtls(request)
+    _require_web_cert(request)
     _schedule_restart()
     return {"ok": True}
 
@@ -543,7 +586,8 @@ def _schedule_restart() -> None:
 
 
 @app.get("/config")
-def get_worker_config():
+def get_worker_config(request: Request):
+    _require_web_cert(request)
     file_values = config_store.read_file_values(_config_path)
     env_values = config_store.read_env_values()
     db_values = config_store.read_db_values()
@@ -563,7 +607,8 @@ def get_worker_config():
 
 
 @app.patch("/config/{key}")
-def update_worker_config(key: str, body: ConfigValueUpdate):
+def update_worker_config(key: str, body: ConfigValueUpdate, request: Request):
+    _require_web_cert(request)
     fld = config_store.field(key)
     if fld is None:
         raise HTTPException(status_code=404, detail=f"Unknown key {key!r}")
@@ -577,7 +622,8 @@ def update_worker_config(key: str, body: ConfigValueUpdate):
 
 
 @app.delete("/config/{key}")
-def clear_worker_config(key: str):
+def clear_worker_config(key: str, request: Request):
+    _require_web_cert(request)
     fld = config_store.field(key)
     if fld is None:
         raise HTTPException(status_code=404, detail=f"Unknown key {key!r}")
@@ -588,7 +634,8 @@ def clear_worker_config(key: str):
 
 
 @app.post("/config/{key}/restore")
-def restore_worker_config(key: str, body: ConfigRestore):
+def restore_worker_config(key: str, body: ConfigRestore, request: Request):
+    _require_web_cert(request)
     fld = config_store.field(key)
     if fld is None:
         raise HTTPException(status_code=404, detail=f"Unknown key {key!r}")
