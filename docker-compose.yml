@@ -23,6 +23,7 @@ services:
       PGID: "${PGID:-1000}"
       PACKA_WORKER_MASTER_HOST: master
       PACKA_WORKER_ADVERTISE_HOST: worker
+      PACKA_EXTRA_ARGS: "--insecure-no-tls"
     ports:
       - "8000:8000"
     volumes:
@@ -42,6 +43,7 @@ services:
       PUID: "${PUID:-1000}"
       PGID: "${PGID:-1000}"
       PACKA_WEB_MASTER_HOST: master
+      PACKA_EXTRA_ARGS: "--insecure-no-auth"
     ports:
       - "8080:8080"
     volumes:
