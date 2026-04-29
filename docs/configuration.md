@@ -1,5 +1,33 @@
 # Configuration
 
+## CLI
+
+Install the package to get the `packa` command:
+
+```bash
+pip install -e .
+```
+
+Then start each role with:
+
+```bash
+packa master  [--config packa.toml] [--bind any] [--api-port 9000]
+packa worker  [--config packa.toml] [--bind any] [--api-port 8000] [--insecure-no-tls]
+packa web     [--config packa.toml] [--bind any] [--port 8080] [--insecure-no-auth]
+```
+
+Generate a new TLS bootstrap token from a running master:
+
+```bash
+packa bootstrap-token [--config packa.toml] [--master-host localhost] [--master-port 9000]
+```
+
+The token is printed to stdout; the expiry time is printed to stderr so the token can be piped safely.
+
+---
+
+## Config file
+
 All three processes share one config file (`packa.toml`). Copy the example to get started:
 
 ```bash
@@ -93,19 +121,23 @@ output_dir = "/mnt/output"
 # extra_args = ""
 
 [worker.worker]
-poll_interval     = 5   # seconds between polls when queue is empty
+poll_interval     = 5    # seconds between polls when queue is empty
+stall_timeout     = 120  # seconds without ffmpeg progress before the job is killed and set to error (0 = disabled)
 cancel_thresholds = [[10.0, 1.10], [25.0, 1.05], [50.0, 1.0]]
-# error_threshold = 5   # auto-sleep after N consecutive errors (0 = disabled)
+# error_threshold = 5    # auto-sleep after N consecutive errors (0 = disabled)
 
 # [worker.tls]                     # BYO cert (overrides bootstrapped certs)
 # cert = "/etc/packa/worker.crt"
 # key  = "/etc/packa/worker.key"
 ```
 
+> **Security:** The worker refuses to bind to a non-loopback address (`bind = "any"` / `0.0.0.0`) when TLS is not yet enabled. Provide a `bootstrap_token` or configure BYO certs before using a non-loopback bind. For development environments without TLS, pass `--insecure-no-tls`.
+
 `cancel_thresholds` is a list of `[progress%, ratio]` pairs. Once the given progress percentage is reached, ffmpeg is terminated early if the projected output size exceeds `source_size × ratio`. The tightest (highest progress) reached threshold applies. Set to `[]` to disable. As an environment variable: `PACKA_WORKER_CANCEL_THRESHOLDS=10.0:1.10,25.0:1.05,50.0:1.0`.
 
 | Environment variable | Config key |
 |----------------------|------------|
+| `PACKA_WORKER_STALL_TIMEOUT` | `worker.worker.stall_timeout` |
 | `PACKA_WORKER_BIND` | `worker.bind` |
 | `PACKA_WORKER_API_PORT` | `worker.api_port` |
 | `PACKA_WORKER_ID` | `worker.id` |
@@ -181,6 +213,8 @@ password   = "change-me"
 ```
 
 `secret_key` is auto-generated and persisted in `web.db` — no need to set it manually.
+
+> **Security:** The web process refuses to bind to a non-loopback address (`bind = "any"` / `0.0.0.0`) without `username` and `password` configured. For development environments without auth, pass `--insecure-no-auth`.
 
 | Environment variable | Config key |
 |----------------------|------------|

@@ -130,6 +130,8 @@ def main() -> None:
                         help="IP/hostname to advertise to master (auto-detected if omitted)")
     parser.add_argument("--bootstrap-token", default=None,
                         help="One-time token to obtain a TLS cert from master on first run")
+    parser.add_argument("--insecure-no-tls", action="store_true",
+                        help="Allow binding to a non-loopback address without TLS (unsafe)")
     parser.add_argument("--config", help="Path to TOML config file")
     args = parser.parse_args()
 
@@ -185,6 +187,15 @@ def main() -> None:
         set_setting("first_run", "true")
 
     _bootstrap_tls(config)
+
+    _loopback = {"127.0.0.1", "::1", "localhost"}
+    if not config.tls.enabled and bind not in _loopback:
+        if args.insecure_no_tls:
+            print("[worker] WARNING: binding to non-loopback without TLS — unsafe, use only for testing")
+        else:
+            print("[worker] FATAL: refusing to bind to a non-loopback address without TLS. "
+                  "Provide a bootstrap_token, configure TLS certs, or pass --insecure-no-tls to override.")
+            import sys; sys.exit(1)
 
     print(f"[worker] bind: {bind}:{api_port}")
     print(f"[worker] path_prefix: {config.path_prefix!r}")

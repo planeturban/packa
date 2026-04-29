@@ -89,7 +89,8 @@ ffmpeg [input_args] -i {file} -map 0 -c copy {video_args} [extra_args] -progress
 - The worker does not run ffprobe. The master probe loop analyses every `scanning` record (codec, resolution, bitrate, duration) and either promotes it to `pending` or sets it to `discarded` (already HEVC). Only `pending` records with a known duration are sent to workers.
 - Output size is monitored every 5 seconds. If the actual output grows larger than the source, ffmpeg is terminated and the record is set to `cancelled`.
 - The projected output size (estimated from progress and current bitrate) is also checked per progress frame against a set of stepped thresholds (`cancel_thresholds`). Each threshold is a `[progress%, ratio]` pair. Once that progress percentage is reached, ffmpeg is terminated early if the projection exceeds `source_size × ratio`. The tightest (highest progress) reached threshold applies. An empty list disables the check.
-- When `replace_original` is enabled (set per worker in the dashboard), the output file is moved back to the original source path on success. If the move fails the record is set to `error` and the output file remains in `output_dir`.
+- When `replace_original` is enabled (set per worker in the dashboard), the output is verified with ffprobe before being moved back to the source path. If the output has no readable video or zero duration it is deleted and the record is set to `error` — the source is never overwritten with a corrupt file. If the move itself fails the record is set to `error` and the output remains in `output_dir`.
+- A stall watchdog monitors ffmpeg progress. If no progress frame arrives within `stall_timeout` seconds (default 120, 0 = disabled), ffmpeg is killed and the record is set to `error`. This handles both "never started" and "froze mid-encode" cases.
 - On restart, any partial output files from interrupted jobs are deleted and those records are re-queued as `pending`.
 
 ## Duplicate detection
@@ -110,15 +111,18 @@ A worker's ID is resolved in this order:
 
 ## Security
 
-**mTLS is mandatory for all inter-node communication.**
+**mTLS is strongly recommended for all inter-node communication.**
 
-- On first start master auto-generates a CA and server cert (stored in `master.db`) and prints a **bootstrap token** (valid 10 minutes, multi-use) to the log.
-- Workers and the web process exchange this token for a signed client cert via `POST /bootstrap`. The first connection uses TOFU (`verify=False`); all subsequent connections verify against the CA.
+- On first start master auto-generates a CA and server cert (stored in `master.db`) and prints a **bootstrap token** (valid 10 minutes) to the log.
+- Workers and the web process exchange this token for a signed client cert via `POST /bootstrap`. The first connection uses TOFU (`verify=False`); all subsequent connections verify against the CA. Web bootstrap does not fall back to HTTP — if HTTPS fails, bootstrap fails.
 - Bootstrapped certs are persisted in `worker.db` and `web.db` and loaded automatically on restart.
 - BYO certs are supported — set `cert`/`key` in the relevant `[*.tls]` section and those override any bootstrapped certs.
 - Master runs with `CERT_OPTIONAL` so `/bootstrap` stays reachable before a node has a cert. Workers run with `CERT_REQUIRED` — once bootstrapped they only accept connections from CA-signed clients.
-- Web authentication (username/password) is optional and protects the browser-facing interface. `secret_key` is auto-generated and persisted in `web.db`.
-- Master and worker APIs have no per-request authentication beyond mTLS — do not expose them to untrusted networks.
+- Sensitive master endpoints (`/tls/token`, `/restart`) require either a loopback origin or a verified CA-signed client certificate. A TLS connection without a client cert is not sufficient.
+- **Worker** refuses to bind to a non-loopback address when TLS is not yet enabled. Use `--insecure-no-tls` to override (dev/testing only).
+- **Web** refuses to bind to a non-loopback address without credentials configured. Use `--insecure-no-auth` to override (dev/testing only).
+- Web authentication (username/password) protects the browser-facing interface. `secret_key` is auto-generated and persisted in `web.db`. Auth can be disabled by omitting credentials, but only on loopback — see above.
+- Master and worker APIs have no per-request application-layer authentication beyond mTLS — do not expose them to untrusted networks.
 
 ---
 

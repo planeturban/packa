@@ -94,8 +94,8 @@ def _logged_in(request: Request) -> bool:
         try:
             decoded = base64.b64decode(auth[6:]).decode("utf-8")
             username, _, password = decoded.partition(":")
-            if (username == _config.username
-                    and secrets.compare_digest(password, _config.password)):
+            if (secrets.compare_digest(username, _config.username or "")
+                    and secrets.compare_digest(password, _config.password or "")):
                 return True
         except Exception:
             pass
