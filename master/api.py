@@ -489,7 +489,8 @@ class ScanStatus(BaseModel):
 # ---------------------------------------------------------------------------
 
 @app.post("/workers", response_model=WorkerOut, status_code=201)
-def register_worker(body: WorkerRegister):
+def register_worker(body: WorkerRegister, request: Request):
+    _require_worker_cert(request)
     worker = registry.register(body.config_id, body.host, body.api_port, body.scheme)
     print(f"[master] registered: {worker}")
     return worker
@@ -501,7 +502,8 @@ def list_workers():
 
 
 @app.delete("/workers/{config_id}", status_code=204)
-def remove_worker(config_id: str):
+def remove_worker(config_id: str, request: Request):
+    _require_web_cert(request)
     if not registry.remove_by_config_id(config_id):
         raise HTTPException(status_code=404, detail="Worker not found")
 
@@ -511,7 +513,8 @@ def remove_worker(config_id: str):
 # ---------------------------------------------------------------------------
 
 @app.post("/transfer", response_model=FileRecordOut, status_code=201)
-def transfer_file(body: TransferRequest, db: Session = Depends(get_db)):
+def transfer_file(body: TransferRequest, request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     try:
         video = collect(body.file_path)
     except FileNotFoundError as exc:
@@ -576,7 +579,8 @@ def assign_jobs(body: AssignRequest, db: Session = Depends(get_db)):
 
 
 @app.post("/jobs/claim", response_model=list[ClaimOut])
-def claim_jobs(body: ClaimRequest, db: Session = Depends(get_db)):
+def claim_jobs(body: ClaimRequest, request: Request, db: Session = Depends(get_db)):
+    _require_worker_cert(request)
     records = (
         db.query(FileRecord)
         .filter(FileRecord.status == FileStatus.PENDING, FileRecord.duration.isnot(None))
@@ -612,7 +616,8 @@ def claim_jobs(body: ClaimRequest, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 @app.patch("/files/{record_id}/result", response_model=FileRecordOut)
-def update_file_result(record_id: int, body: FileResultUpdate, db: Session = Depends(get_db)):
+def update_file_result(record_id: int, body: FileResultUpdate, request: Request, db: Session = Depends(get_db)):
+    _require_worker_cert(request)
     record = crud.update_conversion_result(
         db, record_id,
         status=body.status,
@@ -652,7 +657,8 @@ def get_worker_stats(worker_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/master/config")
-def get_master_config(db: Session = Depends(get_db)):
+def get_master_config(request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     file_values = config_store.read_file_values(_config_path)
     env_values = config_store.read_env_values()
     db_values = config_store.read_db_values(db)
@@ -691,7 +697,8 @@ def _reapply_config(db: Session) -> None:
 
 
 @app.patch("/master/config/{key}")
-def update_master_config(key: str, body: ConfigValueUpdate, db: Session = Depends(get_db)):
+def update_master_config(key: str, body: ConfigValueUpdate, request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     fld = config_store.field(key)
     if fld is None:
         raise HTTPException(status_code=404, detail=f"Unknown key {key!r}")
@@ -705,7 +712,8 @@ def update_master_config(key: str, body: ConfigValueUpdate, db: Session = Depend
 
 
 @app.delete("/master/config/{key}")
-def clear_master_config(key: str, db: Session = Depends(get_db)):
+def clear_master_config(key: str, request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     fld = config_store.field(key)
     if fld is None:
         raise HTTPException(status_code=404, detail=f"Unknown key {key!r}")
@@ -716,7 +724,8 @@ def clear_master_config(key: str, db: Session = Depends(get_db)):
 
 
 @app.post("/master/config/{key}/restore")
-def restore_master_config(key: str, body: ConfigRestore, db: Session = Depends(get_db)):
+def restore_master_config(key: str, body: ConfigRestore, request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     fld = config_store.field(key)
     if fld is None:
         raise HTTPException(status_code=404, detail=f"Unknown key {key!r}")
@@ -739,7 +748,7 @@ def restore_master_config(key: str, body: ConfigRestore, db: Session = Depends(g
 
 @app.post("/restart")
 def restart_master(request: Request):
-    _require_localhost_or_mtls(request)
+    _require_web_cert(request)
     import os, signal, threading
     threading.Thread(target=lambda: (
         __import__('time').sleep(0.2),
@@ -838,7 +847,8 @@ def get_file(record_id: int, db: Session = Depends(get_db)):
 
 
 @app.patch("/files/{record_id}/status", response_model=FileRecordOut)
-def update_file_status(record_id: int, body: StatusUpdate, db: Session = Depends(get_db)):
+def update_file_status(record_id: int, body: StatusUpdate, request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     record = crud.update_status(db, record_id, body.status)
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
@@ -852,7 +862,8 @@ def update_file_status(record_id: int, body: StatusUpdate, db: Session = Depends
 
 
 @app.delete("/files/{record_id}", status_code=204)
-async def delete_file(record_id: int, db: Session = Depends(get_db)):
+async def delete_file(record_id: int, request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     record = crud.get_file_record(db, record_id)
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
@@ -873,7 +884,8 @@ class BulkDeleteRequest(BaseModel):
 
 
 @app.post("/files/bulk-delete", status_code=200)
-async def bulk_delete_files(body: BulkDeleteRequest, db: Session = Depends(get_db)):
+async def bulk_delete_files(body: BulkDeleteRequest, request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     records = crud.delete_file_records_bulk(db, body.ids)
     # Group by worker and fan out deletions in parallel
     by_worker: dict[str, list[int]] = {}
@@ -899,7 +911,8 @@ async def bulk_delete_files(body: BulkDeleteRequest, db: Session = Depends(get_d
 # ---------------------------------------------------------------------------
 
 @app.post("/scan/start", response_model=ScanStatus, status_code=202)
-async def scan_start():
+async def scan_start(request: Request):
+    _require_web_cert(request)
     if _scan.running:
         raise HTTPException(status_code=409, detail="Scan already running")
     if not _config.path_prefix:
@@ -913,7 +926,8 @@ async def scan_start():
 
 
 @app.post("/scan/stop", response_model=ScanStatus)
-def scan_stop():
+def scan_stop(request: Request):
+    _require_web_cert(request)
     if not _scan.cancel():
         raise HTTPException(status_code=409, detail="No scan running")
     return ScanStatus(running=_scan.running, found=_scan.found, skipped=_scan.skipped,
@@ -961,6 +975,22 @@ def _peer_has_cert(request: Request) -> bool:
         return False
 
 
+def _peer_cn(request: Request) -> str | None:
+    """Return the CN from the peer's client cert, or None if absent or no TLS."""
+    try:
+        ssl_obj = request.scope["extensions"]["tls"]["ssl_object"]
+        cert = ssl_obj.getpeercert() if ssl_obj else None
+        if not cert:
+            return None
+        for rdn in cert.get("subject", ()):
+            for key, val in rdn:
+                if key == "commonName":
+                    return val
+    except (KeyError, TypeError, AttributeError):
+        pass
+    return None
+
+
 def _require_localhost_or_mtls(request: Request) -> None:
     """Guard for sensitive endpoints. Requires localhost origin or a valid client cert.
     Checking scheme alone is insufficient — CERT_OPTIONAL means any TLS connection passes."""
@@ -970,6 +1000,30 @@ def _require_localhost_or_mtls(request: Request) -> None:
     if _peer_has_cert(request):
         return
     raise HTTPException(status_code=403, detail="Token endpoints require mTLS")
+
+
+def _require_web_cert(request: Request) -> None:
+    """Require CN=web client cert. Loopback and non-TLS connections are exempt."""
+    host = request.client.host if request.client else ""
+    if host in ("127.0.0.1", "::1"):
+        return
+    cn = _peer_cn(request)
+    if cn is None:
+        return  # non-TLS deployment — no cert enforcement
+    if cn != "web":
+        raise HTTPException(status_code=403, detail="Web certificate required")
+
+
+def _require_worker_cert(request: Request) -> None:
+    """Require a non-web client cert (worker endpoints). Loopback and non-TLS exempt."""
+    host = request.client.host if request.client else ""
+    if host in ("127.0.0.1", "::1"):
+        return
+    cn = _peer_cn(request)
+    if cn is None:
+        return  # non-TLS deployment — no cert enforcement
+    if cn == "web":
+        raise HTTPException(status_code=403, detail="Worker certificate required")
 
 
 @app.get("/tls/token")
