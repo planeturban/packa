@@ -952,13 +952,22 @@ def bootstrap_node(body: BootstrapRequest, db: Session = Depends(get_db)):
     return CertBundle(cert_pem=cert_pem, key_pem=key_pem, ca_pem=ca_pem)
 
 
+def _peer_has_cert(request: Request) -> bool:
+    """Return True if the request arrived with a CA-signed client certificate."""
+    try:
+        ssl_obj = request.scope["extensions"]["tls"]["ssl_object"]
+        return ssl_obj is not None and ssl_obj.getpeercert() is not None
+    except (KeyError, TypeError, AttributeError):
+        return False
+
+
 def _require_localhost_or_mtls(request: Request) -> None:
-    """Guard for token endpoints. Master uses CERT_OPTIONAL so /bootstrap stays reachable
-    pre-cert; HTTPS here means the connection at least went through TLS."""
+    """Guard for sensitive endpoints. Requires localhost origin or a valid client cert.
+    Checking scheme alone is insufficient — CERT_OPTIONAL means any TLS connection passes."""
     host = request.client.host if request.client else ""
     if host in ("127.0.0.1", "::1"):
         return
-    if request.url.scheme == "https":
+    if _peer_has_cert(request):
         return
     raise HTTPException(status_code=403, detail="Token endpoints require mTLS")
 
@@ -976,7 +985,7 @@ def create_tls_token(request: Request, db: Session = Depends(get_db)):
     _require_localhost_or_mtls(request)
     token = generate_token(db)
     info = get_token_info(db)
-    print(f"[tls] new bootstrap token: {token}")
+    print(f"[tls] new bootstrap token: {token[:8]}… (full token in API response)")
     return info
 
 

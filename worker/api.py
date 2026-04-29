@@ -504,11 +504,20 @@ async def tls_bootstrap(body: TlsBootstrapRequest):
     return {"ok": True}
 
 
+def _peer_has_cert(request: Request) -> bool:
+    """Return True if the request arrived with a CA-signed client certificate."""
+    try:
+        ssl_obj = request.scope["extensions"]["tls"]["ssl_object"]
+        return ssl_obj is not None and ssl_obj.getpeercert() is not None
+    except (KeyError, TypeError, AttributeError):
+        return False
+
+
 def _require_localhost_or_mtls(request: Request) -> None:
     host = request.client.host if request.client else ""
     if host in ("127.0.0.1", "::1"):
         return
-    if request.url.scheme == "https":
+    if _peer_has_cert(request):
         return
     raise HTTPException(status_code=403, detail="Requires mTLS or localhost")
 
