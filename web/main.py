@@ -63,29 +63,25 @@ def _bootstrap_tls(config: WebConfig) -> None:
     if not config.bootstrap_token:
         return
 
-    # Try HTTPS first (verify=False — TOFU on first connection), then fall back to HTTP.
     # Retry up to 5 times to handle transient startup timing issues.
     r = None
     for attempt in range(5):
         if attempt:
             import time as _time
             _time.sleep(3)
-        for scheme, verify in (("https", False), ("http", True)):
-            try:
-                r = httpx.post(
-                    f"{scheme}://{config.master_host}:{config.master_port}/bootstrap",
-                    json={"token": config.bootstrap_token, "cn": "web"},
-                    verify=verify,
-                    timeout=10,
-                )
-                r.raise_for_status()
-                break
-            except Exception:
-                r = None
-        if r is not None:
+        try:
+            r = httpx.post(
+                f"https://{config.master_host}:{config.master_port}/bootstrap",
+                json={"token": config.bootstrap_token, "cn": "web"},
+                verify=False,  # TOFU — master cert not yet trusted
+                timeout=10,
+            )
+            r.raise_for_status()
             break
+        except Exception:
+            r = None
     if r is None:
-        print("[web] TLS bootstrap failed: could not reach master on https or http")
+        print("[web] TLS bootstrap failed: could not reach master")
         return
     try:
         bundle = r.json()
@@ -117,6 +113,8 @@ def main() -> None:
     parser.add_argument("--master-port", type=int, default=None, help="Master API port")
     parser.add_argument("--bootstrap-token", default=None,
                         help="One-time token to obtain a TLS cert from master on first run")
+    parser.add_argument("--insecure-no-auth", action="store_true",
+                        help="Allow binding to a non-loopback address without credentials (unsafe)")
     parser.add_argument("--config", help="Path to TOML config file")
     args = parser.parse_args()
 
@@ -160,7 +158,16 @@ def main() -> None:
     print(f"[web] bind: {bind}:{config.port}")
     print(f"[web] master: {config.master_host}:{config.master_port}")
     print(f"[web] tls: {'bootstrapped' if config.tls.enabled else 'pending bootstrap'}")
-    if not (config.username and config.password):
+
+    _loopback = {"127.0.0.1", "::1", "localhost"}
+    if not (config.username and config.password) and bind not in _loopback:
+        if args.insecure_no_auth:
+            print("[web] WARNING: authentication is disabled on a non-loopback address — unsafe, use only for testing")
+        else:
+            print("[web] FATAL: refusing to bind to a non-loopback address without credentials. "
+                  "Set [web].username and [web].password, or pass --insecure-no-auth to override.")
+            import sys; sys.exit(1)
+    elif not (config.username and config.password):
         print("[web] WARNING: authentication is disabled — the dashboard is accessible without login")
 
     asyncio.run(_main(bind=bind, port=config.port))
