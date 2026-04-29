@@ -88,7 +88,6 @@ class Config:
     advertise_host: str = ""
     worker_id: str = ""
     path_prefix: str = ""
-    bootstrap_token: str = ""
     ffmpeg: FfmpegConfig = field(default_factory=FfmpegConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     scan: ScanConfig = field(default_factory=ScanConfig)
@@ -218,7 +217,6 @@ def load_worker(config_path: str | None) -> Config:
             presets=presets,
             available_encoders=available_encoders,
         ),
-        bootstrap_token=_env("PACKA_WORKER_BOOTSTRAP_TOKEN", worker.get("bootstrap_token", "")),
         worker=WorkerConfig(
             batch_size=_env_int("PACKA_WORKER_BATCH_SIZE", worker_data.get("batch_size", 1)),
             poll_interval=_env_int("PACKA_WORKER_POLL_INTERVAL", worker_data.get("poll_interval", 5)),
