@@ -337,6 +337,29 @@ async def _monitor_output_size(output_path: str, source_size: int, proc: asyncio
             pass
 
 
+async def _output_is_valid(output_path: str) -> bool:
+    """Return True if ffprobe reports a readable video with non-zero duration."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1",
+            output_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        for line in stdout.decode().splitlines():
+            if line.startswith("duration="):
+                val = line.split("=", 1)[1].strip()
+                if val not in ("", "N/A") and float(val) > 0:
+                    return True
+        return False
+    except Exception:
+        return False
+
+
 async def _monitor_stall(proc: asyncio.subprocess.Process, timeout_s: int) -> None:
     if timeout_s <= 0:
         return
@@ -537,6 +560,26 @@ async def _process(job: Job) -> None:
             worker_state.record_success()
         else:
             if worker_state.replace_original:
+                if not await _output_is_valid(output_path):
+                    print(f"[worker] record {job.record_id} output failed integrity check — refusing to replace original")
+                    os.unlink(output_path)
+                    update_conversion_result(
+                        db, job.record_id,
+                        status=FileStatus.ERROR,
+                        pid=proc.pid, output_size=output_size,
+                        started_at=started_at, finished_at=finished_at,
+                        encoder=encoder,
+                        avg_fps=avg_fps, avg_speed=avg_speed,
+                    )
+                    await _report_result_to_master(
+                        db, job.record_id, FileStatus.ERROR,
+                        pid=proc.pid, output_size=output_size,
+                        started_at=started_at, finished_at=finished_at,
+                        encoder=encoder,
+                        avg_fps=avg_fps, avg_speed=avg_speed,
+                    )
+                    worker_state.record_error()
+                    return
                 try:
                     shutil.move(output_path, job.file_path)
                     print(f"[worker] record {job.record_id} moved output → {job.file_path}")
