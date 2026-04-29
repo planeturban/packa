@@ -22,13 +22,13 @@ fi
 
 case "$ROLE" in
   master)
-    exec packa master --config "$CONFIG" --bind any
+    exec packa master --config "$CONFIG" --bind any ${PACKA_EXTRA_ARGS:-}
     ;;
   worker)
-    exec packa worker --config "$CONFIG" --bind any
+    exec packa worker --config "$CONFIG" --bind any ${PACKA_EXTRA_ARGS:-}
     ;;
   web)
-    exec packa web --config "$CONFIG" --bind any
+    exec packa web --config "$CONFIG" --bind any ${PACKA_EXTRA_ARGS:-}
     ;;
   *)
     echo "Unknown role: $ROLE. Must be master, worker, or web." >&2
