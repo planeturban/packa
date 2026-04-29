@@ -317,6 +317,7 @@ tr:hover td { background: var(--surface2); }
 .btn-danger { color: var(--red); border-color: var(--red-bg); }
 .btn-danger:hover { background: var(--red-bg); }
 .btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-active { background: var(--accent) !important; color: var(--bg) !important; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
 
 /* ── Inputs ─────────────────────────────────────────────────────────── */

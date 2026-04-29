@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -236,16 +236,31 @@ def get_stats(db: Session) -> dict:
             "avg_src_bitrate_bps": round(avg_src_br, 0) if avg_src_br is not None else None,
         }
 
+    cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
+    enc_time_24h: dict[str, float] = {}
+    for sid, enc_secs in db.query(
+        FileRecord.worker_id, func.sum(_dur),
+    ).filter(
+        FileRecord.status == FileStatus.COMPLETE,
+        FileRecord.started_at.isnot(None),
+        FileRecord.finished_at.isnot(None),
+        FileRecord.finished_at >= cutoff_24h,
+    ).group_by(FileRecord.worker_id).all():
+        enc_time_24h[sid or "unknown"] = enc_secs or 0.0
+
     by_worker = []
-    for sid, j, in_b, out_b, dur in db.query(
+    for sid, j, in_b, out_b, dur, enc_secs in db.query(
         FileRecord.worker_id, func.count(FileRecord.id),
         func.sum(FileRecord.file_size), func.sum(FileRecord.output_size), func.avg(_dur),
+        func.sum(_dur),
     ).filter(*_f).group_by(FileRecord.worker_id).all():
         in_b, out_b = in_b or 0, out_b or 0
         w_dur = dur or 0
         w_mb_per_s = ((in_b / j) / 1_048_576 / w_dur) if (j and w_dur) else None
+        wid = sid or "unknown"
+        secs_24h = enc_time_24h.get(wid, 0.0)
         by_worker.append({
-            "worker_id": sid or "unknown",
+            "worker_id": wid,
             "jobs": j or 0,
             "total_input_bytes": in_b,
             "total_output_bytes": out_b,
@@ -253,6 +268,8 @@ def get_stats(db: Session) -> dict:
             "avg_compression_ratio": round(out_b / in_b, 3) if in_b else 0.0,
             "avg_duration_seconds": round(w_dur, 1),
             "avg_mb_per_s": round(w_mb_per_s, 2) if w_mb_per_s is not None else None,
+            "total_encoding_seconds": round(enc_secs or 0, 0),
+            "utilisation_24h_pct": round(min(secs_24h / 864, 100), 1),  # 864 = 86400/100
         })
 
     by_day = []
