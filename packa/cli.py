@@ -24,6 +24,7 @@ def main() -> None:
     p_worker.add_argument("--master-port", type=int, default=None)
     p_worker.add_argument("--advertise-host", default=None)
     p_worker.add_argument("--bootstrap-token", default=None)
+    p_worker.add_argument("--insecure-no-tls", action="store_true")
     p_worker.add_argument("--config", default=None)
 
     # ── web ───────────────────────────────────────────────────────────────────
@@ -32,6 +33,7 @@ def main() -> None:
     p_web.add_argument("--port", type=int, default=None)
     p_web.add_argument("--master-host", default=None)
     p_web.add_argument("--master-port", type=int, default=None)
+    p_web.add_argument("--insecure-no-auth", action="store_true")
     p_web.add_argument("--config", default=None)
 
     # ── bootstrap-token ───────────────────────────────────────────────────────
@@ -70,6 +72,8 @@ def main() -> None:
             sys.argv += ["--advertise-host", args.advertise_host]
         if args.bootstrap_token:
             sys.argv += ["--bootstrap-token", args.bootstrap_token]
+        if args.insecure_no_tls:
+            sys.argv += ["--insecure-no-tls"]
         _main()
 
     elif args.command == "web":
@@ -85,6 +89,8 @@ def main() -> None:
             sys.argv += ["--master-host", args.master_host]
         if args.master_port:
             sys.argv += ["--master-port", str(args.master_port)]
+        if args.insecure_no_auth:
+            sys.argv += ["--insecure-no-auth"]
         _main()
 
     elif args.command == "bootstrap-token":
