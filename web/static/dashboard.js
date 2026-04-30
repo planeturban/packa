@@ -906,6 +906,51 @@ async function bulkQueue(workerConfigId) {
 }
 
 // ── Statistics tab ────────────────────────────────────────────────────────────
+function _renderThroughputChart(byDay) {
+  const metric = ST.throughputMetric || 'jobs';
+  // Build a 30-day window filled with zeros
+  const days = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+  const lookup = {};
+  (byDay || []).forEach(r => { lookup[r.date] = r; });
+  const values = days.map(d => {
+    const r = lookup[d] || {};
+    return metric === 'jobs' ? (r.jobs || 0) : (r.saved_bytes || 0);
+  });
+  const maxVal = Math.max(...values, 1);
+  const hasData = values.some(v => v > 0);
+
+  const bars = days.map((d, i) => {
+    const v = values[i];
+    const h = Math.round(v / maxVal * 100);
+    const label = metric === 'jobs' ? v.toLocaleString() + ' jobs' : fmtBytes(v);
+    const shortDate = d.slice(5); // MM-DD
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px">
+      <div style="width:100%;display:flex;align-items:flex-end;height:80px">
+        <div title="${shortDate}: ${label}" style="width:100%;height:${h}%;min-height:${v>0?2:0}px;background:var(--accent);border-radius:2px 2px 0 0;opacity:${v>0?0.85:0.15};transition:height 0.3s ease"></div>
+      </div>
+      ${i % 7 === 0 || i === 29 ? `<div style="font-size:9px;color:var(--text-faint);font-family:'IBM Plex Mono',monospace;white-space:nowrap">${shortDate}</div>` : '<div style="font-size:9px">&nbsp;</div>'}
+    </div>`;
+  }).join('');
+
+  return `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div class="card-title" style="margin:0">Throughput — last 30 days</div>
+      <div style="display:flex;gap:4px">
+        <button onclick="ST.throughputMetric='jobs';renderActiveTab()" class="btn-sm${metric==='jobs'?' btn-active':''}" style="font-size:11px;padding:3px 8px">Jobs</button>
+        <button onclick="ST.throughputMetric='saved';renderActiveTab()" class="btn-sm${metric==='saved'?' btn-active':''}" style="font-size:11px;padding:3px 8px">GB saved</button>
+      </div>
+    </div>
+    ${!hasData
+      ? '<div style="color:var(--text-faint);font-size:13px;text-align:center;padding:20px 0">No data yet</div>'
+      : `<div style="display:flex;align-items:flex-end;gap:3px;height:92px">${bars}</div>`
+    }
+  </div>`;
+}
+
 function renderStats() {
   const el = document.getElementById('tab-stats');
   if (!el) return;
@@ -1132,6 +1177,8 @@ function renderStats() {
       </div>
     </div>
 
+    ${_renderThroughputChart(ms.by_day || [])}
+
     <div class="card" style="padding:0;overflow:hidden">
       <div style="padding:16px 20px 12px;border-bottom:1px solid var(--border)">
         <div class="card-title" style="margin-bottom:0">Per-worker statistics</div>
@@ -1141,16 +1188,20 @@ function renderStats() {
           <thead><tr>
             <th>Worker</th><th>Encoder</th><th>Converted</th><th>Errors</th>
             <th>Input</th><th>Output</th><th>Saved</th><th>MB/s</th>
+            <th>Enc. time</th><th>24h util</th>
           </tr></thead>
           <tbody>
             ${workers.length === 0
-              ? '<tr><td colspan="8"><div class="empty">No worker statistics available</div></td></tr>'
+              ? '<tr><td colspan="10"><div class="empty">No worker statistics available</div></td></tr>'
               : workers.map(s => {
                   const se = (ms.by_worker||[]).find(b=>b.worker_id===s.config_id) || {};
                   const inp = se.total_input_bytes || 0;
                   const out = se.total_output_bytes || 0;
                   const saved = inp - out;
                   const savedPct = inp > 0 ? Math.round(saved/inp*100) : 0;
+                  const encTime = se.total_encoding_seconds > 0 ? fmtDuration(se.total_encoding_seconds) : '—';
+                  const util = se.utilisation_24h_pct != null ? se.utilisation_24h_pct : null;
+                  const utilColor = util == null ? 'var(--text-faint)' : util >= 80 ? 'var(--green)' : util >= 40 ? 'var(--yellow)' : 'var(--text-dim)';
                   return `<tr>
                     <td style="font-weight:500">${esc(s.hostname)}</td>
                     <td><span class="mono" style="color:var(--accent)">${s.unconfigured ? 'SETUP REQUIRED' : esc((s.encoder||'').toUpperCase())}</span></td>
@@ -1160,6 +1211,8 @@ function renderStats() {
                     <td><span class="mono">${fmtBytes(out||null)}</span></td>
                     <td><span class="mono" style="color:var(--green)">${savedPct > 0 ? `${savedPct}% (${fmtBytes(saved)})` : '—'}</span></td>
                     <td><span class="mono">${se.avg_mb_per_s != null ? se.avg_mb_per_s : '—'}</span></td>
+                    <td><span class="mono">${encTime}</span></td>
+                    <td><span class="mono" style="color:${utilColor}">${util != null ? util + '%' : '—'}</span></td>
                   </tr>`;
                 }).join('')
             }
