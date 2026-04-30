@@ -501,7 +501,8 @@ async def tls_bootstrap(body: TlsBootstrapRequest, request: Request):
         async with httpx.AsyncClient(timeout=10, verify=False) as client:
             r = await client.post(
                 f"https://{_config.master_host}:{_config.master_port}/bootstrap",
-                json={"token": body.token, "cn": _worker_config_id or "worker"},
+                json={"token": body.token, "cn": _worker_config_id or "worker",
+                      "sans": [s for s in [_advertise_host] if s]},
             )
             r.raise_for_status()
     except Exception as exc:

@@ -93,18 +93,18 @@ def get_ca_fingerprint(db: Session) -> str | None:
 # Client cert issuance and renewal
 # ---------------------------------------------------------------------------
 
-def issue_client_cert(db: Session, cn: str) -> tuple[str, str, str]:
+def issue_client_cert(db: Session, cn: str, sans: list[str] | None = None) -> tuple[str, str, str]:
     """Issue a client cert signed by the CA. Returns (cert_pem, key_pem, ca_cert_pem)."""
     ca_cert_pem, ca_key_pem = ensure_ca(db)
-    cert_pem, key_pem = generate_cert(ca_cert_pem, ca_key_pem, cn)
+    cert_pem, key_pem = generate_cert(ca_cert_pem, ca_key_pem, cn, sans=sans)
     return cert_pem, key_pem, ca_cert_pem
 
 
-def renew_client_cert(db: Session, cn: str, old_cert_pem: str) -> tuple[str, str, str]:
+def renew_client_cert(db: Session, cn: str, old_cert_pem: str, sans: list[str] | None = None) -> tuple[str, str, str]:
     """Renew a client cert. Caller must have authenticated via existing mTLS cert."""
     if needs_renewal(old_cert_pem, _RENEW_DAYS):
         print(f"[tls] renewing cert for {cn!r}")
-    return issue_client_cert(db, cn)
+    return issue_client_cert(db, cn, sans=sans)
 
 
 # ---------------------------------------------------------------------------

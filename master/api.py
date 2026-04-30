@@ -947,6 +947,7 @@ def scan_status():
 class BootstrapRequest(BaseModel):
     token: str
     cn: str = "node"
+    sans: list[str] = []
 
 
 class CertBundle(BaseModel):
@@ -961,8 +962,9 @@ def bootstrap_node(body: BootstrapRequest, db: Session = Depends(get_db)):
     if not consume_token(db, body.token):
         raise HTTPException(status_code=401, detail="Invalid or expired bootstrap token")
     cn = body.cn or "node"
-    cert_pem, key_pem, ca_pem = issue_client_cert(db, cn)
-    print(f"[tls] issued cert for {cn!r}")
+    sans = [cn] + [s for s in body.sans if s and s != cn]
+    cert_pem, key_pem, ca_pem = issue_client_cert(db, cn, sans=sans)
+    print(f"[tls] issued cert for {cn!r} sans={sans}")
     return CertBundle(cert_pem=cert_pem, key_pem=key_pem, ca_pem=ca_pem)
 
 
