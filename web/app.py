@@ -121,13 +121,22 @@ def _check_known_worker(host: str, port: int, workers: list) -> None:
         raise HTTPException(status_code=400, detail="Unknown worker")
 
 
-async def _assert_known_worker(host: str, port: int) -> None:
-    """Raise HTTPException 400 if host:port is not a registered worker."""
+def _worker_scheme(host: str, port: int, workers: list) -> str:
+    """Return the registered scheme for a worker, defaulting to http."""
+    for w in workers:
+        if w["host"] == host and w["api_port"] == port:
+            return w.get("scheme", "http")
+    return "http"
+
+
+async def _assert_known_worker(host: str, port: int) -> str:
+    """Raise HTTPException 400 if host:port is not a registered worker. Returns scheme."""
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         r = await client.get(f"{_master_url()}/workers")
         r.raise_for_status()
         workers = r.json()
     _check_known_worker(host, port, workers)
+    return _worker_scheme(host, port, workers)
 
 
 def _redirect_login():
@@ -443,10 +452,10 @@ async def data_files_pending(request: Request):
 async def data_worker_delete(request: Request, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    await _assert_known_worker(host, port)
+    scheme = await _assert_known_worker(host, port)
     body = await request.json()
     ids: list[int] = body.get("ids", [])
-    base = _worker_url(host, port)
+    base = _worker_url(host, port, scheme)
     async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
         await asyncio.gather(
             *[client.delete(f"{base}/files/{i}") for i in ids],
@@ -519,10 +528,10 @@ async def data_files_force_encode(request: Request):
 async def data_worker_pending(request: Request, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    await _assert_known_worker(host, port)
+    scheme = await _assert_known_worker(host, port)
     body = await request.json()
     ids: list[int] = body.get("ids", [])
-    base = _worker_url(host, port)
+    base = _worker_url(host, port, scheme)
     async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
         await asyncio.gather(
             *[client.patch(f"{base}/files/{i}/status", json={"status": "pending"}) for i in ids],
@@ -536,10 +545,10 @@ async def data_worker_pending(request: Request, host: str = Query(), port: int =
 async def data_worker_cancel(request: Request, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    await _assert_known_worker(host, port)
+    scheme = await _assert_known_worker(host, port)
     body = await request.json()
     ids: list[int] = body.get("ids", [])
-    base = _worker_url(host, port)
+    base = _worker_url(host, port, scheme)
     async with httpx.AsyncClient(timeout=10, **_httpx_kw()) as client:
         await asyncio.gather(
             *[client.patch(f"{base}/files/{i}/status", json={"status": "cancelled"}) for i in ids],
@@ -672,10 +681,10 @@ async def data_worker_action(request: Request):
     action = body.get("action")
     if action not in ("pause", "resume", "stop", "drain", "sleep", "wake"):
         return JSONResponse({"error": "invalid action"}, status_code=400)
-    await _assert_known_worker(host, port)
+    scheme = await _assert_known_worker(host, port)
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
-            r = await client.post(f"{_worker_url(host, port)}/conversion/{action}")
+            r = await client.post(f"{_worker_url(host, port, scheme)}/conversion/{action}")
             r.raise_for_status()
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=502)
@@ -711,7 +720,7 @@ async def data_worker_tls_onboard(request: Request):
     body = await request.json()
     host = body.get("host")
     port = body.get("port")
-    await _assert_known_worker(host, port)
+    scheme = await _assert_known_worker(host, port)
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         # Ensure a valid token exists
         token_r = await client.get(f"{_master_url()}/tls/token")
@@ -739,10 +748,10 @@ async def data_worker_restart(request: Request):
     body = await request.json()
     host = body.get("host")
     port = body.get("port")
-    await _assert_known_worker(host, port)
+    scheme = await _assert_known_worker(host, port)
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
-            r = await client.post(f"{_worker_url(host, port)}/restart")
+            r = await client.post(f"{_worker_url(host, port, scheme)}/restart")
             r.raise_for_status()
             return JSONResponse(r.json())
         except Exception as exc:
@@ -800,11 +809,11 @@ async def data_master_config_restore(request: Request, key: str):
 async def data_worker_config_set(request: Request, key: str, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    await _assert_known_worker(host, port)
+    scheme = await _assert_known_worker(host, port)
     body = await request.json()
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
-            r = await client.patch(f"{_worker_url(host, port)}/config/{key}", json=body)
+            r = await client.patch(f"{_worker_url(host, port, scheme)}/config/{key}", json=body)
             r.raise_for_status()
             return JSONResponse(r.json())
         except httpx.HTTPStatusError as exc:
@@ -817,10 +826,10 @@ async def data_worker_config_set(request: Request, key: str, host: str = Query()
 async def data_worker_config_clear(request: Request, key: str, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    await _assert_known_worker(host, port)
+    scheme = await _assert_known_worker(host, port)
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
-            r = await client.delete(f"{_worker_url(host, port)}/config/{key}")
+            r = await client.delete(f"{_worker_url(host, port, scheme)}/config/{key}")
             r.raise_for_status()
             return JSONResponse(r.json())
         except httpx.HTTPStatusError as exc:
@@ -833,11 +842,11 @@ async def data_worker_config_clear(request: Request, key: str, host: str = Query
 async def data_worker_config_restore(request: Request, key: str, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    await _assert_known_worker(host, port)
+    scheme = await _assert_known_worker(host, port)
     body = await request.json()
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
-            r = await client.post(f"{_worker_url(host, port)}/config/{key}/restore", json=body)
+            r = await client.post(f"{_worker_url(host, port, scheme)}/config/{key}/restore", json=body)
             r.raise_for_status()
             return JSONResponse(r.json())
         except httpx.HTTPStatusError as exc:
@@ -919,13 +928,13 @@ async def data_worker_encoder(request: Request):
     host = body.get("host")
     port = body.get("port")
     encoder = body.get("encoder")
-    await _assert_known_worker(host, port)
+    scheme = await _assert_known_worker(host, port)
     payload: dict = {"encoder": encoder}
     if body.get("replace_original") is not None:
         payload["replace_original"] = bool(body["replace_original"])
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
-            r = await client.post(f"{_worker_url(host, port)}/settings", json=payload)
+            r = await client.post(f"{_worker_url(host, port, scheme)}/settings", json=payload)
             r.raise_for_status()
             return JSONResponse(r.json())
         except Exception as exc:
@@ -961,8 +970,8 @@ async def data_workers_cancel_thresholds(request: Request):
 async def data_worker(request: Request, host: str = Query(), port: int = Query()):
     if not _logged_in(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    await _assert_known_worker(host, port)
-    base = _worker_url(host, port)
+    scheme = await _assert_known_worker(host, port)
+    base = _worker_url(host, port, scheme)
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         results = await asyncio.gather(
             client.get(f"{base}/status"),
