@@ -14,7 +14,7 @@ import secrets
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, Form, Query, Request
+from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
