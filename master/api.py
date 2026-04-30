@@ -1031,14 +1031,14 @@ def _require_worker_cert(request: Request) -> None:
 @app.get("/tls/token")
 def get_tls_token(request: Request, db: Session = Depends(get_db)):
     """Return current bootstrap token info, or empty dict if none/expired."""
-    _require_localhost_or_mtls(request)
+    _require_web_cert(request)
     return get_token_info(db) or {}
 
 
 @app.post("/tls/token")
 def create_tls_token(request: Request, db: Session = Depends(get_db)):
     """Generate a new bootstrap token (10-minute TTL, multi-use within window)."""
-    _require_localhost_or_mtls(request)
+    _require_web_cert(request)
     token = generate_token(db)
     info = get_token_info(db)
     print(f"[tls] new bootstrap token: {token[:8]}… (full token in API response)")
