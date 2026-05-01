@@ -13,6 +13,7 @@ Progress is read from ffmpeg's -progress pipe:1 output.
 """
 
 import asyncio
+import os
 import shlex
 import shutil
 import time
