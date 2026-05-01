@@ -1005,25 +1005,25 @@ def _require_localhost_or_mtls(request: Request) -> None:
 
 
 def _require_web_cert(request: Request) -> None:
-    """Require CN=web client cert. Loopback and non-TLS connections are exempt."""
+    """Require CN=web client cert. Loopback connections are exempt."""
     host = request.client.host if request.client else ""
     if host in ("127.0.0.1", "::1"):
         return
     cn = _peer_cn(request)
     if cn is None:
-        return  # non-TLS deployment — no cert enforcement
+        raise HTTPException(status_code=403, detail="Client certificate required")
     if cn != "web":
         raise HTTPException(status_code=403, detail="Web certificate required")
 
 
 def _require_worker_cert(request: Request) -> None:
-    """Require a non-web client cert (worker endpoints). Loopback and non-TLS exempt."""
+    """Require a non-web client cert (worker endpoints). Loopback connections are exempt."""
     host = request.client.host if request.client else ""
     if host in ("127.0.0.1", "::1"):
         return
     cn = _peer_cn(request)
     if cn is None:
-        return  # non-TLS deployment — no cert enforcement
+        raise HTTPException(status_code=403, detail="Client certificate required")
     if cn == "web":
         raise HTTPException(status_code=403, detail="Worker certificate required")
 
