@@ -13,6 +13,23 @@ import os
 import secrets
 from pathlib import Path
 
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHash, VerifyMismatchError
+
+_ph = PasswordHasher()
+
+
+def _hash_password(plain: str) -> str:
+    return _ph.hash(plain)
+
+
+def _verify_password(stored: str, plain: str) -> bool:
+    try:
+        _ph.verify(stored, plain)
+        return True
+    except (VerifyMismatchError, InvalidHash):
+        return False
+
 import httpx
 from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -95,7 +112,7 @@ def _logged_in(request: Request) -> bool:
             decoded = base64.b64decode(auth[6:]).decode("utf-8")
             username, _, password = decoded.partition(":")
             if (secrets.compare_digest(username, _config.username or "")
-                    and secrets.compare_digest(password, _config.password or "")):
+                    and _verify_password(_config.password or "", password)):
                 return True
         except Exception:
             pass
@@ -162,7 +179,7 @@ async def login(request: Request, username: str = Form(), password: str = Form()
     if not _auth_enabled():
         return RedirectResponse("/", status_code=303)
     if (secrets.compare_digest(username, _config.username or "")
-            and secrets.compare_digest(password, _config.password or "")):
+            and _verify_password(_config.password or "", password)):
         request.session["user"] = username
         return RedirectResponse("/", status_code=303)
     return _templates.TemplateResponse(
@@ -335,10 +352,11 @@ async def data_auth_save(request: Request):
         return JSONResponse({"error": "Password is required when setting a username"}, status_code=400)
     if password and not username:
         return JSONResponse({"error": "Username is required when setting a password"}, status_code=400)
+    hashed = _hash_password(password) if password else ""
     set_setting("auth.username", username)
-    set_setting("auth.password", password)
+    set_setting("auth.password", hashed)
     _config.username = username
-    _config.password = password
+    _config.password = hashed
     return JSONResponse({"ok": True, "enabled": bool(username and password)})
 
 

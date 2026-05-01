@@ -141,6 +141,12 @@ def main() -> None:
     if stored_username is not None:
         config.username = stored_username
     if stored_password is not None:
+        if stored_password and not stored_password.startswith("$argon2"):
+            from argon2 import PasswordHasher
+            hashed = PasswordHasher().hash(stored_password)
+            set_setting("auth.password", hashed)
+            stored_password = hashed
+            print("[web] migrated plaintext password to argon2 hash")
         config.password = stored_password
 
     # Persist secret_key so sessions survive restarts; env/config override takes priority.
