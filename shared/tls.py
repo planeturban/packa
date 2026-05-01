@@ -65,6 +65,8 @@ class TlsConfig:
         }
         if require_client_cert:
             kwargs["ssl_cert_reqs"] = ssl.CERT_REQUIRED
+        else:
+            kwargs["ssl_cert_reqs"] = ssl.CERT_OPTIONAL
         return kwargs
 
     def httpx_kwargs(self) -> dict:
