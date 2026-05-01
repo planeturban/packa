@@ -748,11 +748,14 @@ async def data_worker_tls_onboard(request: Request):
             gen_r.raise_for_status()
             token_info = gen_r.json()
         token = token_info["token"]
+        fp_r = await client.get(f"{_master_url()}/tls/status")
+        ca_fingerprint = (fp_r.json() or {}).get("ca_fingerprint", "") if fp_r.is_success else ""
     # Worker has no TLS yet — talk to it over HTTP directly
     worker_base = f"http://{host}:{port}"
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.post(f"{worker_base}/tls/bootstrap", json={"token": token})
+            r = await client.post(f"{worker_base}/tls/bootstrap",
+                                  json={"token": token, "ca_fingerprint": ca_fingerprint})
             r.raise_for_status()
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=502)
