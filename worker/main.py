@@ -151,9 +151,11 @@ def main() -> None:
 
     _load_tls(config)
 
+    import os as _os
+    insecure_no_tls = args.insecure_no_tls or bool(_os.environ.get("PACKA_WORKER_INSECURE_NO_TLS"))
     _loopback = {"127.0.0.1", "::1", "localhost"}
     if not config.tls.enabled and bind not in _loopback:
-        if args.insecure_no_tls:
+        if insecure_no_tls:
             print("[worker] WARNING: binding to non-loopback without TLS — unsafe, use only for testing")
         else:
             print("[worker] FATAL: refusing to bind to a non-loopback address without TLS. "
