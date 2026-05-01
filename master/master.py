@@ -39,7 +39,7 @@ from . import config_store
 from .api import app, set_config, set_config_layers
 from .database import SessionLocal
 from .settings import MasterSetting  # noqa: F401 — ensure table is registered
-from .tls_manager import ensure_ca, ensure_server_cert, generate_token, get_token_info
+from .tls_manager import ensure_ca, ensure_server_cert, generate_token, get_ca_fingerprint, get_token_info
 
 
 async def _main(bind: str, api_port: int, tls: TlsConfig) -> None:
@@ -107,9 +107,12 @@ def main() -> None:
             config.tls.cert_pem = server_cert
             config.tls.key_pem  = server_key
             config.tls.ca_pem   = ca_cert
+        fp = get_ca_fingerprint(db2)
+        if fp:
+            print(f"[tls] CA fingerprint:   {fp}")
         if not get_token_info(db2):
             token = generate_token(db2)
-            print(f"[tls] bootstrap token: {token}  (valid {10} min)")
+            print(f"[tls] bootstrap token:  {token}  (valid {10} min)")
     finally:
         db2.close()
 

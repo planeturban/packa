@@ -298,9 +298,6 @@ def get_stats(db: Session) -> dict:
         if bps < 40_000_000: return "15–40 Mbps"
         return "40+ Mbps"
 
-    _tier_defaults: dict = {"count": 0, "total_duration_seconds": 0.0,
-                            "total_saved_bytes": 0, "bitrate_samples": []}
-
     by_resolution: dict[str, dict] = {}
     tier_complete: dict[str, dict] = {}  # for projected savings ratio
     for h, br, dur, fsz, osz, st in db.query(
