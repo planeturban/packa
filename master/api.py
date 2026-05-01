@@ -974,8 +974,13 @@ def bootstrap_node(body: BootstrapRequest, db: Session = Depends(get_db)):
 def _peer_cn(request: Request) -> str | None:
     """Return the CN from the peer's client cert, or None if absent or no TLS."""
     try:
-        ssl_obj = request.scope["extensions"]["tls"]["ssl_object"]
-        cert = ssl_obj.getpeercert() if ssl_obj else None
+        transport = request.scope.get("_transport")
+        if transport is None:
+            return None
+        ssl_obj = transport.get_extra_info("ssl_object")
+        if ssl_obj is None:
+            return None
+        cert = ssl_obj.getpeercert()
         if not cert:
             return None
         for rdn in cert.get("subject", ()):
