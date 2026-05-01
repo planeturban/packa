@@ -600,6 +600,7 @@ async def _process(job: Job) -> None:
                     print(f"[worker] record {job.record_id} moved output → {job.file_path}")
                 except Exception as exc:
                     print(f"[worker] record {job.record_id} failed to replace original: {exc}")
+                    Path(output_path).unlink(missing_ok=True)
                     update_conversion_result(
                         db, job.record_id,
                         status=FileStatus.ERROR,
