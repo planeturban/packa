@@ -306,6 +306,7 @@ async def sync_loop() -> None:
 
 
 async def _monitor_output_size(output_path: str, source_size: int, proc: asyncio.subprocess.Process, output_dir: str) -> None:
+    zero_since = time.monotonic()
     while proc.returncode is None:
         await asyncio.sleep(5)
         if not _has_disk_space(output_dir):
@@ -318,24 +319,37 @@ async def _monitor_output_size(output_path: str, source_size: int, proc: asyncio
             break
         try:
             actual_size = Path(output_path).stat().st_size
-            stalled = bool(worker_state.progress and worker_state.progress.stalled)
-            thresholds = worker_state.cancel_thresholds
-            limit = source_size
-            if stalled and thresholds:
-                min_ratio = min(r for _, r in thresholds)
-                limit = min(limit, int(source_size * min_ratio))
-            if actual_size >= limit:
-                over_pct = round((actual_size / source_size - 1) * 100)
-                print(f"[worker] output {actual_size} B >= limit {limit} B{' (stalled)' if stalled else ''} — terminating")
-                worker_state.cancel_reason = "auto"
-                worker_state.cancel_detail = f"stalled — output {over_pct}% over source" if stalled else None
+        except OSError:
+            continue
+        # Kill if output file stays at zero bytes beyond the stall timeout.
+        timeout_s = worker_state.stall_timeout
+        if actual_size == 0:
+            if timeout_s > 0 and (time.monotonic() - zero_since) >= timeout_s:
+                detail = f"no output written after {timeout_s}s"
+                print(f"[worker] {detail} — terminating ffmpeg")
+                worker_state.stall_detail = detail
                 try:
                     proc.terminate()
                 except ProcessLookupError:
                     pass
                 break
-        except OSError:
-            pass
+            continue
+        stalled = bool(worker_state.progress and worker_state.progress.stalled)
+        thresholds = worker_state.cancel_thresholds
+        limit = source_size
+        if stalled and thresholds:
+            min_ratio = min(r for _, r in thresholds)
+            limit = min(limit, int(source_size * min_ratio))
+        if actual_size >= limit:
+            over_pct = round((actual_size / source_size - 1) * 100)
+            print(f"[worker] output {actual_size} B >= limit {limit} B{' (stalled)' if stalled else ''} — terminating")
+            worker_state.cancel_reason = "auto"
+            worker_state.cancel_detail = f"stalled — output {over_pct}% over source" if stalled else None
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
+            break
 
 
 async def _output_is_valid(output_path: str) -> bool:
