@@ -153,6 +153,9 @@ def main() -> None:
 
     import os as _os
     insecure_no_tls = args.insecure_no_tls or bool(_os.environ.get("PACKA_WORKER_INSECURE_NO_TLS"))
+    if insecure_no_tls and config.tls.enabled:
+        print("[worker] INSECURE_NO_TLS set but TLS certs are present — using certs, flag ignored")
+        insecure_no_tls = False
     _loopback = {"127.0.0.1", "::1", "localhost"}
     if not config.tls.enabled and bind not in _loopback:
         if insecure_no_tls:
