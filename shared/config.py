@@ -18,10 +18,6 @@ def _env_int(key: str, default: int) -> int:
     return int(val) if val is not None else default
 
 
-def _env_float(key: str, default: float) -> float:
-    val = os.environ.get(key)
-    return float(val) if val is not None else default
-
 
 # ---------------------------------------------------------------------------
 # Config dataclasses
