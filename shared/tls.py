@@ -81,9 +81,9 @@ def patch_uvicorn_for_mtls() -> None:
                 continue
             _orig = cls.run_asgi
 
-            async def _patched(self, _orig=_orig):
+            async def _patched(self, app, _orig=_orig):
                 self.scope["_transport"] = self.transport
-                await _orig(self)
+                await _orig(self, app)
 
             cls.run_asgi = _patched
             cls._transport_patched = True
