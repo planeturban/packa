@@ -33,7 +33,7 @@ import uvicorn
 
 from shared.config import Config, _env, _env_int
 from shared.log import UVICORN_LOG_CONFIG
-from shared.tls import TlsConfig
+from shared.tls import TlsConfig, patch_uvicorn_for_mtls
 
 from . import config_store
 from .api import app, set_config, set_config_layers
@@ -43,6 +43,7 @@ from .tls_manager import ensure_ca, ensure_server_cert, generate_token, get_ca_f
 
 
 async def _main(bind: str, api_port: int, tls: TlsConfig) -> None:
+    patch_uvicorn_for_mtls()
     tls_kwargs = tls.uvicorn_tls_kwargs(require_client_cert=False)
     uvi_config = uvicorn.Config(app, host=bind, port=api_port, log_level="info",
                                 log_config=UVICORN_LOG_CONFIG, **tls_kwargs)

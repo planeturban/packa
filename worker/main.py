@@ -44,6 +44,7 @@ import uvicorn
 
 from shared.config import load_worker
 from shared.log import UVICORN_LOG_CONFIG
+from shared.tls import patch_uvicorn_for_mtls
 
 from . import config_store
 from .api import app, set_config, set_config_layers, set_registration_params
@@ -80,6 +81,7 @@ async def _main(bind: str, api_port: int, advertise_host: str | None, worker_id:
     else:
         effective_host = bind
     set_registration_params(effective_host, worker_id)
+    patch_uvicorn_for_mtls()
     tls_kwargs = tls.uvicorn_tls_kwargs()
     uvi_config = uvicorn.Config(app, host=bind, port=api_port, log_level="info",
                                 log_config=UVICORN_LOG_CONFIG, **tls_kwargs)

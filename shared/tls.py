@@ -64,3 +64,28 @@ class TlsConfig:
         if not self.enabled:
             return {}
         return {"verify": self.client_ssl_context()}
+
+
+def patch_uvicorn_for_mtls() -> None:
+    """Inject asyncio transport into the ASGI scope so _peer_cn can read client certs.
+
+    Uvicorn 0.46 does not populate scope["extensions"]["tls"]["ssl_object"].
+    This patch adds scope["_transport"] = transport before each request is dispatched,
+    allowing _peer_cn to call transport.get_extra_info("ssl_object").
+    """
+    try:
+        from uvicorn.protocols.http import httptools_impl, h11_impl
+        for impl in (httptools_impl, h11_impl):
+            cls = impl.RequestResponseCycle
+            if getattr(cls, "_transport_patched", False):
+                continue
+            _orig = cls.run_asgi
+
+            async def _patched(self, _orig=_orig):
+                self.scope["_transport"] = self.transport
+                await _orig(self)
+
+            cls.run_asgi = _patched
+            cls._transport_patched = True
+    except (ImportError, AttributeError):
+        pass
