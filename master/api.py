@@ -490,7 +490,10 @@ class ScanStatus(BaseModel):
 
 @app.post("/workers", response_model=WorkerOut, status_code=201)
 def register_worker(body: WorkerRegister, request: Request):
-    _require_worker_cert(request)
+    # Intentionally unauthenticated. Registration is just an announcement and
+    # confers no privilege — claiming jobs and reporting results still require
+    # _require_worker_cert. This must stay open so a fresh worker with no cert
+    # can appear in the dashboard before the operator clicks "onboard".
     worker = registry.register(body.config_id, body.host, body.api_port, body.scheme)
     print(f"[master] registered: {worker}")
     return worker

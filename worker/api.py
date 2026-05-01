@@ -96,6 +96,7 @@ async def _register_and_poll() -> None:
     attempt = 0
     while True:
         last_exc: Exception | None = None
+        fatal = False
         for base, kw in candidates:
             try:
                 record = await _try_register(payload, base, kw)
@@ -103,6 +104,13 @@ async def _register_and_poll() -> None:
                 tls_kw      = kw
                 last_exc    = None
                 break
+            except httpx.HTTPStatusError as exc:
+                if 400 <= exc.response.status_code < 500:
+                    print(f"[worker] master rejected registration: {exc.response.status_code} {exc.response.text}")
+                    fatal = True
+                    last_exc = exc
+                    break
+                last_exc = exc
             except Exception as exc:
                 last_exc = exc
         if last_exc is None:
@@ -118,7 +126,7 @@ async def _register_and_poll() -> None:
             print(f"[worker] registered as worker-{record['id']} ({assigned_id!r})")
             break
         attempt += 1
-        wait = min(5 * attempt, 30)
+        wait = 60 if fatal else min(5 * attempt, 30)
         print(f"[worker] registration failed (attempt {attempt}): {last_exc} — retrying in {wait}s")
         await asyncio.sleep(wait)
 
