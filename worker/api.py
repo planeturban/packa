@@ -560,7 +560,9 @@ def _peer_cn(request: Request) -> str | None:
 
 
 def _require_web_cert(request: Request) -> None:
-    """Require CN=web client cert. Loopback connections are exempt."""
+    """Require CN=web client cert. Loopback connections and non-TLS workers are exempt."""
+    if not _config.tls.enabled:
+        return
     host = request.client.host if request.client else ""
     if host in ("127.0.0.1", "::1"):
         return
