@@ -494,12 +494,13 @@ class ConfigRestore(BaseModel):
 
 class TlsBootstrapRequest(BaseModel):
     token: str
+    ca_fingerprint: str = ""
 
 
 @app.post("/tls/bootstrap")
 async def tls_bootstrap(body: TlsBootstrapRequest, request: Request):
-    _require_web_cert(request)
     """Fetch a TLS cert bundle from master using a bootstrap token. Restart required after."""
+    _require_web_cert(request)
     if get_setting("tls.cert") and get_setting("tls.key") and get_setting("tls.ca"):
         raise HTTPException(
             status_code=409,
@@ -507,12 +508,25 @@ async def tls_bootstrap(body: TlsBootstrapRequest, request: Request):
         )
     try:
         async with httpx.AsyncClient(timeout=10, verify=False) as client:
+            if body.ca_fingerprint:
+                status_r = await client.get(
+                    f"https://{_config.master_host}:{_config.master_port}/tls/status"
+                )
+                status_r.raise_for_status()
+                presented_fp = (status_r.json() or {}).get("ca_fingerprint", "")
+                if presented_fp.replace(":", "").upper() != body.ca_fingerprint.replace(":", "").upper():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"CA fingerprint mismatch (got {presented_fp}, expected {body.ca_fingerprint})",
+                    )
             r = await client.post(
                 f"https://{_config.master_host}:{_config.master_port}/bootstrap",
                 json={"token": body.token, "cn": _worker_config_id or "worker",
                       "sans": [s for s in [_advertise_host] if s]},
             )
             r.raise_for_status()
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Could not reach master for TLS bootstrap: {exc}")
     bundle = r.json()

@@ -104,6 +104,7 @@ class WebConfig:
     bind: str = "localhost"
     port: int = 8080
     bootstrap_token: str = ""
+    bootstrap_ca_fingerprint: str = ""
     tls: TlsConfig = field(default_factory=TlsConfig)
 
 
@@ -247,6 +248,7 @@ def load_web(config_path: str | None) -> WebConfig:
         bind=_env("PACKA_WEB_BIND", web.get("bind", "localhost")),
         port=_env_int("PACKA_WEB_PORT", web.get("port", 8080)),
         bootstrap_token=_env("PACKA_WEB_BOOTSTRAP_TOKEN", web.get("bootstrap_token", "")),
+        bootstrap_ca_fingerprint=_env("PACKA_WEB_BOOTSTRAP_CA_FINGERPRINT", web.get("bootstrap_ca_fingerprint", "")),
         tls=TlsConfig(
             cert=web_tls.get("cert", ""),
             key=web_tls.get("key", ""),
