@@ -47,7 +47,7 @@ from .registry import registry
 from .scanner import collect, compute_checksum
 from .tls_manager import (
     consume_token, generate_token, get_ca_fingerprint,
-    get_token_info, issue_client_cert, renew_client_cert,
+    get_token_info, issue_client_cert,
 )
 
 Base.metadata.create_all(bind=engine)
@@ -490,7 +490,10 @@ class ScanStatus(BaseModel):
 
 @app.post("/workers", response_model=WorkerOut, status_code=201)
 def register_worker(body: WorkerRegister, request: Request):
-    _require_worker_cert(request)
+    # Intentionally unauthenticated. Registration is just an announcement and
+    # confers no privilege — claiming jobs and reporting results still require
+    # _require_worker_cert. This must stay open so a fresh worker with no cert
+    # can appear in the dashboard before the operator clicks "onboard".
     worker = registry.register(body.config_id, body.host, body.api_port, body.scheme)
     print(f"[master] registered: {worker}")
     return worker
@@ -968,15 +971,6 @@ def bootstrap_node(body: BootstrapRequest, db: Session = Depends(get_db)):
     return CertBundle(cert_pem=cert_pem, key_pem=key_pem, ca_pem=ca_pem)
 
 
-def _peer_has_cert(request: Request) -> bool:
-    """Return True if the request arrived with a CA-signed client certificate."""
-    try:
-        ssl_obj = request.scope["extensions"]["tls"]["ssl_object"]
-        return ssl_obj is not None and ssl_obj.getpeercert() is not None
-    except (KeyError, TypeError, AttributeError):
-        return False
-
-
 def _peer_cn(request: Request) -> str | None:
     """Return the CN from the peer's client cert, or None if absent or no TLS."""
     try:
@@ -993,37 +987,27 @@ def _peer_cn(request: Request) -> str | None:
     return None
 
 
-def _require_localhost_or_mtls(request: Request) -> None:
-    """Guard for sensitive endpoints. Requires localhost origin or a valid client cert.
-    Checking scheme alone is insufficient — CERT_OPTIONAL means any TLS connection passes."""
-    host = request.client.host if request.client else ""
-    if host in ("127.0.0.1", "::1"):
-        return
-    if _peer_has_cert(request):
-        return
-    raise HTTPException(status_code=403, detail="Token endpoints require mTLS")
-
 
 def _require_web_cert(request: Request) -> None:
-    """Require CN=web client cert. Loopback and non-TLS connections are exempt."""
+    """Require CN=web client cert. Loopback connections are exempt."""
     host = request.client.host if request.client else ""
     if host in ("127.0.0.1", "::1"):
         return
     cn = _peer_cn(request)
     if cn is None:
-        return  # non-TLS deployment — no cert enforcement
+        raise HTTPException(status_code=403, detail="Client certificate required")
     if cn != "web":
         raise HTTPException(status_code=403, detail="Web certificate required")
 
 
 def _require_worker_cert(request: Request) -> None:
-    """Require a non-web client cert (worker endpoints). Loopback and non-TLS exempt."""
+    """Require a non-web client cert (worker endpoints). Loopback connections are exempt."""
     host = request.client.host if request.client else ""
     if host in ("127.0.0.1", "::1"):
         return
     cn = _peer_cn(request)
     if cn is None:
-        return  # non-TLS deployment — no cert enforcement
+        raise HTTPException(status_code=403, detail="Client certificate required")
     if cn == "web":
         raise HTTPException(status_code=403, detail="Worker certificate required")
 

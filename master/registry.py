@@ -1,6 +1,5 @@
 """
 In-memory registry of connected workers.
-Round-robin distribution via next_worker().
 """
 
 from dataclasses import dataclass, field
@@ -70,12 +69,6 @@ class WorkerRegistry:
 
     def all(self) -> list[WorkerInfo]:
         return list(self._workers.values())
-
-    def next_worker(self) -> WorkerInfo | None:
-        """Returns the next worker in round-robin order, or None if empty."""
-        if not self._workers or self._cycle is None:
-            return None
-        return next(self._cycle)
 
     def _rebuild_cycle(self) -> None:
         self._cycle = cycle(self._workers.values()) if self._workers else None
