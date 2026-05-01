@@ -8,6 +8,7 @@ enqueued for the worker.
 """
 
 import asyncio
+from pathlib import Path
 
 import httpx
 from sqlalchemy.exc import IntegrityError
@@ -58,7 +59,16 @@ async def _claim_and_enqueue(
     db = SessionLocal()
     try:
         for job_data in jobs:
-            full_path = path_prefix + job_data["file_path"] if path_prefix else job_data["file_path"]
+            raw_relative = job_data["file_path"]
+            full_path = path_prefix + raw_relative if path_prefix else raw_relative
+            if path_prefix:
+                try:
+                    resolved = Path(full_path).resolve()
+                    resolved.relative_to(Path(path_prefix).resolve())
+                    full_path = str(resolved)
+                except (ValueError, OSError):
+                    print(f"[poller] rejecting job {job_data.get('id')} — path escapes prefix: {raw_relative!r}")
+                    continue
             record = None
             try:
                 record = crud.create_file_record(db, FileRecordCreate(

@@ -64,14 +64,23 @@ def _bootstrap_tls(config: WebConfig) -> None:
         return
 
     # Retry up to 5 times to handle transient startup timing issues.
+    master_base = f"https://{config.master_host}:{config.master_port}"
     r = None
     for attempt in range(5):
         if attempt:
             import time as _time
             _time.sleep(3)
         try:
+            if config.bootstrap_ca_fingerprint:
+                status_r = httpx.get(f"{master_base}/tls/status", verify=False, timeout=10)
+                status_r.raise_for_status()
+                presented_fp = (status_r.json() or {}).get("ca_fingerprint", "")
+                if presented_fp.replace(":", "").upper() != config.bootstrap_ca_fingerprint.replace(":", "").upper():
+                    print(f"[web] TLS bootstrap aborted: CA fingerprint mismatch "
+                          f"(got {presented_fp}, expected {config.bootstrap_ca_fingerprint})")
+                    return
             r = httpx.post(
-                f"https://{config.master_host}:{config.master_port}/bootstrap",
+                f"{master_base}/bootstrap",
                 json={"token": config.bootstrap_token, "cn": "web"},
                 verify=False,  # TOFU — master cert not yet trusted
                 timeout=10,
@@ -113,6 +122,8 @@ def main() -> None:
     parser.add_argument("--master-port", type=int, default=None, help="Master API port")
     parser.add_argument("--bootstrap-token", default=None,
                         help="One-time token to obtain a TLS cert from master on first run")
+    parser.add_argument("--bootstrap-ca-fingerprint", default=None,
+                        help="SHA-256 fingerprint of master CA to verify during bootstrap")
     parser.add_argument("--insecure-no-auth", action="store_true",
                         help="Allow binding to a non-loopback address without credentials (unsafe)")
     parser.add_argument("--config", help="Path to TOML config file")
@@ -130,6 +141,8 @@ def main() -> None:
         config.master_port = args.master_port
     if args.bootstrap_token is not None:
         config.bootstrap_token = args.bootstrap_token
+    if args.bootstrap_ca_fingerprint is not None:
+        config.bootstrap_ca_fingerprint = args.bootstrap_ca_fingerprint
 
     bind = "0.0.0.0" if config.bind == "any" else config.bind
 
@@ -141,6 +154,12 @@ def main() -> None:
     if stored_username is not None:
         config.username = stored_username
     if stored_password is not None:
+        if stored_password and not stored_password.startswith("$argon2"):
+            from argon2 import PasswordHasher
+            hashed = PasswordHasher().hash(stored_password)
+            set_setting("auth.password", hashed)
+            stored_password = hashed
+            print("[web] migrated plaintext password to argon2 hash")
         config.password = stored_password
 
     # Persist secret_key so sessions survive restarts; env/config override takes priority.

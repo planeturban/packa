@@ -23,16 +23,6 @@ class TlsConfig:
             or (self.cert and self.key and self.ca)
         )
 
-    def server_ssl_context(self) -> ssl.SSLContext:
-        from .pki import make_server_ssl_context
-        if self.cert_pem:
-            return make_server_ssl_context(self.cert_pem, self.key_pem, self.ca_pem)
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_verify_locations(cafile=self.ca)
-        ctx.verify_mode = ssl.CERT_REQUIRED
-        ctx.load_cert_chain(self.cert, self.key)
-        return ctx
-
     def client_ssl_context(self) -> ssl.SSLContext:
         from .pki import make_client_ssl_context
         if self.cert_pem:
@@ -65,6 +55,8 @@ class TlsConfig:
         }
         if require_client_cert:
             kwargs["ssl_cert_reqs"] = ssl.CERT_REQUIRED
+        else:
+            kwargs["ssl_cert_reqs"] = ssl.CERT_OPTIONAL
         return kwargs
 
     def httpx_kwargs(self) -> dict:

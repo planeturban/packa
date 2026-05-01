@@ -38,7 +38,7 @@ from shared.schemas import FileRecordCreate, FileRecordOut, StatusUpdate
 from . import config_store
 from .database import engine, get_db
 from .poller import poller_loop
-from .state import FfmpegProgress, Job, worker_state
+from .state import Job, worker_state
 from .store import get_setting, set_setting
 from .worker import recover, sync_loop, worker_loop
 
@@ -96,6 +96,7 @@ async def _register_and_poll() -> None:
     attempt = 0
     while True:
         last_exc: Exception | None = None
+        fatal = False
         for base, kw in candidates:
             try:
                 record = await _try_register(payload, base, kw)
@@ -103,6 +104,13 @@ async def _register_and_poll() -> None:
                 tls_kw      = kw
                 last_exc    = None
                 break
+            except httpx.HTTPStatusError as exc:
+                if 400 <= exc.response.status_code < 500:
+                    print(f"[worker] master rejected registration: {exc.response.status_code} {exc.response.text}")
+                    fatal = True
+                    last_exc = exc
+                    break
+                last_exc = exc
             except Exception as exc:
                 last_exc = exc
         if last_exc is None:
@@ -118,7 +126,7 @@ async def _register_and_poll() -> None:
             print(f"[worker] registered as worker-{record['id']} ({assigned_id!r})")
             break
         attempt += 1
-        wait = min(5 * attempt, 30)
+        wait = 60 if fatal else min(5 * attempt, 30)
         print(f"[worker] registration failed (attempt {attempt}): {last_exc} — retrying in {wait}s")
         await asyncio.sleep(wait)
 
@@ -486,12 +494,13 @@ class ConfigRestore(BaseModel):
 
 class TlsBootstrapRequest(BaseModel):
     token: str
+    ca_fingerprint: str = ""
 
 
 @app.post("/tls/bootstrap")
 async def tls_bootstrap(body: TlsBootstrapRequest, request: Request):
-    _require_web_cert(request)
     """Fetch a TLS cert bundle from master using a bootstrap token. Restart required after."""
+    _require_web_cert(request)
     if get_setting("tls.cert") and get_setting("tls.key") and get_setting("tls.ca"):
         raise HTTPException(
             status_code=409,
@@ -499,12 +508,25 @@ async def tls_bootstrap(body: TlsBootstrapRequest, request: Request):
         )
     try:
         async with httpx.AsyncClient(timeout=10, verify=False) as client:
+            if body.ca_fingerprint:
+                status_r = await client.get(
+                    f"https://{_config.master_host}:{_config.master_port}/tls/status"
+                )
+                status_r.raise_for_status()
+                presented_fp = (status_r.json() or {}).get("ca_fingerprint", "")
+                if presented_fp.replace(":", "").upper() != body.ca_fingerprint.replace(":", "").upper():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"CA fingerprint mismatch (got {presented_fp}, expected {body.ca_fingerprint})",
+                    )
             r = await client.post(
                 f"https://{_config.master_host}:{_config.master_port}/bootstrap",
                 json={"token": body.token, "cn": _worker_config_id or "worker",
                       "sans": [s for s in [_advertise_host] if s]},
             )
             r.raise_for_status()
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Could not reach master for TLS bootstrap: {exc}")
     bundle = r.json()
@@ -518,15 +540,6 @@ async def tls_bootstrap(body: TlsBootstrapRequest, request: Request):
     print("[worker] TLS onboarded — restarting")
     _schedule_restart()
     return {"ok": True}
-
-
-def _peer_has_cert(request: Request) -> bool:
-    """Return True if the request arrived with a CA-signed client certificate."""
-    try:
-        ssl_obj = request.scope["extensions"]["tls"]["ssl_object"]
-        return ssl_obj is not None and ssl_obj.getpeercert() is not None
-    except (KeyError, TypeError, AttributeError):
-        return False
 
 
 def _peer_cn(request: Request) -> str | None:
@@ -545,23 +558,15 @@ def _peer_cn(request: Request) -> str | None:
     return None
 
 
-def _require_localhost_or_mtls(request: Request) -> None:
-    host = request.client.host if request.client else ""
-    if host in ("127.0.0.1", "::1"):
-        return
-    if _peer_has_cert(request):
-        return
-    raise HTTPException(status_code=403, detail="Requires mTLS or localhost")
-
 
 def _require_web_cert(request: Request) -> None:
-    """Require CN=web client cert. Loopback and non-TLS connections are exempt."""
+    """Require CN=web client cert. Loopback connections are exempt."""
     host = request.client.host if request.client else ""
     if host in ("127.0.0.1", "::1"):
         return
     cn = _peer_cn(request)
     if cn is None:
-        return  # non-TLS deployment — no cert enforcement
+        raise HTTPException(status_code=403, detail="Client certificate required")
     if cn != "web":
         raise HTTPException(status_code=403, detail="Web certificate required")
 

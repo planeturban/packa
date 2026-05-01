@@ -135,14 +135,6 @@ def _tmp_cert_files(cert_pem: str, key_pem: str):
                 os.unlink(p)
 
 
-def make_server_ssl_context(cert_pem: str, key_pem: str, ca_cert_pem: str) -> ssl.SSLContext:
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ctx.load_verify_locations(cadata=ca_cert_pem)
-    ctx.verify_mode = ssl.CERT_REQUIRED
-    with _tmp_cert_files(cert_pem, key_pem) as (cp, kp):
-        ctx.load_cert_chain(cp, kp)
-    return ctx
-
 
 def make_client_ssl_context(cert_pem: str, key_pem: str, ca_cert_pem: str) -> ssl.SSLContext:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)

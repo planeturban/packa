@@ -11,7 +11,7 @@ import secrets
 from sqlalchemy.orm import Session
 
 from shared.pki import (
-    _CA_RENEW_DAYS, _RENEW_DAYS,
+    _CA_RENEW_DAYS,
     cert_fingerprint, generate_ca, generate_cert, needs_renewal,
 )
 
@@ -99,12 +99,6 @@ def issue_client_cert(db: Session, cn: str, sans: list[str] | None = None) -> tu
     cert_pem, key_pem = generate_cert(ca_cert_pem, ca_key_pem, cn, sans=sans)
     return cert_pem, key_pem, ca_cert_pem
 
-
-def renew_client_cert(db: Session, cn: str, old_cert_pem: str, sans: list[str] | None = None) -> tuple[str, str, str]:
-    """Renew a client cert. Caller must have authenticated via existing mTLS cert."""
-    if needs_renewal(old_cert_pem, _RENEW_DAYS):
-        print(f"[tls] renewing cert for {cn!r}")
-    return issue_client_cert(db, cn, sans=sans)
 
 
 # ---------------------------------------------------------------------------
