@@ -110,7 +110,7 @@ def issue_client_cert(db: Session, cn: str, sans: list[str] | None = None) -> tu
     ca_cert_pem, ca_key_pem = ensure_ca(db)
     # Workers act as both TLS server (accepting connections from web) and client
     # (connecting to master). Web is client-only to master/workers.
-    purpose = "both" if cn == "worker" else "client"
+    purpose = "both" if cn != "web" else "client"
     cert_pem, key_pem = generate_cert(ca_cert_pem, ca_key_pem, cn, sans=sans, purpose=purpose)
     return cert_pem, key_pem, ca_cert_pem
 
