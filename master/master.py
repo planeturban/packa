@@ -112,8 +112,8 @@ def main() -> None:
         if fp:
             print(f"[tls] CA fingerprint:   {fp}")
         if not get_token_info(db2):
-            token = generate_token(db2)
-            print(f"[tls] bootstrap token:  {token}  (valid {10} min)")
+            generate_token(db2)
+            print(f"[tls] bootstrap token ready — retrieve it with: packa bootstrap-token --config <your.toml>")
     finally:
         db2.close()
 
