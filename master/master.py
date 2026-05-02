@@ -21,6 +21,7 @@ Usage:
 import argparse
 import asyncio
 import builtins
+import os
 from datetime import datetime
 
 _orig_print = builtins.print
@@ -101,6 +102,15 @@ def main() -> None:
     config_store.apply_to_config(effective, config)
     if args.advertise_host is not None:
         config.advertise_host = args.advertise_host
+    elif not config.advertise_host:
+        config.advertise_host = _env("PACKA_MASTER_ADVERTISE_HOST", _file_data.get("advertise_host", ""))
+    _file_tls = _file_data.get("tls", {})
+    _extra_sans_env = os.environ.get("PACKA_MASTER_TLS_EXTRA_SANS")
+    config.tls_extra_sans = (
+        [s.strip() for s in _extra_sans_env.split(",") if s.strip()]
+        if _extra_sans_env
+        else _file_tls.get("extra_sans", [])
+    )
 
     # --- PKI setup ---
     db2 = SessionLocal()
