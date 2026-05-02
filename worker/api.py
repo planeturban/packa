@@ -596,11 +596,15 @@ def restart_worker(request: Request):
 
 def _schedule_restart() -> None:
     import os as _os, sys as _sys, threading as _threading
-    main_spec = getattr(_sys.modules.get('__main__'), '__spec__', None)
-    if main_spec and main_spec.name:
-        cmd = [_sys.executable, '-m', main_spec.name] + _sys.argv[1:]
+    restart_argv_raw = _os.environ.get('_PACKA_RESTART_ARGV')
+    if restart_argv_raw:
+        cmd = [_sys.executable] + restart_argv_raw.split('\x1f')
     else:
-        cmd = [_sys.executable] + _sys.argv
+        main_spec = getattr(_sys.modules.get('__main__'), '__spec__', None)
+        if main_spec and main_spec.name:
+            cmd = [_sys.executable, '-m', main_spec.name] + _sys.argv[1:]
+        else:
+            cmd = [_sys.executable] + _sys.argv
     def _do():
         __import__('time').sleep(0.2)
         _os.execv(_sys.executable, cmd)
