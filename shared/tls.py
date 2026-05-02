@@ -28,7 +28,7 @@ class TlsConfig:
         if self.cert_pem:
             return make_client_ssl_context(self.cert_pem, self.key_pem, self.ca_pem)
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ctx.check_hostname = False
+        ctx.check_hostname = True
         ctx.verify_mode = ssl.CERT_REQUIRED
         ctx.load_verify_locations(cafile=self.ca)
         ctx.load_cert_chain(self.cert, self.key)
