@@ -22,15 +22,22 @@
 # Env: PACKA_MASTER_BIND, PACKA_MASTER_API_PORT
 
 [master]
-bind     = "localhost"   # use "any" for 0.0.0.0
-api_port = 9000
+bind           = "localhost"   # use "any" for 0.0.0.0
+api_port       = 9000
+# advertise_host = ""   # hostname/IP included in the server cert SANs; auto-detected if omitted
+                        # Env: PACKA_MASTER_ADVERTISE_HOST
 
-# Bring-your-own certificates (overrides auto-generated certs).
+# TLS — auto-generated CA and server cert on first start.
+# Bring-your-own certificates override the auto-generated ones.
 # Env: PACKA_MASTER_TLS_CERT, PACKA_MASTER_TLS_KEY, PACKA_TLS_CA
 # [master.tls]
-# cert = "/etc/packa/master.crt"
-# key  = "/etc/packa/master.key"
-# ca   = "/etc/packa/ca.crt"
+# cert       = "/etc/packa/master.crt"
+# key        = "/etc/packa/master.key"
+# ca         = "/etc/packa/ca.crt"
+# extra_sans = ["master", "master.example.svc.cluster.local"]
+#              # Additional DNS names/IPs to include in the server cert SANs.
+#              # Useful in k8s where clients connect via a service DNS name that
+#              # differs from advertise_host. Env: PACKA_MASTER_TLS_EXTRA_SANS (comma-separated)
 
 [master.paths]
 # Root path for the master node.
