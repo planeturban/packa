@@ -193,8 +193,7 @@ poll_interval = 5
 bind = "localhost"   # use "any" for 0.0.0.0
 port = 8080
 
-# Credentials for the login page.
-# When TLS is active, login is always required even if these are not set.
+# Credentials for the login page. Required when binding to a non-loopback address.
 # Env: PACKA_WEB_USERNAME, PACKA_WEB_PASSWORD
 username = "admin"
 password = "change-me"
@@ -209,7 +208,25 @@ master_port = 9000
 # Env: PACKA_WEB_BOOTSTRAP_TOKEN
 # bootstrap_token = ""
 
-# Bring-your-own certificates (overrides auto-bootstrapped certs).
+# Browser-facing HTTPS — choose one option:
+#
+# Option A: provide a cert/key (e.g. from Let's Encrypt or an internal CA).
+#   Web will serve HTTPS directly to the browser.
+#   Env: PACKA_WEB_BROWSER_TLS_CERT, PACKA_WEB_BROWSER_TLS_KEY
+# [web.browser_tls]
+# cert = "/etc/packa/web-browser.crt"
+# key  = "/etc/packa/web-browser.key"
+#
+# Option B: run behind a reverse proxy that handles TLS (nginx, Caddy, Traefik…).
+#   Web listens on plain HTTP; the proxy terminates TLS.
+#   Session cookies will have the Secure flag so browsers send them over HTTPS only.
+#   Env: PACKA_WEB_BEHIND_PROXY=1
+# behind_proxy = true
+#
+# If neither option is set, web refuses to bind to a non-loopback address.
+# Override with --insecure-no-https for local dev only.
+
+# mTLS client certificates (used for outbound connections to master/workers).
 # Env: PACKA_WEB_TLS_CERT, PACKA_WEB_TLS_KEY, PACKA_TLS_CA
 # [web.tls]
 # cert = "/etc/packa/web.crt"
