@@ -159,10 +159,7 @@ async def _stream_progress(
                     )
                     worker_state.cancel_reason = "auto"
                     worker_state.cancel_detail = f"{p.percent:.0f}% — output {over_pct}% over source"
-                    try:
-                        proc.terminate()
-                    except ProcessLookupError:
-                        pass
+                    asyncio.ensure_future(_terminate_and_kill(proc))
     avg_fps = sum(fps_samples) / len(fps_samples) if fps_samples else None
     avg_speed = sum(speed_samples) / len(speed_samples) if speed_samples else None
     return avg_fps, avg_speed
@@ -305,6 +302,21 @@ async def sync_loop() -> None:
             db.close()
 
 
+async def _terminate_and_kill(proc: asyncio.subprocess.Process, grace_s: float = 5.0) -> None:
+    """Send SIGTERM; escalate to SIGKILL if the process doesn't exit within grace_s."""
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=grace_s)
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+
+
 async def _monitor_output_size(output_path: str, source_size: int, proc: asyncio.subprocess.Process, output_dir: str) -> None:
     zero_since = time.monotonic()
     while proc.returncode is None:
@@ -312,10 +324,7 @@ async def _monitor_output_size(output_path: str, source_size: int, proc: asyncio
         if not _has_disk_space(output_dir):
             print(f"[worker] disk full in {output_dir!r} — terminating ffmpeg")
             worker_state.disk_full = True
-            try:
-                proc.terminate()
-            except ProcessLookupError:
-                pass
+            await _terminate_and_kill(proc)
             break
         try:
             actual_size = Path(output_path).stat().st_size
@@ -328,10 +337,7 @@ async def _monitor_output_size(output_path: str, source_size: int, proc: asyncio
                 detail = f"no output written after {timeout_s}s"
                 print(f"[worker] {detail} — terminating ffmpeg")
                 worker_state.stall_detail = detail
-                try:
-                    proc.terminate()
-                except ProcessLookupError:
-                    pass
+                await _terminate_and_kill(proc)
                 break
             continue
         stalled = bool(worker_state.progress and worker_state.progress.stalled)
@@ -345,10 +351,7 @@ async def _monitor_output_size(output_path: str, source_size: int, proc: asyncio
             print(f"[worker] output {actual_size} B >= limit {limit} B{' (stalled)' if stalled else ''} — terminating")
             worker_state.cancel_reason = "auto"
             worker_state.cancel_detail = f"stalled — output {over_pct}% over source" if stalled else None
-            try:
-                proc.terminate()
-            except ProcessLookupError:
-                pass
+            await _terminate_and_kill(proc)
             break
 
 
@@ -391,10 +394,7 @@ async def _monitor_stall(proc: asyncio.subprocess.Process, timeout_s: int) -> No
                 detail = f"stalled — no progress for {round(elapsed)}s"
             print(f"[worker] {detail} — terminating ffmpeg")
             worker_state.stall_detail = detail
-            try:
-                proc.terminate()
-            except ProcessLookupError:
-                pass
+            await _terminate_and_kill(proc)
             break
 
 
