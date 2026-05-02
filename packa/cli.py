@@ -1,3 +1,4 @@
+import os
 import sys
 import argparse
 
@@ -14,6 +15,8 @@ def main() -> None:
     p_master = sub.add_parser("master", help="Run the master node")
     p_master.add_argument("--bind", default=None)
     p_master.add_argument("--api-port", type=int, default=None)
+    p_master.add_argument("--advertise-host", default=None,
+                          help="Hostname/IP clients use to reach master — included in TLS server cert SANs")
     p_master.add_argument("--config", default=None)
 
     # ── worker ────────────────────────────────────────────────────────────────
@@ -79,6 +82,7 @@ def main() -> None:
 
     if args.command == "master":
         from master.master import main as _main
+        os.environ.setdefault('_PACKA_RESTART_ARGV', '\x1f'.join(sys.argv))
         sys.argv = [sys.argv[0]]
         if args.config:
             sys.argv += ["--config", args.config]
@@ -86,11 +90,14 @@ def main() -> None:
             sys.argv += ["--bind", args.bind]
         if args.api_port:
             sys.argv += ["--api-port", str(args.api_port)]
+        if args.advertise_host:
+            sys.argv += ["--advertise-host", args.advertise_host]
         _main()
 
     elif args.command == "worker":
         if args.action in (None, "start"):
             from worker.main import main as _main
+            os.environ.setdefault('_PACKA_RESTART_ARGV', '\x1f'.join(sys.argv))
             sys.argv = [sys.argv[0]]
             if args.config:
                 sys.argv += ["--config", args.config]
@@ -112,6 +119,7 @@ def main() -> None:
 
     elif args.command == "web":
         from web.main import main as _main
+        os.environ.setdefault('_PACKA_RESTART_ARGV', '\x1f'.join(sys.argv))
         sys.argv = [sys.argv[0]]
         if args.config:
             sys.argv += ["--config", args.config]

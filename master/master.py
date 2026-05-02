@@ -55,6 +55,8 @@ def main() -> None:
     parser.add_argument("--bind", default=None,
                         help='Address to bind the API server ("any" → 0.0.0.0)')
     parser.add_argument("--api-port", type=int, default=None, help="API port")
+    parser.add_argument("--advertise-host", default=None,
+                        help="Hostname/IP clients use to reach master — included in TLS server cert SANs")
     parser.add_argument("--config", help="Path to TOML config file")
     args = parser.parse_args()
 
@@ -97,12 +99,16 @@ def main() -> None:
     effective, sources = config_store.compute_effective(file_values, env_values, db_values, cli_values)
     config = Config(bind=bind_raw, api_port=api_port)
     config_store.apply_to_config(effective, config)
+    if args.advertise_host is not None:
+        config.advertise_host = args.advertise_host
 
     # --- PKI setup ---
     db2 = SessionLocal()
     try:
         ca_cert, ca_key = ensure_ca(db2)
-        sans = [bind] if bind != "0.0.0.0" else ["localhost"]
+        import socket as _socket
+        advertise = config.advertise_host or (bind if bind != "0.0.0.0" else _socket.gethostname())
+        sans = list({advertise, "localhost"})
         server_cert, server_key = ensure_server_cert(db2, ca_cert, ca_key, sans=sans)
         if not config.tls.cert_pem:
             config.tls.cert_pem = server_cert

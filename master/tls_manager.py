@@ -72,7 +72,19 @@ def ensure_server_cert(
     cert = _get(db, _KEY_CERT)
     key  = _get(db, _KEY_KEY)
     if cert and key and not needs_renewal(cert):
-        return cert, key
+        if sans:
+            from cryptography import x509 as _x509
+            try:
+                existing = _x509.load_pem_x509_certificate(cert.encode())
+                ext = existing.extensions.get_extension_for_class(_x509.SubjectAlternativeName)
+                existing_sans = {str(v) for v in ext.value}
+            except Exception:
+                existing_sans = set()
+            if not set(sans).issubset(existing_sans):
+                print(f"[tls] server cert SANs outdated ({existing_sans} ⊅ {set(sans)}) — regenerating")
+                cert = key = None
+        if cert and key:
+            return cert, key
     print("[tls] generating server certificate")
     cert, key = generate_cert(ca_cert_pem, ca_key_pem, "master", sans=sans, purpose="server")
     _set(db, _KEY_CERT, cert)
