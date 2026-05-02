@@ -265,9 +265,10 @@ def _schedule_restart() -> None:
 async def _worker_action(request: Request, host: str, api_port: int, endpoint: str) -> RedirectResponse:
     if not _logged_in(request):
         return _redirect_login()
+    scheme = await _assert_known_worker(host, api_port)
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
-            await client.post(f"{_worker_url(host, api_port)}/{endpoint}")
+            await client.post(f"{_worker_url(host, api_port, scheme)}/{endpoint}")
         except Exception:
             pass
     return RedirectResponse("/", status_code=303)

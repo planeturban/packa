@@ -147,16 +147,17 @@ def make_client_ssl_context(cert_pem: str, key_pem: str, ca_cert_pem: str) -> ss
 
 
 def write_tls_files(cert_pem: str, key_pem: str, ca_pem: str, prefix: str = "node") -> tuple[str, str, str]:
-    """Write PEM data to named temp files. Returns (cert_path, key_path, ca_path).
-    Files persist for the process lifetime — suitable for passing to uvicorn."""
-    tmp = tempfile.gettempdir()
-    paths = {
-        "cert": os.path.join(tmp, f"packa_{prefix}_cert.pem"),
-        "key":  os.path.join(tmp, f"packa_{prefix}_key.pem"),
-        "ca":   os.path.join(tmp, f"packa_{prefix}_ca.pem"),
-    }
-    for name, data in [("cert", cert_pem), ("key", key_pem), ("ca", ca_pem)]:
-        with open(paths[name], "w") as f:
-            f.write(data)
-        os.chmod(paths[name], 0o600)
-    return paths["cert"], paths["key"], paths["ca"]
+    """Write PEM data to unpredictable temp files. Returns (cert_path, key_path, ca_path).
+    Files persist for the process lifetime and are removed on clean exit."""
+    import atexit
+    paths = []
+    for data in (cert_pem, key_pem, ca_pem):
+        fd, path = tempfile.mkstemp(prefix=f"packa_{prefix}_", suffix=".pem")
+        try:
+            os.write(fd, data.encode())
+        finally:
+            os.close(fd)
+        os.chmod(path, 0o600)
+        paths.append(path)
+        atexit.register(lambda p=path: os.unlink(p) if os.path.exists(p) else None)
+    return paths[0], paths[1], paths[2]
