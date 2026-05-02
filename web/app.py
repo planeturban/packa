@@ -755,7 +755,17 @@ async def data_worker_tls_onboard(request: Request):
             token_info = gen_r.json()
         token = token_info["token"]
         fp_r = await client.get(f"{_master_url()}/tls/status")
-        ca_fingerprint = (fp_r.json() or {}).get("ca_fingerprint", "") if fp_r.is_success else ""
+        if not fp_r.is_success:
+            return JSONResponse(
+                {"error": f"Could not fetch CA fingerprint from master ({fp_r.status_code}) — aborting onboard"},
+                status_code=502,
+            )
+        ca_fingerprint = (fp_r.json() or {}).get("ca_fingerprint", "")
+        if not ca_fingerprint:
+            return JSONResponse(
+                {"error": "Master did not return a CA fingerprint — aborting onboard"},
+                status_code=502,
+            )
     # Worker has no TLS yet — talk to it over HTTP directly
     worker_base = f"http://{host}:{port}"
     try:
