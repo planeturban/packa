@@ -106,6 +106,10 @@ class WebConfig:
     bootstrap_token: str = ""
     bootstrap_ca_fingerprint: str = ""
     tls: TlsConfig = field(default_factory=TlsConfig)
+    # Browser-facing TLS (separate from the mTLS client cert)
+    browser_tls_cert: str = ""   # PEM file path — web serves HTTPS directly to the browser
+    browser_tls_key: str = ""
+    behind_proxy: bool = False   # Proxy handles TLS; web listens HTTP but sets Secure cookies
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +243,7 @@ def load_web(config_path: str | None) -> WebConfig:
 
     web_tls = web.get("tls", {})
     shared_tls_w = data.get("tls", {})
+    browser_tls = web.get("browser_tls", {})
     return WebConfig(
         username=_env("PACKA_WEB_USERNAME", web.get("username", "admin")),
         password=_env("PACKA_WEB_PASSWORD", web.get("password", "")),
@@ -254,4 +259,7 @@ def load_web(config_path: str | None) -> WebConfig:
             key=web_tls.get("key", ""),
             ca=_env("PACKA_TLS_CA", web_tls.get("ca", shared_tls_w.get("ca", ""))),
         ),
+        browser_tls_cert=_env("PACKA_WEB_BROWSER_TLS_CERT", browser_tls.get("cert", "")),
+        browser_tls_key=_env("PACKA_WEB_BROWSER_TLS_KEY", browser_tls.get("key", "")),
+        behind_proxy=bool(_env("PACKA_WEB_BEHIND_PROXY", "")) or web.get("behind_proxy", False),
     )

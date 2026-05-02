@@ -51,7 +51,13 @@ def set_config(config: WebConfig) -> None:
     global _config
     _config = config
     secret_key = config.secret_key or secrets.token_hex(32)
-    app.add_middleware(SessionMiddleware, secret_key=secret_key)
+    # https_only=True sets the Secure flag on session cookies.
+    # Correct whenever the browser sees HTTPS — either because web serves it directly
+    # or because a proxy terminates TLS in front of web.
+    _https_only = bool(config.browser_tls_cert and config.browser_tls_key) or config.behind_proxy
+    app.add_middleware(SessionMiddleware, secret_key=secret_key,
+                       https_only=_https_only, same_site="lax",
+                       max_age=14 * 24 * 3600)
 
 
 app = FastAPI(title="Packa Web")
