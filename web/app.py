@@ -51,7 +51,13 @@ def set_config(config: WebConfig) -> None:
     global _config
     _config = config
     secret_key = config.secret_key or secrets.token_hex(32)
-    app.add_middleware(SessionMiddleware, secret_key=secret_key)
+    # https_only=True sets the Secure flag on session cookies.
+    # Correct whenever the browser sees HTTPS — either because web serves it directly
+    # or because a proxy terminates TLS in front of web.
+    _https_only = bool(config.browser_tls_cert and config.browser_tls_key) or config.behind_proxy
+    app.add_middleware(SessionMiddleware, secret_key=secret_key,
+                       https_only=_https_only, same_site="lax",
+                       max_age=14 * 24 * 3600)
 
 
 app = FastAPI(title="Packa Web")
@@ -259,9 +265,10 @@ def _schedule_restart() -> None:
 async def _worker_action(request: Request, host: str, api_port: int, endpoint: str) -> RedirectResponse:
     if not _logged_in(request):
         return _redirect_login()
+    scheme = await _assert_known_worker(host, api_port)
     async with httpx.AsyncClient(timeout=5, **_httpx_kw()) as client:
         try:
-            await client.post(f"{_worker_url(host, api_port)}/{endpoint}")
+            await client.post(f"{_worker_url(host, api_port, scheme)}/{endpoint}")
         except Exception:
             pass
     return RedirectResponse("/", status_code=303)
@@ -749,7 +756,17 @@ async def data_worker_tls_onboard(request: Request):
             token_info = gen_r.json()
         token = token_info["token"]
         fp_r = await client.get(f"{_master_url()}/tls/status")
-        ca_fingerprint = (fp_r.json() or {}).get("ca_fingerprint", "") if fp_r.is_success else ""
+        if not fp_r.is_success:
+            return JSONResponse(
+                {"error": f"Could not fetch CA fingerprint from master ({fp_r.status_code}) — aborting onboard"},
+                status_code=502,
+            )
+        ca_fingerprint = (fp_r.json() or {}).get("ca_fingerprint", "")
+        if not ca_fingerprint:
+            return JSONResponse(
+                {"error": "Master did not return a CA fingerprint — aborting onboard"},
+                status_code=502,
+            )
     # Worker has no TLS yet — talk to it over HTTP directly
     worker_base = f"http://{host}:{port}"
     try:

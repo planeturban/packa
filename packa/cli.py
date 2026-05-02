@@ -52,6 +52,10 @@ def main() -> None:
     p_web.add_argument("--master-host", default=None)
     p_web.add_argument("--master-port", type=int, default=None)
     p_web.add_argument("--insecure-no-auth", action="store_true")
+    p_web.add_argument("--insecure-no-https", action="store_true")
+    p_web.add_argument("--behind-proxy", action="store_true")
+    p_web.add_argument("--browser-tls-cert", default=None)
+    p_web.add_argument("--browser-tls-key", default=None)
     p_web.add_argument("--config", default=None)
 
     # ── bootstrap-token ───────────────────────────────────────────────────────
@@ -121,6 +125,14 @@ def main() -> None:
             sys.argv += ["--master-port", str(args.master_port)]
         if args.insecure_no_auth:
             sys.argv += ["--insecure-no-auth"]
+        if args.insecure_no_https:
+            sys.argv += ["--insecure-no-https"]
+        if args.behind_proxy:
+            sys.argv += ["--behind-proxy"]
+        if args.browser_tls_cert:
+            sys.argv += ["--browser-tls-cert", args.browser_tls_cert]
+        if args.browser_tls_key:
+            sys.argv += ["--browser-tls-key", args.browser_tls_key]
         _main()
 
     elif args.command == "bootstrap-token":
