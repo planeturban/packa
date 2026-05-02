@@ -108,9 +108,13 @@ def _bootstrap_tls(config: WebConfig) -> None:
         print(f"[web] TLS bootstrap failed: {exc}")
 
 
-async def _main(bind: str, port: int) -> None:
+async def _main(bind: str, port: int, ssl_certfile: str = "", ssl_keyfile: str = "") -> None:
+    kwargs = {}
+    if ssl_certfile and ssl_keyfile:
+        kwargs["ssl_certfile"] = ssl_certfile
+        kwargs["ssl_keyfile"] = ssl_keyfile
     uvi_config = uvicorn.Config(app, host=bind, port=port, log_level="info",
-                                log_config=UVICORN_LOG_CONFIG)
+                                log_config=UVICORN_LOG_CONFIG, **kwargs)
     await uvicorn.Server(uvi_config).serve()
 
 
@@ -126,6 +130,14 @@ def main() -> None:
                         help="SHA-256 fingerprint of master CA to verify during bootstrap")
     parser.add_argument("--insecure-no-auth", action="store_true",
                         help="Allow binding to a non-loopback address without credentials (unsafe)")
+    parser.add_argument("--insecure-no-https", action="store_true",
+                        help="Allow binding to a non-loopback address over plain HTTP (unsafe)")
+    parser.add_argument("--behind-proxy", action="store_true",
+                        help="Proxy handles TLS termination; web listens HTTP but sends Secure cookies")
+    parser.add_argument("--browser-tls-cert", default=None,
+                        help="PEM certificate for the browser-facing HTTPS listener")
+    parser.add_argument("--browser-tls-key", default=None,
+                        help="PEM private key for the browser-facing HTTPS listener")
     parser.add_argument("--config", help="Path to TOML config file")
     args = parser.parse_args()
 
@@ -143,6 +155,12 @@ def main() -> None:
         config.bootstrap_token = args.bootstrap_token
     if args.bootstrap_ca_fingerprint is not None:
         config.bootstrap_ca_fingerprint = args.bootstrap_ca_fingerprint
+    if args.browser_tls_cert is not None:
+        config.browser_tls_cert = args.browser_tls_cert
+    if args.browser_tls_key is not None:
+        config.browser_tls_key = args.browser_tls_key
+    if args.behind_proxy:
+        config.behind_proxy = True
 
     bind = "0.0.0.0" if config.bind == "any" else config.bind
 
@@ -174,11 +192,20 @@ def main() -> None:
 
     set_config(config)
 
-    print(f"[web] bind: {bind}:{config.port}")
-    print(f"[web] master: {config.master_host}:{config.master_port}")
-    print(f"[web] tls: {'bootstrapped' if config.tls.enabled else 'pending bootstrap'}")
-
     _loopback = {"127.0.0.1", "::1", "localhost"}
+    _https_ok = bool(config.browser_tls_cert and config.browser_tls_key) or config.behind_proxy
+
+    # HTTPS enforcement
+    if bind not in _loopback and not _https_ok:
+        if args.insecure_no_https:
+            print("[web] WARNING: serving plain HTTP on a non-loopback address — credentials and session cookies are unencrypted")
+        else:
+            print("[web] FATAL: refusing to bind to a non-loopback address over plain HTTP. "
+                  "Set [web.browser_tls] cert/key, set [web] behind_proxy = true, "
+                  "or pass --insecure-no-https to override.")
+            import sys; sys.exit(1)
+
+    # Auth enforcement
     if not (config.username and config.password) and bind not in _loopback:
         if args.insecure_no_auth:
             print("[web] WARNING: authentication is disabled on a non-loopback address — unsafe, use only for testing")
@@ -189,7 +216,19 @@ def main() -> None:
     elif not (config.username and config.password):
         print("[web] WARNING: authentication is disabled — the dashboard is accessible without login")
 
-    asyncio.run(_main(bind=bind, port=config.port))
+    if config.browser_tls_cert and config.browser_tls_key:
+        _mode = "HTTPS (browser TLS)"
+    elif config.behind_proxy:
+        _mode = "HTTP (behind proxy)"
+    else:
+        _mode = "HTTP"
+    print(f"[web] bind: {bind}:{config.port}  mode: {_mode}")
+    print(f"[web] master: {config.master_host}:{config.master_port}")
+    print(f"[web] tls: {'bootstrapped' if config.tls.enabled else 'pending bootstrap'}")
+
+    asyncio.run(_main(bind=bind, port=config.port,
+                      ssl_certfile=config.browser_tls_cert,
+                      ssl_keyfile=config.browser_tls_key))
 
 
 if __name__ == "__main__":
