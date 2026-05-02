@@ -11,7 +11,7 @@ import tempfile
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 _CA_DAYS       = 3650   # 10 years
 _CERT_DAYS     = 365    # 1 year
@@ -65,8 +65,12 @@ def generate_cert(
     cn: str,
     sans: list[str] | None = None,
     days: int = _CERT_DAYS,
+    purpose: str = "both",
 ) -> tuple[str, str]:
-    """Sign a new cert with the CA. Returns (cert_pem, key_pem)."""
+    """Sign a new cert with the CA. Returns (cert_pem, key_pem).
+
+    purpose: "server" | "client" | "both" — controls KeyUsage and EKU extensions.
+    """
     ca_cert = x509.load_pem_x509_certificate(ca_cert_pem.encode())
     ca_key  = serialization.load_pem_private_key(ca_key_pem.encode(), password=None)
     key     = _gen_key()
@@ -82,7 +86,29 @@ def generate_cert(
         .not_valid_before(now)
         .not_valid_after(now + datetime.timedelta(days=days))
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                key_encipherment=True,
+                content_commitment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
     )
+
+    ekus = []
+    if purpose in ("server", "both"):
+        ekus.append(ExtendedKeyUsageOID.SERVER_AUTH)
+    if purpose in ("client", "both"):
+        ekus.append(ExtendedKeyUsageOID.CLIENT_AUTH)
+    builder = builder.add_extension(x509.ExtendedKeyUsage(ekus), critical=False)
+
     if sans:
         san_list = []
         for s in sans:
