@@ -137,6 +137,7 @@ def load_master(config_path: str | None) -> Config:
     return Config(
         bind=_env("PACKA_MASTER_BIND", master.get("bind", "localhost")),
         api_port=_env_int("PACKA_MASTER_API_PORT", master.get("api_port", 9000)),
+        advertise_host=_env("PACKA_MASTER_ADVERTISE_HOST", master.get("advertise_host", "")),
         path_prefix=_env("PACKA_MASTER_PREFIX", paths.get("prefix", "")),
         tls=TlsConfig(
             cert=tls_data.get("cert", ""),
