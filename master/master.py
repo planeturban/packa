@@ -108,7 +108,7 @@ def main() -> None:
         ca_cert, ca_key = ensure_ca(db2)
         import socket as _socket
         advertise = config.advertise_host or (bind if bind != "0.0.0.0" else _socket.gethostname())
-        sans = list({advertise, "localhost"})
+        sans = list({advertise, "localhost", *config.tls_extra_sans})
         server_cert, server_key = ensure_server_cert(db2, ca_cert, ca_key, sans=sans)
         if not config.tls.cert_pem:
             config.tls.cert_pem = server_cert
