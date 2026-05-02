@@ -214,7 +214,8 @@ def _build_report_body(record: FileRecord) -> dict:
 async def _send_report(record_id: int, body: dict) -> bool:
     """Send a result report to master. Returns True on success."""
     if not worker_state.master_url:
-        return True
+        print(f"[worker] master unreachable — result for record {record_id} queued for sync when master reconnects")
+        return False
     url = f"{worker_state.master_url}/files/{record_id}/result"
     try:
         async with httpx.AsyncClient(timeout=10, **worker_state.tls.httpx_kwargs()) as client:
