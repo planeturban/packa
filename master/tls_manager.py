@@ -77,7 +77,7 @@ def ensure_server_cert(
             try:
                 existing = _x509.load_pem_x509_certificate(cert.encode())
                 ext = existing.extensions.get_extension_for_class(_x509.SubjectAlternativeName)
-                existing_sans = {str(v) for v in ext.value}
+                existing_sans = {str(v.value) for v in ext.value}
             except Exception:
                 existing_sans = set()
             if not set(sans).issubset(existing_sans):
