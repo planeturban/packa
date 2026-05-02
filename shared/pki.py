@@ -11,7 +11,7 @@ import tempfile
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 _CA_DAYS       = 3650   # 10 years
 _CERT_DAYS     = 365    # 1 year
@@ -65,8 +65,12 @@ def generate_cert(
     cn: str,
     sans: list[str] | None = None,
     days: int = _CERT_DAYS,
+    purpose: str = "both",
 ) -> tuple[str, str]:
-    """Sign a new cert with the CA. Returns (cert_pem, key_pem)."""
+    """Sign a new cert with the CA. Returns (cert_pem, key_pem).
+
+    purpose: "server" | "client" | "both" — controls KeyUsage and EKU extensions.
+    """
     ca_cert = x509.load_pem_x509_certificate(ca_cert_pem.encode())
     ca_key  = serialization.load_pem_private_key(ca_key_pem.encode(), password=None)
     key     = _gen_key()
@@ -82,7 +86,29 @@ def generate_cert(
         .not_valid_before(now)
         .not_valid_after(now + datetime.timedelta(days=days))
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                key_encipherment=True,
+                content_commitment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
     )
+
+    ekus = []
+    if purpose in ("server", "both"):
+        ekus.append(ExtendedKeyUsageOID.SERVER_AUTH)
+    if purpose in ("client", "both"):
+        ekus.append(ExtendedKeyUsageOID.CLIENT_AUTH)
+    builder = builder.add_extension(x509.ExtendedKeyUsage(ekus), critical=False)
+
     if sans:
         san_list = []
         for s in sans:
@@ -138,7 +164,7 @@ def _tmp_cert_files(cert_pem: str, key_pem: str):
 
 def make_client_ssl_context(cert_pem: str, key_pem: str, ca_cert_pem: str) -> ssl.SSLContext:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    ctx.check_hostname = False
+    ctx.check_hostname = True
     ctx.verify_mode = ssl.CERT_REQUIRED
     ctx.load_verify_locations(cadata=ca_cert_pem)
     with _tmp_cert_files(cert_pem, key_pem) as (cp, kp):
@@ -147,16 +173,17 @@ def make_client_ssl_context(cert_pem: str, key_pem: str, ca_cert_pem: str) -> ss
 
 
 def write_tls_files(cert_pem: str, key_pem: str, ca_pem: str, prefix: str = "node") -> tuple[str, str, str]:
-    """Write PEM data to named temp files. Returns (cert_path, key_path, ca_path).
-    Files persist for the process lifetime — suitable for passing to uvicorn."""
-    tmp = tempfile.gettempdir()
-    paths = {
-        "cert": os.path.join(tmp, f"packa_{prefix}_cert.pem"),
-        "key":  os.path.join(tmp, f"packa_{prefix}_key.pem"),
-        "ca":   os.path.join(tmp, f"packa_{prefix}_ca.pem"),
-    }
-    for name, data in [("cert", cert_pem), ("key", key_pem), ("ca", ca_pem)]:
-        with open(paths[name], "w") as f:
-            f.write(data)
-        os.chmod(paths[name], 0o600)
-    return paths["cert"], paths["key"], paths["ca"]
+    """Write PEM data to unpredictable temp files. Returns (cert_path, key_path, ca_path).
+    Files persist for the process lifetime and are removed on clean exit."""
+    import atexit
+    paths = []
+    for data in (cert_pem, key_pem, ca_pem):
+        fd, path = tempfile.mkstemp(prefix=f"packa_{prefix}_", suffix=".pem")
+        try:
+            os.write(fd, data.encode())
+        finally:
+            os.close(fd)
+        os.chmod(path, 0o600)
+        paths.append(path)
+        atexit.register(lambda p=path: os.unlink(p) if os.path.exists(p) else None)
+    return paths[0], paths[1], paths[2]

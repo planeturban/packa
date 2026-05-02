@@ -74,7 +74,7 @@ def ensure_server_cert(
     if cert and key and not needs_renewal(cert):
         return cert, key
     print("[tls] generating server certificate")
-    cert, key = generate_cert(ca_cert_pem, ca_key_pem, "master", sans=sans)
+    cert, key = generate_cert(ca_cert_pem, ca_key_pem, "master", sans=sans, purpose="server")
     _set(db, _KEY_CERT, cert)
     _set(db, _KEY_KEY,  key)
     return cert, key
@@ -96,7 +96,10 @@ def get_ca_fingerprint(db: Session) -> str | None:
 def issue_client_cert(db: Session, cn: str, sans: list[str] | None = None) -> tuple[str, str, str]:
     """Issue a client cert signed by the CA. Returns (cert_pem, key_pem, ca_cert_pem)."""
     ca_cert_pem, ca_key_pem = ensure_ca(db)
-    cert_pem, key_pem = generate_cert(ca_cert_pem, ca_key_pem, cn, sans=sans)
+    # Workers act as both TLS server (accepting connections from web) and client
+    # (connecting to master). Web is client-only to master/workers.
+    purpose = "both" if cn == "worker" else "client"
+    cert_pem, key_pem = generate_cert(ca_cert_pem, ca_key_pem, cn, sans=sans, purpose=purpose)
     return cert_pem, key_pem, ca_cert_pem
 
 

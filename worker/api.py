@@ -506,19 +506,22 @@ async def tls_bootstrap(body: TlsBootstrapRequest, request: Request):
             status_code=409,
             detail="Worker is already bootstrapped. Remove stored TLS settings and restart to re-bootstrap.",
         )
+    if not body.ca_fingerprint:
+        raise HTTPException(status_code=400, detail="ca_fingerprint is required for bootstrap")
     try:
         async with httpx.AsyncClient(timeout=10, verify=False) as client:
-            if body.ca_fingerprint:
-                status_r = await client.get(
-                    f"https://{_config.master_host}:{_config.master_port}/tls/status"
+            status_r = await client.get(
+                f"https://{_config.master_host}:{_config.master_port}/tls/status"
+            )
+            status_r.raise_for_status()
+            presented_fp = (status_r.json() or {}).get("ca_fingerprint", "")
+            if not presented_fp:
+                raise HTTPException(status_code=502, detail="Master did not return a CA fingerprint")
+            if presented_fp.replace(":", "").upper() != body.ca_fingerprint.replace(":", "").upper():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"CA fingerprint mismatch (got {presented_fp}, expected {body.ca_fingerprint})",
                 )
-                status_r.raise_for_status()
-                presented_fp = (status_r.json() or {}).get("ca_fingerprint", "")
-                if presented_fp.replace(":", "").upper() != body.ca_fingerprint.replace(":", "").upper():
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"CA fingerprint mismatch (got {presented_fp}, expected {body.ca_fingerprint})",
-                    )
             r = await client.post(
                 f"https://{_config.master_host}:{_config.master_port}/bootstrap",
                 json={"token": body.token, "cn": _worker_config_id or "worker",
