@@ -113,15 +113,37 @@ A worker's ID is resolved in this order:
 
 **mTLS is strongly recommended for all inter-node communication.**
 
-- On first start master auto-generates a CA and server cert (stored in `master.db`) and prints a **bootstrap token** (valid 10 minutes) to the log.
-- Workers and the web process exchange this token for a signed client cert via `POST /bootstrap`. The first connection uses TOFU (`verify=False`); all subsequent connections verify against the CA. Web bootstrap does not fall back to HTTP — if HTTPS fails, bootstrap fails.
+### Bootstrap
+
+- On first start master auto-generates a CA and server cert (stored in `master.db`). A bootstrap token (valid 10 minutes) is generated and stored; retrieve it with `packa bootstrap-token --config packa.toml`. The token is **not** printed to the log.
+- Workers and the web process exchange this token for a signed client cert via `POST /bootstrap`. Before doing so they fetch the master's CA fingerprint from `GET /tls/status` and abort if the fingerprint does not match the `bootstrap_ca_fingerprint` value in config. This prevents TOFU being silently bypassed. All subsequent connections verify against the CA.
 - Bootstrapped certs are persisted in `worker.db` and `web.db` and loaded automatically on restart.
-- BYO certs are supported — set `cert`/`key` in the relevant `[*.tls]` section and those override any bootstrapped certs.
+- BYO certs are supported — set `cert`/`key` in the relevant `[*.tls]` section; those override any bootstrapped certs.
+
+### Server behaviour
+
 - Master runs with `CERT_OPTIONAL` so `/bootstrap` stays reachable before a node has a cert. Workers run with `CERT_REQUIRED` — once bootstrapped they only accept connections from CA-signed clients.
 - Sensitive master endpoints (`/tls/token`, `/restart`) require either a loopback origin or a verified CA-signed client certificate. A TLS connection without a client cert is not sufficient.
+- All issued certificates carry explicit **KeyUsage** (digitalSignature, keyEncipherment) and **ExtendedKeyUsage** (serverAuth, clientAuth, or both) extensions. Client and server certs are purpose-restricted.
+- TLS temp files (written to satisfy uvicorn's file-path API) use `mkstemp` with unpredictable names and are cleaned up at process exit.
+
+### Web — browser-facing HTTPS
+
+The web process enforces HTTPS on non-loopback addresses:
+
+- **Option A — direct TLS:** set `[web.browser_tls]` cert + key; web terminates HTTPS itself.
+- **Option B — behind proxy:** set `behind_proxy = true`; web listens HTTP but sets `Secure` + `SameSite=Lax` on session cookies.
+- Without either option, web refuses to bind to a non-loopback address. Pass `--insecure-no-https` to override for local dev only.
+
+Note: `[web.browser_tls]` is the **browser-facing** certificate. It is separate from `[web.tls]`, which holds the mTLS client cert used for outbound connections to master and workers.
+
+### Access controls
+
 - **Worker** refuses to bind to a non-loopback address when TLS is not yet enabled. Use `--insecure-no-tls` to override (dev/testing only).
-- **Web** refuses to bind to a non-loopback address without credentials configured. Use `--insecure-no-auth` to override (dev/testing only).
-- Web authentication (username/password) protects the browser-facing interface. `secret_key` is auto-generated and persisted in `web.db`. Auth can be disabled by omitting credentials, but only on loopback — see above.
+- **Web** refuses to bind to a non-loopback address without `username` and `password` configured and without HTTPS enabled. Use `--insecure-no-auth` / `--insecure-no-https` to override (dev/testing only).
+- Web authentication (username/password) protects the browser-facing interface. `secret_key` is auto-generated and persisted in `web.db`.
+- The web BFF validates that every worker host/port it proxies to is a registered worker. Arbitrary host/port injection via BFF action endpoints is rejected.
+- All outbound TLS connections from web and worker use `check_hostname=True` — the server's certificate must match the hostname or IP address the connection is made to.
 - Master and worker APIs have no per-request application-layer authentication beyond mTLS — do not expose them to untrusted networks.
 
 ---
