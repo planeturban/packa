@@ -14,6 +14,8 @@ Then start each role with:
 packa master  [--config packa.toml] [--bind any] [--api-port 9000]
 packa worker  [--config packa.toml] [--bind any] [--api-port 8000] [--insecure-no-tls]
 packa web     [--config packa.toml] [--bind any] [--port 8080] [--insecure-no-auth]
+              [--browser-tls-cert /etc/packa/web-browser.crt --browser-tls-key /etc/packa/web-browser.key]
+              [--behind-proxy] [--insecure-no-https]
 ```
 
 Generate a new TLS bootstrap token from a running master:
@@ -203,16 +205,31 @@ master_port = 9000
 
 username   = "admin"      # omit username or password to disable authentication
 password   = "change-me"
-# bootstrap_token = ""    # copy from master log on first run; stored after bootstrap
+# bootstrap_token = ""    # copy from `packa bootstrap-token` on first run; stored after bootstrap
 
-# [web.tls]               # BYO cert (overrides bootstrapped certs)
+# Option A: web terminates HTTPS directly for the browser.
+# Env: PACKA_WEB_BROWSER_TLS_CERT, PACKA_WEB_BROWSER_TLS_KEY
+# [web.browser_tls]
+# cert = "/etc/packa/web-browser.crt"
+# key  = "/etc/packa/web-browser.key"
+
+# Option B: run behind a reverse proxy that handles TLS (nginx, Caddy, Traefik…).
+# Web listens HTTP; session cookies get the Secure flag so browsers send them over HTTPS only.
+# Env: PACKA_WEB_BEHIND_PROXY=1
+# behind_proxy = true
+
+# [web.tls]               # mTLS client cert (outbound connections to master/workers)
 # cert = "/etc/packa/web.crt"
 # key  = "/etc/packa/web.key"
 ```
 
 `secret_key` is auto-generated and persisted in `web.db` — no need to set it manually.
 
-> **Security:** The web process refuses to bind to a non-loopback address (`bind = "any"` / `0.0.0.0`) without `username` and `password` configured. For development environments without auth, pass `--insecure-no-auth`.
+> **Security:** The web process refuses to bind to a non-loopback address (`bind = "any"` / `0.0.0.0`) unless **both** of these conditions are met:
+> - HTTPS is configured — either `[web.browser_tls]` cert+key, or `behind_proxy = true`
+> - `username` and `password` are set
+>
+> For development environments without either, pass `--insecure-no-https` and/or `--insecure-no-auth` (never in production).
 
 | Environment variable | Config key |
 |----------------------|------------|
@@ -224,8 +241,11 @@ password   = "change-me"
 | `PACKA_WEB_PASSWORD` | `web.password` |
 | `PACKA_WEB_SECRET_KEY` | `web.secret_key` |
 | `PACKA_WEB_BOOTSTRAP_TOKEN` | `web.bootstrap_token` |
-| `PACKA_WEB_TLS_CERT` | `web.tls.cert` |
-| `PACKA_WEB_TLS_KEY` | `web.tls.key` |
+| `PACKA_WEB_BROWSER_TLS_CERT` | `web.browser_tls.cert` |
+| `PACKA_WEB_BROWSER_TLS_KEY` | `web.browser_tls.key` |
+| `PACKA_WEB_BEHIND_PROXY` | `web.behind_proxy` |
+| `PACKA_WEB_TLS_CERT` | `web.tls.cert` (mTLS client cert) |
+| `PACKA_WEB_TLS_KEY` | `web.tls.key` (mTLS client key) |
 | `PACKA_TLS_CA` | `tls.ca` (shared CA for BYO-cert setups) |
 
 ---

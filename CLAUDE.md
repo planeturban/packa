@@ -21,8 +21,8 @@ requirements.txt
 | `shared/models.py` | `FileRecord` ORM model and `FileStatus` enum |
 | `shared/schemas.py` | Pydantic schemas (`FileRecordCreate`, `FileRecordOut`, `StatusUpdate`) |
 | `shared/crud.py` | All DB operations — takes a `Session` parameter, no DB knowledge of its own |
-| `shared/config.py` | `Config` + sub-configs including `TlsConfig`; `load_master()`, `load_worker()` parse TOML + env vars; `_env()` / `_env_int()` helpers |
-| `shared/tls.py` | TLS helpers: `scheme()`, `httpx_kwargs()`, `uvicorn_kwargs()`, `uvicorn_server_kwargs()` — all take a `TlsConfig`. Also exports `UVICORN_LOG_CONFIG` dict (adds `HH:MM:SS` timestamps to all uvicorn log lines). |
+| `shared/config.py` | `Config` + sub-configs including `TlsConfig`; `load_master()`, `load_worker()` parse TOML + env vars; `_env()` / `_env_int()` helpers. `WebConfig` has `browser_tls_cert`, `browser_tls_key` (browser-facing HTTPS) and `behind_proxy` (proxy mode). |
+| `shared/tls.py` | TLS helpers: `scheme()`, `httpx_kwargs()`, `uvicorn_kwargs()`, `uvicorn_server_kwargs()` — all take a `TlsConfig`. Also exports `UVICORN_LOG_CONFIG` dict (adds `HH:MM:SS` timestamps to all uvicorn log lines). All client SSL contexts use `check_hostname=True`. |
 | `shared/db.py` | `make_engine()`, `make_session_factory()`, `migrate()`, `make_get_db()` — shared DB helpers used by master, worker, and web. Engines use `NullPool` (no connection pooling) to avoid exhaustion under concurrent async polling. `migrate()` applies `ALTER TABLE` for columns added after initial schema creation (idempotent). |
 
 ## Databases
@@ -212,8 +212,8 @@ Browser talks HTTP(S) to the web process. Web process talks mTLS to master and w
 
 | File | Purpose |
 |------|---------|
-| `web/main.py` | CLI (`--bind`, `--port`, `--master-host`, `--master-port`, `--config`), starts uvicorn |
-| `web/app.py` | FastAPI app; session-based auth, Jinja2 dashboard, login/logout, BFF action endpoints |
+| `web/main.py` | CLI (`--bind`, `--port`, `--master-host`, `--master-port`, `--browser-tls-cert`, `--browser-tls-key`, `--behind-proxy`, `--insecure-no-https`, `--insecure-no-auth`, `--config`), starts uvicorn. Refuses non-loopback binding without HTTPS mode and without credentials. |
+| `web/app.py` | FastAPI app; session-based auth (`https_only`, `same_site="lax"` when HTTPS mode active), Jinja2 dashboard, login/logout, BFF action endpoints. Worker BFF endpoints validate host/port against the registered worker list (`_assert_known_worker`) to prevent SSRF. |
 | `web/client.py` | `fetch_dashboard()` — fans out to master + all workers in parallel with one `AsyncClient` |
 | `web/config.py` | `WebConfig` dataclass + `load_web()` — reads `[web]` section + env vars |
 | `web/templates/` | `base.html`, `login.html`, `dashboard.html` |
@@ -251,7 +251,7 @@ Browser talks HTTP(S) to the web process. Web process talks mTLS to master and w
 
 **Auth:** `SessionMiddleware` (starlette) with `secret_key` from config. Session stores `{"user": username}` after successful login. Auth is **optional** — if `username` or `password` is empty/missing, all routes are accessible without login. `secret_key` is **auto-generated and persisted in `web.db`** so sessions survive restarts.
 
-**TLS bootstrap:** when the web process starts without TLS certs, the login page shows a "Bootstrap token" input above the login form. The user pastes the token printed by master, clicks "Bootstrap TLS", and the web process restarts with TLS enabled. The first connection to master uses TOFU (`verify=False`) to fetch the CA cert.
+**TLS bootstrap:** when the web process starts without TLS certs, the login page shows a "Bootstrap token" input above the login form. The user pastes the token (obtained via `packa bootstrap-token`), clicks "Bootstrap TLS", and the web process restarts with TLS enabled. The first connection to master fetches the CA fingerprint, verifies it against `bootstrap_ca_fingerprint` in config, then exchanges the token for a cert bundle.
 
 **Web env vars:**
 
@@ -265,17 +265,22 @@ Browser talks HTTP(S) to the web process. Web process talks mTLS to master and w
 | `PACKA_WEB_BOOTSTRAP_TOKEN` | `[web].bootstrap_token` |
 | `PACKA_WEB_MASTER_HOST` | `[web].master_host` |
 | `PACKA_WEB_MASTER_PORT` | `[web].master_port` |
-| `PACKA_WEB_TLS_CERT` | `[web.tls].cert` |
+| `PACKA_WEB_BROWSER_TLS_CERT` | `[web.browser_tls].cert` (browser-facing HTTPS) |
+| `PACKA_WEB_BROWSER_TLS_KEY` | `[web.browser_tls].key` |
+| `PACKA_WEB_BEHIND_PROXY` | `[web].behind_proxy` |
+| `PACKA_WEB_TLS_CERT` | `[web.tls].cert` (mTLS client cert) |
 | `PACKA_WEB_TLS_KEY` | `[web.tls].key` |
 | `PACKA_TLS_CA` | `[tls].ca` (shared) |
 
 ## mTLS
 
-mTLS is opt-in and recommended for untrusted networks. Master auto-generates a CA and server cert on first start (stored in `master.db`). It prints a **bootstrap token** (valid 10 minutes, multi-use) to the log. Workers and the web process exchange this token for a signed client cert, which is stored in `worker.db` / `web.db` and loaded on subsequent starts.
+mTLS is opt-in and recommended for untrusted networks. Master auto-generates a CA and server cert on first start (stored in `master.db`). A bootstrap token (valid 10 minutes, multi-use) is generated and stored — retrieve it with `packa bootstrap-token --config packa.toml`. The token is **not** printed to the log.
 
-The first connection to master uses TOFU (Trust On First Use) — `verify=False` to fetch the CA cert bundle. After bootstrap all connections verify against the CA.
+Workers and the web process exchange this token for a signed client cert, which is stored in `worker.db` / `web.db` and loaded on subsequent starts. Before exchanging the token they fetch the master's CA fingerprint from `GET /tls/status` and abort if it does not match `bootstrap_ca_fingerprint` from config — this prevents silent TOFU bypass. After bootstrap all connections verify against the CA with `check_hostname=True`.
 
 Opt out entirely with `[master.tls] disabled = true`. BYO certs are supported by setting `cert`/`key` in the relevant `[*.tls]` section.
+
+All issued certificates carry **KeyUsage** (digitalSignature, keyEncipherment) and **ExtendedKeyUsage** extensions. Server certs get `serverAuth`; worker certs get `serverAuth + clientAuth`; web certs get `clientAuth` only. TLS temp files use `mkstemp` with unpredictable names and are cleaned up at process exit via `atexit`.
 
 `shared/tls.py` provides four helpers:
 - `scheme(tls)` — returns `"https"` or `"http"`
