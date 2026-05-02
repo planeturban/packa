@@ -82,6 +82,7 @@ class Config:
     master_host: str = "localhost"
     master_port: int = 9000
     advertise_host: str = ""
+    tls_extra_sans: list[str] = field(default_factory=list)
     worker_id: str = ""
     path_prefix: str = ""
     ffmpeg: FfmpegConfig = field(default_factory=FfmpegConfig)
@@ -134,10 +135,17 @@ def load_master(config_path: str | None) -> Config:
     )
 
     tls_data = master.get("tls", {})
+    _extra_sans_env = os.environ.get("PACKA_MASTER_TLS_EXTRA_SANS")
+    extra_sans = (
+        [s.strip() for s in _extra_sans_env.split(",") if s.strip()]
+        if _extra_sans_env
+        else tls_data.get("extra_sans", [])
+    )
     return Config(
         bind=_env("PACKA_MASTER_BIND", master.get("bind", "localhost")),
         api_port=_env_int("PACKA_MASTER_API_PORT", master.get("api_port", 9000)),
         advertise_host=_env("PACKA_MASTER_ADVERTISE_HOST", master.get("advertise_host", "")),
+        tls_extra_sans=extra_sans,
         path_prefix=_env("PACKA_MASTER_PREFIX", paths.get("prefix", "")),
         tls=TlsConfig(
             cert=tls_data.get("cert", ""),
