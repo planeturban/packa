@@ -32,7 +32,7 @@ from shared import crud
 from shared.config import Config
 from shared.db import migrate
 from shared.version import VERSION as _VERSION
-from shared.models import Base, FileStatus
+from shared.models import Base, FileRecord, FileStatus
 from shared.schemas import FileRecordCreate, FileRecordOut, StatusUpdate
 
 from . import config_store
@@ -262,6 +262,7 @@ class WorkerStatus(BaseModel):
     version: str = "dev"
     consecutive_errors: int = 0
     sleep_reason: str | None = None
+    unsynced_count: int = 0
 
 
 class EncoderUpdate(BaseModel):
@@ -274,9 +275,13 @@ class EncoderUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 
 @app.get("/status", response_model=WorkerStatus)
-def get_status(request: Request):
+def get_status(request: Request, db: Session = Depends(get_db)):
     _require_web_cert(request)
     p = worker_state.progress
+    unsynced = db.query(FileRecord).filter(
+        FileRecord.status.in_(["complete", "cancelled", "error"]),
+        FileRecord.master_synced == False,  # noqa: E712
+    ).count()
     return WorkerStatus(
         state="processing" if worker_state.active else "idle",
         record_id=worker_state.record_id,
@@ -298,6 +303,7 @@ def get_status(request: Request):
         version=_VERSION,
         consecutive_errors=worker_state.consecutive_errors,
         sleep_reason=worker_state.sleep_reason,
+        unsynced_count=unsynced,
         progress=ProgressOut(
             percent=p.percent,
             speed=p.speed,

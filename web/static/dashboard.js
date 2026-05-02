@@ -1308,6 +1308,7 @@ function renderWorkerCard(s) {
         <div class="worker-stat-value" style="font-size:11px;font-family:'IBM Plex Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc((s.worker_config&&s.worker_config.values&&s.worker_config.values.path_prefix)||'')}">${esc((s.worker_config&&s.worker_config.values&&s.worker_config.values.path_prefix)||'—')}</div>
       </div>
     </div>
+    ${(s.unsynced_count||0) > 0 ? `<div style="font-size:11px;color:var(--warn);font-family:'IBM Plex Mono',monospace;margin-top:6px">${s.unsynced_count} result${s.unsynced_count===1?'':'s'} pending sync to master</div>` : ''}
 
     <div class="worker-controls">
       ${isProcessing ? `
