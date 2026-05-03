@@ -698,6 +698,7 @@ def recover() -> None:
         )
         for record in pending:
             worker_state.enqueue(Job(record_id=record.id, file_path=record.file_path,
+                                     duration=record.duration,
                                      force_encode=bool(record.force_encode)))
 
         print(f"[worker] recovery complete — {len(pending)} record(s) queued")
