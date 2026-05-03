@@ -1,7 +1,7 @@
 import re
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from .models import FileRecord, FileStatus
@@ -190,7 +190,12 @@ def get_stats(db: Session) -> dict:
     _avg_dur = avg_dur or 0
     _mb_per_s = ((total_in / jobs) / 1_048_576 / _avg_dur) if (jobs and _avg_dur) else None
 
-    current_library_bytes = db.query(func.sum(FileRecord.file_size)).scalar() or 0
+    current_library_bytes = db.query(
+        func.sum(case(
+            (FileRecord.status == FileStatus.COMPLETE, FileRecord.output_size),
+            else_=FileRecord.file_size,
+        ))
+    ).scalar() or 0
 
     # Library-wide totals — include COMPLETE + DISCARDED (both have been ffprobed)
     _lf = [FileRecord.status.in_([FileStatus.COMPLETE, FileStatus.DISCARDED])]
