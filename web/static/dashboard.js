@@ -469,7 +469,7 @@ function renderOverview() {
       </div>
       <div class="stat-card${stats.projected_low_confidence ? ' stat-card-dim' : ''}">
         <div class="stat-label">Projected Library Size</div>
-        <div class="stat-value${stats.projected_low_confidence ? ' stat-dim' : ''}">${fmtBytes((stats.current_library_bytes || 0) - (stats.saved_bytes || 0) - (stats.projected_saved_bytes || 0))}</div>
+        <div class="stat-value${stats.projected_low_confidence ? ' stat-dim' : ''}">${fmtBytes((stats.current_library_bytes || 0) - (stats.projected_saved_bytes || 0))}</div>
         <div class="stat-sub">current: ${fmtBytes(stats.current_library_bytes || 0)}</div>
       </div>
     </div>
