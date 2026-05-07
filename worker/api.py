@@ -368,6 +368,19 @@ def delete_file(record_id: int, request: Request, db: Session = Depends(get_db))
         raise HTTPException(status_code=404, detail="Record not found")
 
 
+@app.delete("/jobs/{record_id}", status_code=204)
+def cancel_queued_job(record_id: int, request: Request, db: Session = Depends(get_db)):
+    """Cancel a queued (not yet active) job. Called by master when the source file is deleted.
+    Marks the local record CANCELLED and flags the queue to skip it."""
+    _require_trusted_cert(request)
+    record = crud.get_file_record(db, record_id)
+    if record and record.status in (FileStatus.PENDING, FileStatus.ASSIGNED):
+        record.status = FileStatus.CANCELLED
+        record.cancel_reason = "source_deleted"
+        db.commit()
+    worker_state.cancel_queued(record_id)
+
+
 @app.patch("/files/{record_id}/status", response_model=FileRecordOut)
 def update_status(record_id: int, body: StatusUpdate, request: Request, db: Session = Depends(get_db)):
     _require_web_cert(request)
@@ -595,6 +608,20 @@ def _require_web_cert(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Client certificate required")
     if cn != "web":
         raise HTTPException(status_code=403, detail="Web certificate required")
+
+
+def _require_trusted_cert(request: Request) -> None:
+    """Require CN=web or CN=master client cert. Loopback and non-TLS workers are exempt."""
+    if not _config.tls.enabled:
+        return
+    host = request.client.host if request.client else ""
+    if host in ("127.0.0.1", "::1"):
+        return
+    cn = _peer_cn(request)
+    if cn is None:
+        raise HTTPException(status_code=403, detail="Client certificate required")
+    if cn not in ("web", "master"):
+        raise HTTPException(status_code=403, detail="Trusted certificate required")
 
 
 @app.post("/restart")

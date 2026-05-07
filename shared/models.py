@@ -19,6 +19,7 @@ class FileStatus(str, enum.Enum):
     CANCELLED = "cancelled"   # Terminated mid-conversion (user or auto size limit)
     ERROR = "error"
     DUPLICATE = "duplicate"   # Same content already exists under a different path
+    DELETED   = "deleted"     # Source file no longer exists on disk
 
 
 def _utcnow() -> datetime:
