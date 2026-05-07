@@ -21,9 +21,10 @@ requirements.txt
 | `shared/models.py` | `FileRecord` ORM model and `FileStatus` enum |
 | `shared/schemas.py` | Pydantic schemas (`FileRecordCreate`, `FileRecordOut`, `StatusUpdate`) |
 | `shared/crud.py` | All DB operations — takes a `Session` parameter, no DB knowledge of its own |
-| `shared/config.py` | `Config` + sub-configs including `TlsConfig`; `load_master()`, `load_worker()` parse TOML + env vars; `_env()` / `_env_int()` helpers. `WebConfig` has `browser_tls_cert`, `browser_tls_key` (browser-facing HTTPS) and `behind_proxy` (proxy mode). |
+| `shared/config.py` | `Config` + sub-configs including `TlsConfig`; `load_master()`, `load_worker()` parse TOML + env vars; `_env()` / `_env_int()` / `_env_bool()` helpers (`_env_bool` treats `"1"/"true"/"yes"/"on"` as true — avoids `bool("false") == True`). `WebConfig` has `browser_tls_cert`, `browser_tls_key` (browser-facing HTTPS) and `behind_proxy` (proxy mode). |
 | `shared/tls.py` | TLS helpers: `scheme()`, `httpx_kwargs()`, `uvicorn_kwargs()`, `uvicorn_server_kwargs()` — all take a `TlsConfig`. Also exports `UVICORN_LOG_CONFIG` dict (adds `HH:MM:SS` timestamps to all uvicorn log lines). All client SSL contexts use `check_hostname=True`. |
-| `shared/db.py` | `make_engine()`, `make_session_factory()`, `migrate()`, `make_get_db()` — shared DB helpers used by master, worker, and web. Engines use `NullPool` (no connection pooling) to avoid exhaustion under concurrent async polling. `migrate()` applies `ALTER TABLE` for columns added after initial schema creation (idempotent). |
+| `shared/db.py` | `make_engine()`, `make_session_factory()`, `migrate()`, `make_get_db()`, `chmod_db()` — shared DB helpers. Engines use `NullPool` (no connection pooling). `migrate()` applies `ALTER TABLE` idempotently. `chmod_db(path)` sets 0o600 on the DB and its WAL/SHM files; called at startup in all three processes. |
+| `shared/pki.py` | `generate_self_signed(host, sans)` — generates a throw-away self-signed cert (used by workers pre-bootstrap so HTTPS is always available). `write_tls_files()` writes cert/key/ca to temp files and registers `atexit` cleanup. |
 
 ## Databases
 
@@ -127,6 +128,8 @@ The database layer (`master_settings` table, `config.*` keys) is editable at run
 | `PACKA_MASTER_PROBE_INTERVAL` | `[master.scan].probe_interval` |
 | `PACKA_MASTER_SCAN_PERIODIC_ENABLED` | `[master.scan.periodic].enabled` |
 | `PACKA_MASTER_SCAN_INTERVAL` | `[master.scan.periodic].interval` (seconds) |
+| `PACKA_MASTER_ADVERTISE_HOST` | `[master].advertise_host` (hostname/IP used in auto-generated cert SANs) |
+| `PACKA_MASTER_TLS_EXTRA_SANS` | `[master.tls].extra_sans` (comma-separated extra SANs, e.g. LoadBalancer IP) |
 | `PACKA_MASTER_TLS_CERT` | `[master.tls].cert` |
 | `PACKA_MASTER_TLS_KEY` | `[master.tls].key` |
 | `PACKA_MASTER_TLS_DISABLED` | `[master.tls].disabled` |
@@ -170,6 +173,8 @@ Before starting ffmpeg, `ffprobe` checks the video codec. If the file is already
 **Cancel thresholds:** optional `cancel_thresholds` config (list of `[min_pct, ratio]` pairs) cancels early if the projected output exceeds `source_size * ratio` at `min_pct` progress. Projection uses cumulative average (`current_size / ratio`). When `out_time_us` stops advancing (frozen timestamps), projection is suppressed — `_monitor_output_size` acts as safety net instead. Worker card shows an amber progress bar and "timestamps frozen" when a stall is detected. Default thresholds: `[[20.0, 1.15], [40.0, 1.05], [60.0, 1.0]]`.
 
 **After conversion:** if `output_size >= source_size` the output file is deleted and status is set to `CANCELLED` (`cancel_reason="auto"`). Otherwise `COMPLETE` and result is pushed to master via `PATCH /files/{id}/result`.
+
+**Worker TLS pre-bootstrap:** even before mTLS onboarding, the worker always serves HTTPS. If no TLS certs are found in the DB, a throw-away self-signed cert is generated for `effective_host` so the bootstrap token exchange travels encrypted (web UI → worker → master uses `verify=False` TOFU for this step only). Once onboarded, the real client cert is loaded and all subsequent connections use full mTLS.
 
 **Sleep / drain modes:** `worker_state.sleeping` blocks the worker loop and the poller. `worker_state.drain` causes the worker to set `sleeping=True` after the current job finishes (Finish current). Both flags are exposed in `GET /status`.
 
@@ -274,7 +279,7 @@ Browser talks HTTP(S) to the web process. Web process talks mTLS to master and w
 
 ## mTLS
 
-mTLS is opt-in and recommended for untrusted networks. Master auto-generates a CA and server cert on first start (stored in `master.db`). A bootstrap token (valid 10 minutes, multi-use) is generated and stored — retrieve it with `packa bootstrap-token --config packa.toml`. The token is **not** printed to the log.
+mTLS is opt-in and recommended for untrusted networks. Master auto-generates a CA and server cert on first start (stored in `master.db`). A bootstrap token (valid 10 minutes, **single-use**) is generated and stored — retrieve it with `packa bootstrap-token --config packa.toml`. The token is **not** printed to the log.
 
 Workers and the web process exchange this token for a signed client cert, which is stored in `worker.db` / `web.db` and loaded on subsequent starts. Before exchanging the token they fetch the master's CA fingerprint from `GET /tls/status` and abort if it does not match `bootstrap_ca_fingerprint` from config — this prevents silent TOFU bypass. After bootstrap all connections verify against the CA with `check_hostname=True`.
 
@@ -313,8 +318,9 @@ TLS: `[tls]` holds the shared CA. Node-specific `[*.tls]` sections hold cert and
 
 ```toml
 [master]
-bind     = "localhost"
-api_port = 9000
+bind           = "localhost"
+api_port       = 9000
+# advertise_host = ""      # hostname/IP for auto-generated cert SANs (use when bind=0.0.0.0, e.g. k8s service name)
 
 [master.paths]
 prefix = "/mnt/data/"
@@ -324,6 +330,7 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 
 [master.tls]               # auto-generated on first start; opt out with:
 # disabled = true
+# extra_sans = ["10.0.100.72"]   # additional SANs for external-access IPs (e.g. k8s LoadBalancer)
 # cert = "/etc/packa/master.crt"   # BYO cert
 # key  = "/etc/packa/master.key"
 ```
@@ -363,8 +370,8 @@ poll_interval = 5
 [web]
 bind             = "localhost"
 port             = 8080
-username         = "admin"    # optional — omit username or password to disable auth entirely
-password         = "secret"
+# username       = "your-username"   # optional — omit username or password to disable auth entirely
+# password       = "your-password"   # default is "" (no auth); non-loopback bind requires credentials or --insecure-no-auth
 # bootstrap_token = ""       # copy from master log on first run
 master_host      = "localhost"
 master_port      = 9000
@@ -409,3 +416,4 @@ python -m web.main --config packa.toml
 - **Web as BFF:** browser talks to web process, web process talks mTLS to master/workers. Web holds its own client certificate.
 - **asyncio throughout:** uvicorn, worker loop, poller loop, ffmpeg subprocess and progress streaming all share one event loop per process.
 - **Config before app:** `set_config()` must be called before uvicorn starts. It sets a module-level `_config` in each `api.py`. The lifespan reads `_config` to start background tasks.
+- **Filesystem hardening:** all three processes call `os.umask(0o077)` at startup so new files default to owner-only permissions. `chmod_db()` is called after the DB file is created to ensure 0o600 on the `.db`, `-wal`, and `-shm` files.
