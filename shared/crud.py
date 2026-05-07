@@ -1,3 +1,4 @@
+import os
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -147,6 +148,29 @@ def delete_file_record(db: Session, record_id: int) -> bool:
     db.delete(record)
     db.commit()
     return True
+
+
+def mark_missing_as_deleted(db: Session, scan_dir: str) -> list[FileRecord]:
+    """Check active records whose path is under scan_dir against the filesystem.
+    Records whose source file no longer exists are set to DELETED.
+    Returns the affected records (with their original worker_id intact) so the
+    caller can notify assigned workers."""
+    active = [
+        FileStatus.SCANNING, FileStatus.PENDING, FileStatus.ASSIGNED,
+        FileStatus.DUPLICATE, FileStatus.DISCARDED,
+    ]
+    prefix = scan_dir.rstrip("/") + "/"
+    records = (
+        db.query(FileRecord)
+        .filter(FileRecord.status.in_(active), FileRecord.file_path.like(prefix + "%"))
+        .all()
+    )
+    missing = [r for r in records if not os.path.exists(r.file_path)]
+    for r in missing:
+        r.status = FileStatus.DELETED
+    if missing:
+        db.commit()
+    return missing
 
 
 def delete_file_records_bulk(db: Session, ids: list[int]) -> list[FileRecord]:

@@ -380,6 +380,23 @@ def _collect_files(scan_dir: str, extensions: set[str]) -> list[tuple[str, str, 
     return results
 
 
+def _cancel_worker_job(worker_config_id: str, record_id: int) -> None:
+    """Fire-and-forget: ask the worker to cancel a specific queued job."""
+    worker = registry.get_by_config_id(worker_config_id)
+    if not worker:
+        return
+    url = f"{worker.scheme}://{worker.host}:{worker.api_port}/jobs/{record_id}"
+    asyncio.create_task(_delete_worker_job(url))
+
+
+async def _delete_worker_job(url: str) -> None:
+    try:
+        async with httpx.AsyncClient(timeout=5, **_config.tls.httpx_kwargs()) as client:
+            await client.delete(url)
+    except Exception as exc:
+        print(f"[scan] could not cancel worker job at {url}: {exc}")
+
+
 async def _scan_task(scan_dir: str, extensions: set[str], min_size: int, max_size: int) -> None:
     _scan.running = True
     _scan.found = _scan.skipped = _scan.errors = 0
@@ -412,6 +429,12 @@ async def _scan_task(scan_dir: str, extensions: set[str], min_size: int, max_siz
             except Exception as exc:
                 print(f"[scan] error on '{file_path}': {exc}")
                 _scan.errors += 1
+        missing = await asyncio.to_thread(crud.mark_missing_as_deleted, db, scan_dir)
+        if missing:
+            print(f"[scan] {len(missing)} file(s) no longer on disk — marked deleted")
+            for r in missing:
+                if r.worker_id:
+                    _cancel_worker_job(r.worker_id, r.id)
     except asyncio.CancelledError:
         print(f"[scan] cancelled — found={_scan.found} skipped={_scan.skipped} errors={_scan.errors}")
         return
