@@ -8,10 +8,11 @@ from .models import FileRecord, FileStatus
 from .schemas import FileRecordCreate
 
 
-def _search_pattern(search: str) -> str:
-    """Convert a search string to a LIKE pattern treating dots, dashes, and underscores as wildcards."""
+def _search_pattern(search: str) -> tuple[str, str]:
+    """Return (pattern, escape_char) for a SQL LIKE search on the given string."""
     parts = [p for p in re.split(r'[\s.\-_]+', search) if p]
-    return '%' + '%'.join(parts) + '%'
+    escaped = [p.replace("\\", "\\\\").replace("%", "\\%") for p in parts]
+    return '%' + '%'.join(escaped) + '%', "\\"
 
 
 def create_file_record(db: Session, record: FileRecordCreate) -> FileRecord:
@@ -115,8 +116,8 @@ def get_records_page(
     if status is not None:
         q = q.filter(FileRecord.status == status)
     if search:
-        pat = _search_pattern(search)
-        q = q.filter(or_(FileRecord.file_name.ilike(pat), FileRecord.file_path.ilike(pat)))
+        pat, esc = _search_pattern(search)
+        q = q.filter(or_(FileRecord.file_name.ilike(pat, escape=esc), FileRecord.file_path.ilike(pat, escape=esc)))
     col = _SORT_COLUMNS.get(sort_by, FileRecord.created_at)
     q = q.order_by(col.desc() if sort_dir == "desc" else col.asc())
     total = q.count()
@@ -134,8 +135,8 @@ def get_record_ids(
     if status is not None:
         q = q.filter(FileRecord.status == status)
     if search:
-        pat = _search_pattern(search)
-        q = q.filter(or_(FileRecord.file_name.ilike(pat), FileRecord.file_path.ilike(pat)))
+        pat, esc = _search_pattern(search)
+        q = q.filter(or_(FileRecord.file_name.ilike(pat, escape=esc), FileRecord.file_path.ilike(pat, escape=esc)))
     return [row[0] for row in q.all()]
 
 

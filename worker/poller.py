@@ -21,6 +21,23 @@ from .database import SessionLocal
 from .state import Job, worker_state
 
 
+def validate_path_under_prefix(file_path: str, path_prefix: str) -> str | None:
+    """Resolve file_path and verify it sits under path_prefix.
+
+    Returns the resolved absolute path, or None if the path escapes the prefix
+    or cannot be resolved. When path_prefix is empty no check is performed and
+    the original file_path is returned unchanged.
+    """
+    if not path_prefix:
+        return file_path
+    try:
+        resolved = Path(file_path).resolve()
+        resolved.relative_to(Path(path_prefix).resolve())
+        return str(resolved)
+    except (ValueError, OSError):
+        return None
+
+
 async def poller_loop(
     master_url: str,
     worker_config_id: str,
@@ -61,14 +78,10 @@ async def _claim_and_enqueue(
         for job_data in jobs:
             raw_relative = job_data["file_path"]
             full_path = path_prefix + raw_relative if path_prefix else raw_relative
-            if path_prefix:
-                try:
-                    resolved = Path(full_path).resolve()
-                    resolved.relative_to(Path(path_prefix).resolve())
-                    full_path = str(resolved)
-                except (ValueError, OSError):
-                    print(f"[poller] rejecting job {job_data.get('id')} — path escapes prefix: {raw_relative!r}")
-                    continue
+            full_path = validate_path_under_prefix(full_path, path_prefix)
+            if full_path is None:
+                print(f"[poller] rejecting job {job_data.get('id')} — path escapes prefix: {raw_relative!r}")
+                continue
             record = None
             try:
                 record = crud.create_file_record(db, FileRecordCreate(

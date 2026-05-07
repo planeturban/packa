@@ -59,6 +59,55 @@ def generate_ca() -> tuple[str, str]:
     return _cert_pem(cert), _key_pem(key)
 
 
+def generate_self_signed(cn: str, sans: list[str] | None = None) -> tuple[str, str]:
+    """Generate a self-signed server cert for HTTPS transport. Returns (cert_pem, key_pem).
+
+    Not suitable for mTLS — no CA chain. Intended only for encrypting the
+    bootstrap handshake before a proper CA-signed cert is obtained.
+    """
+    key = _gen_key()
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+    now = _utcnow()
+    builder = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=_CERT_DAYS))
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                key_encipherment=True,
+                content_commitment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
+            critical=False,
+        )
+    )
+    if sans:
+        san_list = []
+        for s in sans:
+            try:
+                san_list.append(x509.IPAddress(ipaddress.ip_address(s)))
+            except ValueError:
+                san_list.append(x509.DNSName(s))
+        builder = builder.add_extension(x509.SubjectAlternativeName(san_list), critical=False)
+    cert = builder.sign(key, hashes.SHA256())
+    return _cert_pem(cert), _key_pem(key)
+
+
 def generate_cert(
     ca_cert_pem: str,
     ca_key_pem: str,

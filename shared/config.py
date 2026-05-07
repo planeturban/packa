@@ -18,6 +18,13 @@ def _env_int(key: str, default: int) -> int:
     return int(val) if val is not None else default
 
 
+def _env_bool(key: str, default: bool = False) -> bool:
+    val = os.environ.get(key)
+    if val is None:
+        return default
+    return val.lower() in ("1", "true", "yes", "on")
+
+
 
 # ---------------------------------------------------------------------------
 # Config dataclasses
@@ -97,7 +104,7 @@ class Config:
 
 @dataclass
 class WebConfig:
-    username: str = "admin"
+    username: str = ""
     password: str = ""
     secret_key: str = ""
     master_host: str = "localhost"
@@ -254,7 +261,7 @@ def load_web(config_path: str | None) -> WebConfig:
     shared_tls_w = data.get("tls", {})
     browser_tls = web.get("browser_tls", {})
     return WebConfig(
-        username=_env("PACKA_WEB_USERNAME", web.get("username", "admin")),
+        username=_env("PACKA_WEB_USERNAME", web.get("username", "")),
         password=_env("PACKA_WEB_PASSWORD", web.get("password", "")),
         secret_key=_env("PACKA_WEB_SECRET_KEY", web.get("secret_key", "")),
         master_host=_env("PACKA_WEB_MASTER_HOST", web.get("master_host", "localhost")),
@@ -270,5 +277,5 @@ def load_web(config_path: str | None) -> WebConfig:
         ),
         browser_tls_cert=_env("PACKA_WEB_BROWSER_TLS_CERT", browser_tls.get("cert", "")),
         browser_tls_key=_env("PACKA_WEB_BROWSER_TLS_KEY", browser_tls.get("key", "")),
-        behind_proxy=bool(_env("PACKA_WEB_BEHIND_PROXY", "")) or web.get("behind_proxy", False),
+        behind_proxy=_env_bool("PACKA_WEB_BEHIND_PROXY") or web.get("behind_proxy", False),
     )

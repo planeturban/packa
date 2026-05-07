@@ -22,6 +22,7 @@ import argparse
 import asyncio
 import builtins
 import os
+os.umask(0o077)
 from datetime import datetime
 
 _orig_print = builtins.print
@@ -33,6 +34,7 @@ import tomllib
 import uvicorn
 
 from shared.config import Config, _env, _env_int
+from shared.db import chmod_db
 from shared.log import UVICORN_LOG_CONFIG
 from shared.tls import TlsConfig, patch_uvicorn_for_mtls
 
@@ -133,6 +135,7 @@ def main() -> None:
     finally:
         db2.close()
 
+    chmod_db("master.db")
     set_config(config)
     set_config_layers(args.config, cli_values)
 

@@ -771,10 +771,11 @@ async def data_worker_tls_onboard(request: Request):
                 {"error": "Master did not return a CA fingerprint — aborting onboard"},
                 status_code=502,
             )
-    # Worker has no TLS yet — talk to it over HTTP directly
-    worker_base = f"http://{host}:{port}"
+    # Worker serves HTTPS with a self-signed cert before bootstrap.
+    # Use verify=False (TOFU) so the token travels encrypted rather than in cleartext.
+    worker_base = f"{scheme}://{host}:{port}"
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=15, verify=False) as client:
             r = await client.post(f"{worker_base}/tls/bootstrap",
                                   json={"token": token, "ca_fingerprint": ca_fingerprint})
             r.raise_for_status()

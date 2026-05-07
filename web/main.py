@@ -28,6 +28,8 @@ Usage:
 import argparse
 import asyncio
 import builtins
+import os
+os.umask(0o077)
 from datetime import datetime
 
 _orig_print = builtins.print
@@ -41,6 +43,7 @@ import httpx
 import uvicorn
 
 from shared.config import WebConfig, load_web
+from shared.db import chmod_db
 from shared.log import UVICORN_LOG_CONFIG
 
 from .app import app, set_config
@@ -226,6 +229,7 @@ def main() -> None:
     print(f"[web] master: {config.master_host}:{config.master_port}")
     print(f"[web] tls: {'bootstrapped' if config.tls.enabled else 'pending bootstrap'}")
 
+    chmod_db("web.db")
     asyncio.run(_main(bind=bind, port=config.port,
                       ssl_certfile=config.browser_tls_cert,
                       ssl_keyfile=config.browser_tls_key))
