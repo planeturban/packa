@@ -32,6 +32,8 @@ Usage:
 import argparse
 import asyncio
 import builtins
+import os
+os.umask(0o077)
 import socket
 from datetime import datetime
 
@@ -43,6 +45,7 @@ builtins.print = _ts_print
 import uvicorn
 
 from shared.config import load_worker
+from shared.db import chmod_db
 from shared.log import UVICORN_LOG_CONFIG
 from shared.tls import patch_uvicorn_for_mtls
 
@@ -73,18 +76,11 @@ def _load_tls(config) -> None:
         print("[worker] TLS certs loaded from store")
 
 
-async def _main(bind: str, api_port: int, advertise_host: str | None, worker_id: str, tls) -> None:
-    if advertise_host:
-        effective_host = advertise_host
-    elif bind == "0.0.0.0":
-        effective_host = _detect_host()
-    else:
-        effective_host = bind
+async def _main(bind: str, api_port: int, effective_host: str, worker_id: str, uvicorn_tls_kw: dict) -> None:
     set_registration_params(effective_host, worker_id)
     patch_uvicorn_for_mtls()
-    tls_kwargs = tls.uvicorn_tls_kwargs()
     uvi_config = uvicorn.Config(app, host=bind, port=api_port, log_level="info",
-                                log_config=UVICORN_LOG_CONFIG, **tls_kwargs)
+                                log_config=UVICORN_LOG_CONFIG, **uvicorn_tls_kw)
     await uvicorn.Server(uvi_config).serve()
 
 
@@ -151,32 +147,39 @@ def main() -> None:
     if is_new:
         set_setting("first_run", "true")
 
+    chmod_db("worker.db")
     _load_tls(config)
 
-    import os as _os
-    insecure_no_tls = args.insecure_no_tls or bool(_os.environ.get("PACKA_WORKER_INSECURE_NO_TLS"))
-    if insecure_no_tls and config.tls.enabled:
-        print("[worker] INSECURE_NO_TLS set but TLS certs are present — using certs, flag ignored")
-        insecure_no_tls = False
-    _loopback = {"127.0.0.1", "::1", "localhost"}
-    if not config.tls.enabled and bind not in _loopback:
-        if insecure_no_tls:
-            print("[worker] WARNING: binding to non-loopback without TLS — unsafe, use only for testing")
-        else:
-            print("[worker] FATAL: refusing to bind to a non-loopback address without TLS. "
-                  "Use the web UI to onboard TLS, configure BYO certs, or pass --insecure-no-tls to override.")
-            import sys; sys.exit(1)
+    # Resolve effective advertise host early (needed for self-signed cert SAN)
+    if advertise_host:
+        effective_host = advertise_host
+    elif bind == "0.0.0.0":
+        effective_host = _detect_host()
+    else:
+        effective_host = bind
+
+    if config.tls.enabled:
+        uvicorn_tls_kw = config.tls.uvicorn_tls_kwargs()
+        print(f"[worker] tls: enabled")
+    else:
+        # Generate a throw-away self-signed cert so the worker always serves HTTPS.
+        # The onboard flow (web UI → worker → master) uses verify=False (TOFU), so
+        # the bootstrap token travels encrypted rather than in cleartext over HTTP.
+        from shared.pki import generate_self_signed, write_tls_files
+        ss_cert, ss_key = generate_self_signed(effective_host, sans=[effective_host])
+        cp, kp, _ = write_tls_files(ss_cert, ss_key, ss_cert, prefix="worker_ss")
+        uvicorn_tls_kw = {"ssl_certfile": cp, "ssl_keyfile": kp}
+        print(f"[worker] tls: pending onboarding — serving HTTPS with self-signed cert")
 
     print(f"[worker] bind: {bind}:{api_port}")
     print(f"[worker] path_prefix: {config.path_prefix!r}")
-    print(f"[worker] tls: {'enabled' if config.tls.enabled else 'pending onboarding via web UI'}")
 
     asyncio.run(_main(
         bind=bind,
         api_port=api_port,
-        advertise_host=advertise_host,
+        effective_host=effective_host,
         worker_id=worker_id,
-        tls=config.tls,
+        uvicorn_tls_kw=uvicorn_tls_kw,
     ))
 
 

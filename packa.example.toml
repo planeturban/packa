@@ -202,8 +202,8 @@ port = 8080
 
 # Credentials for the login page. Required when binding to a non-loopback address.
 # Env: PACKA_WEB_USERNAME, PACKA_WEB_PASSWORD
-username = "admin"
-password = "change-me"
+# username = "your-username"
+# password = "your-password"
 
 # Which master to connect to.
 master_host = "localhost"

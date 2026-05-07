@@ -23,16 +23,19 @@ Master REST API.
 """
 
 import asyncio
+import ipaddress
 import os
+import re
 import time as _time
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 from shared import crud
@@ -422,11 +425,34 @@ async def _scan_task(scan_dir: str, extensions: set[str], min_size: int, max_siz
 # Schemas
 # ---------------------------------------------------------------------------
 
+_HOSTNAME_RE = re.compile(r'^[a-zA-Z0-9.\-]{1,253}$')
+_CONFIG_ID_RE = re.compile(r'^[A-Za-z0-9_\-]{1,64}$')
+
+
 class WorkerRegister(BaseModel):
     config_id: str = ""
     host: str
     api_port: int
-    scheme: str = "http"
+    scheme: Literal["http", "https"] = "http"
+
+    @field_validator("host")
+    @classmethod
+    def validate_host(cls, v: str) -> str:
+        try:
+            ipaddress.ip_address(v)
+            return v
+        except ValueError:
+            pass
+        if not _HOSTNAME_RE.match(v):
+            raise ValueError("host must be a valid hostname or IP address")
+        return v
+
+    @field_validator("config_id")
+    @classmethod
+    def validate_config_id(cls, v: str) -> str:
+        if v and not _CONFIG_ID_RE.match(v):
+            raise ValueError("config_id must match [A-Za-z0-9_-]{1,64}")
+        return v
 
 
 class WorkerOut(BaseModel):
@@ -475,6 +501,48 @@ class FileResultUpdate(BaseModel):
     duration: float | None = None
     ffmpeg_cmd: str | None = None
 
+    @field_validator("pid")
+    @classmethod
+    def _val_pid(cls, v):
+        if v is not None and not (0 <= v < 2**31):
+            raise ValueError("pid out of range")
+        return v
+
+    @field_validator("output_size")
+    @classmethod
+    def _val_output_size(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("output_size must be non-negative")
+        return v
+
+    @field_validator("bitrate")
+    @classmethod
+    def _val_bitrate(cls, v):
+        if v is not None and not (0 <= v <= 2**32):
+            raise ValueError("bitrate out of range")
+        return v
+
+    @field_validator("duration")
+    @classmethod
+    def _val_duration(cls, v):
+        if v is not None and not (0 <= v <= 30 * 86400):
+            raise ValueError("duration out of range")
+        return v
+
+    @field_validator("avg_fps", "avg_speed")
+    @classmethod
+    def _val_rate(cls, v):
+        if v is not None and not (0 <= v <= 10000):
+            raise ValueError("value out of range")
+        return v
+
+    @field_validator("width", "height")
+    @classmethod
+    def _val_dimension(cls, v):
+        if v is not None and v < 1:
+            raise ValueError("dimension must be positive")
+        return v
+
 
 class ScanStatus(BaseModel):
     running: bool
@@ -500,7 +568,8 @@ def register_worker(body: WorkerRegister, request: Request):
 
 
 @app.get("/workers", response_model=list[WorkerOut])
-def list_workers():
+def list_workers(request: Request):
+    _require_web_cert(request)
     return registry.all()
 
 
@@ -518,18 +587,22 @@ def remove_worker(config_id: str, request: Request):
 @app.post("/transfer", response_model=FileRecordOut, status_code=201)
 def transfer_file(body: TransferRequest, request: Request, db: Session = Depends(get_db)):
     _require_web_cert(request)
+    if not _config.path_prefix:
+        raise HTTPException(
+            status_code=503,
+            detail="Transfer endpoint requires master.paths.prefix to be configured",
+        )
     try:
         video = collect(body.file_path)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    if _config.path_prefix:
-        try:
-            Path(video.file_path).relative_to(_config.path_prefix)
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail=f"file_path must be under the configured prefix ({_config.path_prefix})",
-            )
+    try:
+        Path(video.file_path).resolve().relative_to(Path(_config.path_prefix).resolve())
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"file_path must be under the configured prefix ({_config.path_prefix})",
+        )
     record = crud.create_file_record(db, FileRecordCreate(
         file_name=video.file_name,
         file_path=video.file_path,
@@ -552,7 +625,10 @@ class AssignRequest(BaseModel):
 
 
 @app.post("/jobs/assign", response_model=list[ClaimOut])
-def assign_jobs(body: AssignRequest, db: Session = Depends(get_db)):
+def assign_jobs(body: AssignRequest, request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
+    if not registry.get_by_config_id(body.worker_id):
+        raise HTTPException(status_code=404, detail=f"Worker {body.worker_id!r} not registered")
     records = (
         db.query(FileRecord)
         .filter(FileRecord.id.in_(body.ids), FileRecord.status == FileStatus.PENDING)
@@ -650,12 +726,14 @@ def update_file_result(record_id: int, body: FileResultUpdate, request: Request,
 
 
 @app.get("/stats")
-def get_stats(db: Session = Depends(get_db)):
+def get_stats(request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     return crud.get_stats(db)
 
 
 @app.get("/stats/worker/{worker_id}")
-def get_worker_stats(worker_id: str, db: Session = Depends(get_db)):
+def get_worker_stats(worker_id: str, request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     return crud.get_worker_stats(db, worker_id)
 
 
@@ -761,7 +839,8 @@ def restart_master(request: Request):
 
 
 @app.get("/master/stats")
-def get_master_stats(db: Session = Depends(get_db)):
+def get_master_stats(request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     from sqlalchemy import func as _func
     scanning_queue = (
         db.query(_func.count(FileRecord.id))
@@ -781,7 +860,8 @@ def get_master_stats(db: Session = Depends(get_db)):
 
 
 @app.get("/files/duplicate-pairs")
-def list_duplicate_pairs(db: Session = Depends(get_db)):
+def list_duplicate_pairs(request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     dupes = (
         db.query(FileRecord)
         .filter(FileRecord.status == FileStatus.DUPLICATE)
@@ -805,21 +885,25 @@ def list_duplicate_pairs(db: Session = Depends(get_db)):
 
 
 @app.get("/files/counts")
-def file_counts(db: Session = Depends(get_db)):
+def file_counts(request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     return crud.get_status_counts(db)
 
 
 @app.get("/files/ids")
 def list_file_ids(
+    request: Request,
     status: FileStatus | None = None,
     search: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
+    _require_web_cert(request)
     return {"ids": crud.get_record_ids(db, status=status, search=search)}
 
 
 @app.get("/files")
 def list_files(
+    request: Request,
     status: FileStatus | None = None,
     search: str | None = Query(default=None),
     sort_by: str = Query(default="created_at"),
@@ -828,6 +912,7 @@ def list_files(
     page_size: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
+    _require_web_cert(request)
     items, total = crud.get_records_page(
         db, status=status, search=search,
         sort_by=sort_by, sort_dir=sort_dir,
@@ -842,7 +927,8 @@ def list_files(
 
 
 @app.get("/files/{record_id}", response_model=FileRecordOut)
-def get_file(record_id: int, db: Session = Depends(get_db)):
+def get_file(record_id: int, request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     record = crud.get_file_record(db, record_id)
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
@@ -938,7 +1024,8 @@ def scan_stop(request: Request):
 
 
 @app.get("/scan/status", response_model=ScanStatus)
-def scan_status():
+def scan_status(request: Request):
+    _require_web_cert(request)
     return ScanStatus(running=_scan.running, found=_scan.found, skipped=_scan.skipped,
                       errors=_scan.errors, path=_config.path_prefix)
 
@@ -946,6 +1033,22 @@ def scan_status():
 # ---------------------------------------------------------------------------
 # TLS bootstrap and token management
 # ---------------------------------------------------------------------------
+
+_CN_RE = re.compile(r'^[A-Za-z0-9_\-]{1,64}$')
+_RESERVED_CNS = frozenset({"web", "master"})
+_SAN_RE = re.compile(r'^[a-zA-Z0-9.\-]{1,253}$')
+
+
+def _valid_san(s: str) -> bool:
+    if not s:
+        return False
+    try:
+        ipaddress.ip_address(s)
+        return True
+    except ValueError:
+        pass
+    return bool(_SAN_RE.match(s))
+
 
 class BootstrapRequest(BaseModel):
     token: str
@@ -960,12 +1063,17 @@ class CertBundle(BaseModel):
 
 
 @app.post("/bootstrap", response_model=CertBundle)
-def bootstrap_node(body: BootstrapRequest, db: Session = Depends(get_db)):
+def bootstrap_node(body: BootstrapRequest, request: Request, db: Session = Depends(get_db)):
     """Exchange a valid bootstrap token for a client cert bundle."""
     if not consume_token(db, body.token):
         raise HTTPException(status_code=401, detail="Invalid or expired bootstrap token")
     cn = body.cn or "node"
-    sans = [cn] + [s for s in body.sans if s and s != cn]
+    if not _CN_RE.match(cn):
+        raise HTTPException(status_code=400, detail="cn must match [A-Za-z0-9_-]{1,64}")
+    client_host = request.client.host if request.client else ""
+    if cn in _RESERVED_CNS and client_host not in ("127.0.0.1", "::1"):
+        raise HTTPException(status_code=403, detail=f"cn={cn!r} is reserved; bootstrap it from the local host")
+    sans = [cn] + [s for s in body.sans if s and s != cn and _valid_san(s)]
     cert_pem, key_pem, ca_pem = issue_client_cert(db, cn, sans=sans)
     print(f"[tls] issued cert for {cn!r} sans={sans}")
     return CertBundle(cert_pem=cert_pem, key_pem=key_pem, ca_pem=ca_pem)
@@ -1026,7 +1134,7 @@ def get_tls_token(request: Request, db: Session = Depends(get_db)):
 
 @app.post("/tls/token")
 def create_tls_token(request: Request, db: Session = Depends(get_db)):
-    """Generate a new bootstrap token (10-minute TTL, multi-use within window)."""
+    """Generate a new single-use bootstrap token (10-minute TTL)."""
     _require_web_cert(request)
     token = generate_token(db)
     info = get_token_info(db)
