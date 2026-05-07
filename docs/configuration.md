@@ -52,8 +52,9 @@ The master can start with no config file at all — every setting has a built-in
 
 ```toml
 [master]
-bind     = "localhost"   # use "any" for 0.0.0.0
-api_port = 9000
+bind           = "localhost"   # use "any" for 0.0.0.0
+api_port       = 9000
+# advertise_host = ""          # hostname/IP for auto-generated cert SANs (needed when bind=0.0.0.0)
 
 [master.paths]
 prefix = "/mnt/data/"   # stripped before sending paths to workers; used as scan root (empty disables the scanner)
@@ -71,6 +72,7 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 # interval = 60               # seconds between periodic scans (min 10)
 
 # [master.tls]                # BYO cert (overrides auto-generated)
+# extra_sans = ["10.0.0.1"]   # additional IP/hostname SANs (e.g. load-balancer IP for external workers)
 # cert = "/etc/packa/master.crt"
 # key  = "/etc/packa/master.key"
 ```
@@ -79,6 +81,7 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 |----------------------|------------|
 | `PACKA_MASTER_BIND` | `master.bind` |
 | `PACKA_MASTER_API_PORT` | `master.api_port` |
+| `PACKA_MASTER_ADVERTISE_HOST` | `master.advertise_host` |
 | `PACKA_MASTER_PREFIX` | `master.paths.prefix` |
 | `PACKA_MASTER_EXTENSIONS` | `master.scan.extensions` (comma-separated) |
 | `PACKA_MASTER_MIN_SIZE` | `master.scan.min_size` (MB) |
@@ -88,6 +91,7 @@ extensions = [".mkv", ".mp4", ".avi", ".mov"]
 | `PACKA_MASTER_PROBE_INTERVAL` | `master.scan.probe_interval` |
 | `PACKA_MASTER_SCAN_PERIODIC_ENABLED` | `master.scan.periodic.enabled` |
 | `PACKA_MASTER_SCAN_INTERVAL` | `master.scan.periodic.interval` (seconds) |
+| `PACKA_MASTER_TLS_EXTRA_SANS` | `master.tls.extra_sans` (comma-separated) |
 | `PACKA_MASTER_TLS_CERT` | `master.tls.cert` |
 | `PACKA_MASTER_TLS_KEY` | `master.tls.key` |
 | `PACKA_TLS_CA` | `tls.ca` (shared CA for BYO-cert setups) |
@@ -203,8 +207,8 @@ port        = 8080
 master_host = "localhost"
 master_port = 9000
 
-username   = "admin"      # omit username or password to disable authentication
-password   = "change-me"
+# username = "your-username"   # omit username or password to disable authentication entirely
+# password = "your-password"   # non-loopback bind requires credentials or --insecure-no-auth
 # bootstrap_token = ""    # copy from `packa bootstrap-token` on first run; stored after bootstrap
 
 # Option A: web terminates HTTPS directly for the browser.
