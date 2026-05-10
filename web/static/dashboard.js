@@ -1692,9 +1692,36 @@ function renderScan() {
   `;
 }
 
+const _DURATION_UNITS = [
+  {label:'minutes', mins:1},
+  {label:'hours',   mins:60},
+  {label:'days',    mins:1440},
+  {label:'weeks',   mins:10080},
+  {label:'months',  mins:43200},
+  {label:'years',   mins:525600},
+];
+
+function parseDuration(n, unit) {
+  if (!n || Number(n) === 0) return 0;
+  const u = _DURATION_UNITS.find(x => x.label === unit);
+  if (!u) return 0;
+  return Math.round(Number(n) * u.mins);
+}
+
+function fmtAge(mins) {
+  if (!mins) return {n: '', unit: 'days'};
+  for (const u of [..._DURATION_UNITS].reverse()) {
+    if (mins % u.mins === 0 && mins >= u.mins) {
+      return {n: String(mins / u.mins), unit: u.label};
+    }
+  }
+  return {n: String(mins), unit: 'minutes'};
+}
+
 function _cfgDisplayValue(field, value) {
   if (field.type === 'list[str]') return (value || []).join(', ');
   if (field.type === 'thresholds') return _formatThresholds(value);
+  if (field.type === 'duration') { const a = fmtAge(value || 0); return a.n; }
   if (value == null) return '';
   return String(value);
 }
@@ -1759,6 +1786,29 @@ function renderMasterConfigRow(f, value, source, fileV, envV, cliV) {
     control = `<div class="toggle ${on ? 'on' : ''}" title="${on ? 'On' : 'Off'} — click to toggle"
                     onclick="masterConfigToggleBool('${keyAttr}')" style="flex:none"></div>
                <div style="flex:1;min-width:0;font-size:12px;color:var(--text-dim)">${on ? 'On' : 'Off'}</div>`;
+  } else if (f.key === 'age_field') {
+    control = `<select class="select" style="width:auto"
+                       onchange="masterConfigSave('${keyAttr}','str',this.value)">
+                 <option value="mtime" ${value==='mtime'?'selected':''}>mtime (last modified)</option>
+                 <option value="ctime" ${value==='ctime'?'selected':''}>ctime (created / metadata changed)</option>
+               </select>`;
+  } else if (f.type === 'duration') {
+    const {n, unit} = fmtAge(value || 0);
+    const unitOpts = _DURATION_UNITS.map(u =>
+      `<option value="${u.label}" ${u.label===unit?'selected':''}>${u.label}</option>`
+    ).join('');
+    const durId = `dur-${keyAttr}`;
+    control = `<div style="display:flex;gap:4px;align-items:center">
+                 <input class="input" type="number" min="0" id="${durId}-n" value="${esc(n)}"
+                        style="width:80px;font-family:'IBM Plex Mono',monospace"
+                        onkeydown="if(event.key==='Enter'){this.blur();}"
+                        onblur="masterConfigSave('${keyAttr}','duration',document.getElementById('${durId}-n').value+'|'+document.getElementById('${durId}-u').value)">
+                 <select class="select" id="${durId}-u" style="width:auto"
+                         onchange="masterConfigSave('${keyAttr}','duration',document.getElementById('${durId}-n').value+'|'+this.value)">
+                   ${unitOpts}
+                 </select>
+                 <span style="font-size:12px;color:var(--text-faint)">0 = disabled</span>
+               </div>`;
   } else {
     const display = esc(_cfgDisplayValue(f, value));
     const inputType = f.type === 'int' ? 'number' : 'text';
@@ -1804,6 +1854,10 @@ function _cfgCoerce(type, raw) {
   if (type === 'thresholds') {
     return _parseThresholdsText(String(raw));
   }
+  if (type === 'duration') {
+    const [n, unit] = String(raw).split('|');
+    return parseDuration(n, unit);
+  }
   return String(raw);
 }
 
@@ -1813,6 +1867,7 @@ function _cfgSameValue(type, a, b) {
     const bb = Array.isArray(b) ? b : [];
     return aa.length === bb.length && aa.every((v, i) => String(v) === String(bb[i]));
   }
+  if (type === 'duration') return Number(a || 0) === Number(b || 0);
   return String(a ?? '') === String(b ?? '');
 }
 

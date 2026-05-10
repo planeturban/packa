@@ -228,6 +228,22 @@ async def _hevc_check_loop() -> None:
                     record.bitrate = bitrate
                     record.duration = duration
                     record.checksum = checksum
+                    ts = record.c_time if _config.scan.age_field == "ctime" else record.m_time
+                    now = _time.time()
+                    if _config.scan.min_age and ts and now - ts < _config.scan.min_age * 60:
+                        record.status = FileStatus.DISCARDED
+                        record.discard_reason = "too_new"
+                        record.finished_at = datetime.now(timezone.utc)
+                        print(f"[master] record {record.id} discarded — too new ({record.file_name!r})")
+                        db.commit()
+                        continue
+                    if _config.scan.max_age and ts and now - ts > _config.scan.max_age * 60:
+                        record.status = FileStatus.DISCARDED
+                        record.discard_reason = "too_old"
+                        record.finished_at = datetime.now(timezone.utc)
+                        print(f"[master] record {record.id} discarded — too old ({record.file_name!r})")
+                        db.commit()
+                        continue
                     existing = crud.get_record_by_checksum(db, checksum)
                     if not existing and checksum in batch_checksums:
                         existing = db.get(FileRecord, batch_checksums[checksum])

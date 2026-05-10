@@ -42,6 +42,9 @@ class ScanConfig:
     probe_interval: int = 60      # seconds to sleep when no pending files remain
     periodic_enabled: bool = False
     periodic_interval: int = 60   # seconds between periodic scans (min 10)
+    age_field: str = "mtime"      # "mtime" or "ctime" — which timestamp age filtering applies to
+    min_age: int = 0              # minutes; discard if file is newer than this; 0 = disabled
+    max_age: int = 0              # minutes; discard if file is older than this; 0 = disabled
 
 
 @dataclass
