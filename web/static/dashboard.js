@@ -19,8 +19,9 @@ function fmtResolution(w, h) {
 function fmtDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
-  return d.toLocaleDateString('sv', {day:'2-digit', month:'short'}) + ' ' +
-         d.toLocaleTimeString('sv', {hour:'2-digit', minute:'2-digit'});
+  const tz = ST.timezone ? {timeZone: ST.timezone} : {};
+  return d.toLocaleDateString('sv', {day:'2-digit', month:'short', ...tz}) + ' ' +
+         d.toLocaleTimeString('sv', {hour:'2-digit', minute:'2-digit', ...tz});
 }
 
 function esc(s) {
@@ -83,6 +84,7 @@ const ST = {
   data: window._INIT_DATA || null,
   tab: localStorage.getItem('packa-tab') || 'overview',
   theme: localStorage.getItem('packa-theme') || 'system',
+  timezone: localStorage.getItem('packa-timezone') || '',
   connected: null,
   demo: false,
   pollInterval: 3000,
@@ -2152,6 +2154,22 @@ function renderSettings() {
       </div>
 
       <div class="card" style="margin-top:16px">
+        <div class="card-title">Display</div>
+        <div class="settings-row">
+          <div class="settings-label">
+            <strong>Timezone</strong>
+            <p>Timestamps in the dashboard are shown in this timezone</p>
+          </div>
+          <select class="select" onchange="setTimezone(this.value)" style="width:auto;max-width:220px">
+            <option value="" ${!ST.timezone?'selected':''}>Browser default</option>
+            ${(Intl.supportedValuesOf?.('timeZone') ?? []).map(tz =>
+              `<option value="${tz}" ${ST.timezone===tz?'selected':''}>${tz}</option>`
+            ).join('')}
+          </select>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
         <div class="card-title">Cancel Thresholds</div>
         <div style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
           Cancel encoding early if the projected output exceeds <em>source × ratio</em> at a given progress %.
@@ -2270,6 +2288,16 @@ async function disableAuth() {
     await fetchAll();
     renderSettings();
   } catch(e) { msg.style.color = 'var(--red)'; msg.textContent = String(e); }
+}
+
+function setTimezone(tz) {
+  try {
+    if (tz) new Intl.DateTimeFormat(undefined, {timeZone: tz});
+    ST.timezone = tz;
+    if (tz) localStorage.setItem('packa-timezone', tz);
+    else localStorage.removeItem('packa-timezone');
+    renderActiveTab();
+  } catch(e) { /* invalid tz — ignore */ }
 }
 
 function setPollInterval(ms) {
