@@ -37,7 +37,7 @@ from shared.schemas import FileRecordCreate, FileRecordOut, StatusUpdate
 
 from . import config_store
 from .database import engine, get_db
-from .poller import poller_loop
+from .poller import poller_loop, validate_path_under_prefix
 from .state import Job, worker_state
 from .store import get_setting, set_setting
 from .worker import recover, sync_loop, worker_loop
@@ -81,7 +81,7 @@ async def _register_and_poll() -> None:
     """Retry registration until master is reachable, then keep registration fresh and run the poller."""
     global _worker_config_id
     payload = {"config_id": _worker_config_id, "host": _advertise_host, "api_port": _config.api_port,
-               "scheme": "https" if _config.tls.enabled else "http"}
+               "scheme": "https"}  # always https — self-signed cert before bootstrap, CA-signed after
 
     master_https = f"https://{_config.master_host}:{_config.master_port}"
     if _config.tls.enabled:
@@ -322,8 +322,13 @@ def get_status(request: Request, db: Session = Depends(get_db)):
 @app.post("/files", response_model=FileRecordOut, status_code=201)
 def submit_file(record: FileRecordCreate, request: Request, db: Session = Depends(get_db)):
     _require_web_cert(request)
-    if _config.path_prefix:
-        record = record.model_copy(update={"file_path": _config.path_prefix + record.file_path})
+    if record.id is not None:
+        raise HTTPException(status_code=400, detail="id must not be set by the caller")
+    full_path = (_config.path_prefix + record.file_path) if _config.path_prefix else record.file_path
+    resolved = validate_path_under_prefix(full_path, _config.path_prefix)
+    if resolved is None:
+        raise HTTPException(status_code=400, detail="file_path escapes the configured path prefix")
+    record = record.model_copy(update={"file_path": resolved})
     db_record = crud.create_file_record(db, record)
     if _config.ffmpeg.output_dir:
         worker_state.enqueue(Job(record_id=db_record.id, file_path=db_record.file_path))
@@ -347,7 +352,8 @@ def get_file(record_id: int, request: Request, db: Session = Depends(get_db)):
 
 
 @app.delete("/files/{record_id}", status_code=204)
-def delete_file(record_id: int, db: Session = Depends(get_db)):
+def delete_file(record_id: int, request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
     if (worker_state.active
             and worker_state.record_id == record_id
             and worker_state.proc is not None):
@@ -360,6 +366,19 @@ def delete_file(record_id: int, db: Session = Depends(get_db)):
         worker_state.cancel_queued(record_id)
     if not crud.delete_file_record(db, record_id):
         raise HTTPException(status_code=404, detail="Record not found")
+
+
+@app.delete("/jobs/{record_id}", status_code=204)
+def cancel_queued_job(record_id: int, request: Request, db: Session = Depends(get_db)):
+    """Cancel a queued (not yet active) job. Called by master when the source file is deleted.
+    Marks the local record CANCELLED and flags the queue to skip it."""
+    _require_trusted_cert(request)
+    record = crud.get_file_record(db, record_id)
+    if record and record.status in (FileStatus.PENDING, FileStatus.ASSIGNED):
+        record.status = FileStatus.CANCELLED
+        record.cancel_reason = "source_deleted"
+        db.commit()
+    worker_state.cancel_queued(record_id)
 
 
 @app.patch("/files/{record_id}/status", response_model=FileRecordOut)
@@ -377,6 +396,10 @@ def push_jobs(jobs: list[FileRecordCreate], request: Request, db: Session = Depe
     queued = 0
     for job in jobs:
         full_path = (_config.path_prefix + job.file_path) if _config.path_prefix else job.file_path
+        full_path = validate_path_under_prefix(full_path, _config.path_prefix)
+        if full_path is None:
+            print(f"[api] rejecting job {job.id} — path escapes prefix: {job.file_path!r}")
+            continue
         record = None
         try:
             record = crud.create_file_record(db, job.model_copy(update={"file_path": full_path, "worker_id": _worker_config_id}))
@@ -585,6 +608,20 @@ def _require_web_cert(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Client certificate required")
     if cn != "web":
         raise HTTPException(status_code=403, detail="Web certificate required")
+
+
+def _require_trusted_cert(request: Request) -> None:
+    """Require CN=web or CN=master client cert. Loopback and non-TLS workers are exempt."""
+    if not _config.tls.enabled:
+        return
+    host = request.client.host if request.client else ""
+    if host in ("127.0.0.1", "::1"):
+        return
+    cn = _peer_cn(request)
+    if cn is None:
+        raise HTTPException(status_code=403, detail="Client certificate required")
+    if cn not in ("web", "master"):
+        raise HTTPException(status_code=403, detail="Trusted certificate required")
 
 
 @app.post("/restart")

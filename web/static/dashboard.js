@@ -357,6 +357,59 @@ function renderActiveTab() {
   if (renders[ST.tab]) renders[ST.tab]();
 }
 
+// ── Worker action wiring ──────────────────────────────────────────────────────
+// Replaces onclick="..." string interpolation (vulnerable to HTML-attribute
+// double-decode when host/config_id contain quote characters) with data-*
+// attributes + programmatic addEventListener calls.
+function wireWorkerActions(el) {
+  el.querySelectorAll('[data-wa-action]').forEach(btn => {
+    btn.addEventListener('click', () =>
+      workerAction(btn.dataset.waHost, +btn.dataset.waPort, btn.dataset.waAction));
+  });
+  el.querySelectorAll('[data-wa-restart]').forEach(btn => {
+    btn.addEventListener('click', () =>
+      restartWorker(btn.dataset.waHost, +btn.dataset.waPort));
+  });
+  el.querySelectorAll('[data-wa-onboard]').forEach(btn => {
+    btn.addEventListener('click', () =>
+      onboardWorkerTls(btn.dataset.waHost, +btn.dataset.waPort));
+  });
+  el.querySelectorAll('[data-wa-save-settings]').forEach(btn => {
+    btn.addEventListener('click', () =>
+      saveWorkerSettings(btn.dataset.waCfgid, btn.dataset.waHost, +btn.dataset.waPort));
+  });
+  el.querySelectorAll('[data-wa-deregister]').forEach(btn => {
+    btn.addEventListener('click', () =>
+      deregisterWorker(btn.dataset.waCfgid));
+  });
+  el.querySelectorAll('[data-wa-toggle-settings]').forEach(btn => {
+    btn.addEventListener('click', () =>
+      toggleWorkerSettings(btn.dataset.waCfgid));
+  });
+  el.querySelectorAll('[data-wa-toggle-cmd]').forEach(btn => {
+    btn.addEventListener('click', () =>
+      toggleWorkerCmd(btn.dataset.waCfgid));
+  });
+  el.querySelectorAll('[data-wa-toggle-expanded]').forEach(div => {
+    div.addEventListener('click', () =>
+      toggleWorkerExpanded(div.dataset.waCfgid));
+  });
+  el.querySelectorAll('[data-wa-cfg-restore]').forEach(btn => {
+    btn.addEventListener('click', () =>
+      workerCfgRestore(btn.dataset.waHost, +btn.dataset.waPort, btn.dataset.waKey, btn.dataset.waSource));
+  });
+  el.querySelectorAll('[data-wa-cfg-revert]').forEach(btn => {
+    btn.addEventListener('click', () =>
+      workerCfgRevert(btn.dataset.waHost, +btn.dataset.waPort, btn.dataset.waKey));
+  });
+  el.querySelectorAll('[data-wa-bulk-queue]').forEach(item => {
+    item.addEventListener('click', () => bulkQueue(item.dataset.waCfgid));
+  });
+  el.querySelectorAll('[data-wa-modal-bulk-queue]').forEach(item => {
+    item.addEventListener('click', () => modalBulkQueue(item.dataset.waCfgid));
+  });
+}
+
 // ── Overview tab ─────────────────────────────────────────────────────────────
 function renderOverview() {
   const el = document.getElementById('tab-overview');
@@ -416,7 +469,7 @@ function renderOverview() {
       </div>
       <div class="stat-card${stats.projected_low_confidence ? ' stat-card-dim' : ''}">
         <div class="stat-label">Projected Library Size</div>
-        <div class="stat-value${stats.projected_low_confidence ? ' stat-dim' : ''}">${fmtBytes((stats.current_library_bytes || 0) - (stats.saved_bytes || 0) - (stats.projected_saved_bytes || 0))}</div>
+        <div class="stat-value${stats.projected_low_confidence ? ' stat-dim' : ''}">${fmtBytes((stats.current_library_bytes || 0) - (stats.projected_saved_bytes || 0))}</div>
         <div class="stat-sub">current: ${fmtBytes(stats.current_library_bytes || 0)}</div>
       </div>
     </div>
@@ -465,7 +518,7 @@ function renderOverview() {
         const statusStr = s.disk_full ? 'disk full' : s.sleeping ? 'sleeping' : s.drain ? 'draining' : s.state === 'processing' ? (s.paused ? 'paused' : 'processing') : 'online';
         return `
         <div style="padding:10px 0;border-bottom:1px solid var(--border-subtle)">
-          <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="toggleWorkerExpanded('${esc(s.config_id)}')">
+          <div style="display:flex;align-items:center;gap:8px;cursor:pointer" data-wa-toggle-expanded data-wa-cfgid="${esc(s.config_id)}">
             <div style="width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0"></div>
             <div style="font-size:13px;font-weight:500;flex:1">${esc(s.hostname)}</div>
             ${!expanded && s.state === 'processing' && p ? `
@@ -489,17 +542,17 @@ function renderOverview() {
               ${s.state === 'processing' ? `
               <div style="display:flex;gap:4px;flex-shrink:0">
                 ${s.drain
-                  ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')" title="Wake">${svgIcon('play',11)}</button>`
+                  ? `<button class="btn btn-sm" data-wa-action="wake" data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}" title="Wake">${svgIcon('play',11)}</button>`
                   : s.paused
-                    ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')" title="Resume">${svgIcon('play',11)}</button>`
-                    : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'pause')" title="Pause">${svgIcon('pause',11)}</button>`
+                    ? `<button class="btn btn-sm" data-wa-action="resume" data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}" title="Resume">${svgIcon('play',11)}</button>`
+                    : `<button class="btn btn-sm" data-wa-action="pause" data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}" title="Pause">${svgIcon('pause',11)}</button>`
                 }
-                <button class="btn btn-sm ${s.drain?'btn-primary':''}" onclick="workerAction('${esc(s.host)}',${s.api_port},'drain')" title="Drain">⏭</button>
-                <button class="btn btn-sm btn-danger" onclick="workerAction('${esc(s.host)}',${s.api_port},'stop')" title="Stop">${svgIcon('stop',11)}</button>
+                <button class="btn btn-sm ${s.drain?'btn-primary':''}" data-wa-action="drain" data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}" title="Drain">⏭</button>
+                <button class="btn btn-sm btn-danger" data-wa-action="stop" data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}" title="Stop">${svgIcon('stop',11)}</button>
               </div>` : `
               <div style="display:flex;gap:4px;flex-shrink:0">
                 ${s.sleeping
-                  ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')" title="Wake">${svgIcon('play',11)}</button>`
+                  ? `<button class="btn btn-sm" data-wa-action="wake" data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}" title="Wake">${svgIcon('play',11)}</button>`
                   : `<button class="btn btn-sm" disabled>${svgIcon('pause',11)}</button>`
                 }
                 <button class="btn btn-sm" disabled>⏭</button>
@@ -511,6 +564,8 @@ function renderOverview() {
       }).join('')}
     </div>
   `;
+
+  wireWorkerActions(el);
 
   // Derive current_file from active record
   (ST.data && ST.data.workers || []).forEach(s => {
@@ -642,7 +697,7 @@ function renderFiles() {
                   <div class="dropdown-item dropdown-item-sub" style="display:flex;justify-content:space-between;align-items:center">
                     <span>Queue to…</span>${svgIcon('chevronRight',12)}
                     <div class="submenu">
-                      ${workers.map(w => `<div class="dropdown-item" onclick="bulkQueue('${esc(w.config_id)}')">${esc(w.hostname)}</div>`).join('')}
+                      ${workers.map(w => `<div class="dropdown-item" data-wa-bulk-queue data-wa-cfgid="${esc(w.config_id)}">${esc(w.hostname)}</div>`).join('')}
                     </div>
                   </div>` : ''}
                 </div>` : ''}
@@ -705,6 +760,8 @@ function renderFiles() {
       ${paginationBar}
     </div>
   `;
+
+  wireWorkerActions(el);
 
   // Re-apply indeterminate state
   const hdr = el.querySelector('thead input[type="checkbox"]');
@@ -1240,6 +1297,7 @@ function renderWorkers() {
       }
     </div>
   `;
+  wireWorkerActions(el);
 }
 
 function renderWorkerCard(s) {
@@ -1313,15 +1371,15 @@ function renderWorkerCard(s) {
     <div class="worker-controls">
       ${isProcessing ? `
         ${s.drain
-          ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')" ${disableControls?'disabled':''}>${svgIcon('play',12)} Resume</button>`
+          ? `<button class="btn btn-sm" data-wa-action="resume" data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}" ${disableControls?'disabled':''}>${svgIcon('play',12)} Resume</button>`
           : isPaused
-            ? `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'resume')" ${disableControls?'disabled':''}>${svgIcon('play',12)} Resume</button>`
-            : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'pause')" ${disableControls?'disabled':''}>${svgIcon('pause',12)} Pause</button>`
+            ? `<button class="btn btn-sm" data-wa-action="resume" data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}" ${disableControls?'disabled':''}>${svgIcon('play',12)} Resume</button>`
+            : `<button class="btn btn-sm" data-wa-action="pause" data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}" ${disableControls?'disabled':''}>${svgIcon('pause',12)} Pause</button>`
         }
-        <button class="btn btn-sm btn-danger" onclick="workerAction('${esc(s.host)}',${s.api_port},'stop')" ${disableControls?'disabled':''}>${svgIcon('stop',12)} Stop</button>
-        <button class="btn btn-sm ${s.drain?'btn-primary':''}" onclick="workerAction('${esc(s.host)}',${s.api_port},'drain')" ${disableControls?'disabled':''}>Drain</button>
+        <button class="btn btn-sm btn-danger" data-wa-action="stop" data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}" ${disableControls?'disabled':''}>${svgIcon('stop',12)} Stop</button>
+        <button class="btn btn-sm ${s.drain?'btn-primary':''}" data-wa-action="drain" data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}" ${disableControls?'disabled':''}>Drain</button>
       ` : isSleeping ? `
-        <button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')" ${disableControls?'disabled':''}>${svgIcon('play',12)} Wake</button>
+        <button class="btn btn-sm" data-wa-action="wake" data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}" ${disableControls?'disabled':''}>${svgIcon('play',12)} Wake</button>
         <button class="btn btn-sm" disabled>${svgIcon('stop',12)} Stop</button>
         <button class="btn btn-sm" disabled>Drain</button>
       ` : `
@@ -1330,14 +1388,14 @@ function renderWorkerCard(s) {
         <button class="btn btn-sm" disabled>Drain</button>
       `}
       ${isSleeping
-        ? `<button class="btn btn-primary btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'wake')" ${disableControls?'disabled':''}>${svgIcon('play',12)} Wake</button>`
-        : `<button class="btn btn-sm" onclick="workerAction('${esc(s.host)}',${s.api_port},'sleep')" ${disableControls?'disabled':''}>${svgIcon('moon',12)} Sleep</button>`
+        ? `<button class="btn btn-primary btn-sm" data-wa-action="wake" data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}" ${disableControls?'disabled':''}>${svgIcon('play',12)} Wake</button>`
+        : `<button class="btn btn-sm" data-wa-action="sleep" data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}" ${disableControls?'disabled':''}>${svgIcon('moon',12)} Sleep</button>`
       }
-      <button class="btn btn-sm" onclick="toggleWorkerSettings('${esc(s.config_id)}')">${svgIcon('settings',12)} Settings</button>
-      ${s.current_cmd ? `<button class="btn btn-sm ${showCmd?'btn-primary':''}" onclick="toggleWorkerCmd('${esc(s.config_id)}')" ${disableControls?'disabled':''}>CMD</button>` : ''}
-      <button class="btn btn-sm" style="margin-left:auto" onclick="restartWorker('${esc(s.host)}',${s.api_port})" ${disableControls?'disabled':''} title="Restart worker process">Restart</button>
-      ${notOnboarded ? `<button class="btn btn-sm btn-primary" onclick="onboardWorkerTls('${esc(s.host)}',${s.api_port})" title="Bootstrap TLS for this worker">Onboard TLS</button>` : ''}
-      <button class="btn btn-sm btn-danger" onclick="deregisterWorker('${esc(s.config_id)}')" title="Deregister">${svgIcon('trash',12)}</button>
+      <button class="btn btn-sm" data-wa-toggle-settings data-wa-cfgid="${esc(s.config_id)}">${svgIcon('settings',12)} Settings</button>
+      ${s.current_cmd ? `<button class="btn btn-sm ${showCmd?'btn-primary':''}" data-wa-toggle-cmd data-wa-cfgid="${esc(s.config_id)}" ${disableControls?'disabled':''}>CMD</button>` : ''}
+      <button class="btn btn-sm" style="margin-left:auto" data-wa-restart data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}" ${disableControls?'disabled':''} title="Restart worker process">Restart</button>
+      ${notOnboarded ? `<button class="btn btn-sm btn-primary" data-wa-onboard data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}" title="Bootstrap TLS for this worker">Onboard TLS</button>` : ''}
+      <button class="btn btn-sm btn-danger" data-wa-deregister data-wa-cfgid="${esc(s.config_id)}" title="Deregister">${svgIcon('trash',12)}</button>
     </div>
 
     ${showCmd && s.current_cmd ? `
@@ -1360,7 +1418,7 @@ function renderWorkerCard(s) {
              onclick="this.classList.toggle('on')"></div>
       </div>
       <button class="btn btn-primary btn-sm" style="margin-top:10px"
-              onclick="saveWorkerSettings('${esc(s.config_id)}','${esc(s.host)}',${s.api_port})">
+              data-wa-save-settings data-wa-cfgid="${esc(s.config_id)}" data-wa-host="${esc(s.host)}" data-wa-port="${s.api_port}">
         Save settings
       </button>
       ${renderWorkerConfigCard(s)}
@@ -1910,10 +1968,10 @@ function renderWorkerConfigRow(f, value, source, fileV, envV, cliV, host, port) 
       ${f.help ? `<div style="margin:0 0 4px 0;font-size:11px;color:var(--text-dim)">${esc(f.help)}</div>` : ''}
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         ${control}
-        ${hasFile ? `<button class="btn btn-sm" onclick="workerCfgRestore('${host}',${port},'${keyAttr}','file')">Restore from file</button>` : ''}
-        ${hasEnv  ? `<button class="btn btn-sm" onclick="workerCfgRestore('${host}',${port},'${keyAttr}','env')">Restore from env</button>`  : ''}
-        <button class="btn btn-sm" onclick="workerCfgRestore('${host}',${port},'${keyAttr}','default')">Default</button>
-        ${isDb ? `<button class="btn btn-sm btn-danger" title="${revertTitle}" onclick="workerCfgRevert('${host}',${port},'${keyAttr}')" ${revertDisabled}>Revert</button>` : ''}
+        ${hasFile ? `<button class="btn btn-sm" data-wa-cfg-restore data-wa-host="${host}" data-wa-port="${port}" data-wa-key="${keyAttr}" data-wa-source="file">Restore from file</button>` : ''}
+        ${hasEnv  ? `<button class="btn btn-sm" data-wa-cfg-restore data-wa-host="${host}" data-wa-port="${port}" data-wa-key="${keyAttr}" data-wa-source="env">Restore from env</button>`  : ''}
+        <button class="btn btn-sm" data-wa-cfg-restore data-wa-host="${host}" data-wa-port="${port}" data-wa-key="${keyAttr}" data-wa-source="default">Default</button>
+        ${isDb ? `<button class="btn btn-sm btn-danger" title="${revertTitle}" data-wa-cfg-revert data-wa-host="${host}" data-wa-port="${port}" data-wa-key="${keyAttr}" ${revertDisabled}>Revert</button>` : ''}
       </div>
       ${cliNotice}
     </div>
@@ -2463,7 +2521,7 @@ function renderStatusModal() {
             <div class="dropdown-item dropdown-item-sub" style="display:flex;justify-content:space-between;align-items:center">
               <span>Queue to…</span>${svgIcon('chevronRight',12)}
               <div class="submenu">
-                ${workers.map(w => `<div class="dropdown-item" onclick="modalBulkQueue('${esc(w.config_id)}')">${esc(w.hostname)}</div>`).join('')}
+                ${workers.map(w => `<div class="dropdown-item" data-wa-modal-bulk-queue data-wa-cfgid="${esc(w.config_id)}">${esc(w.hostname)}</div>`).join('')}
               </div>
             </div>` : ''}
           </div>` : ''}
@@ -2520,6 +2578,7 @@ function renderStatusModal() {
     </table>
     ${paginationBar}`;
 
+  wireWorkerActions(body);
   const hdr = body.querySelector('thead input[type="checkbox"]');
   if (hdr) hdr.indeterminate = somePageSelected && !allPageSelected;
 }

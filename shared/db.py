@@ -76,3 +76,13 @@ def make_get_db(session_factory: sessionmaker):
         finally:
             db.close()
     return get_db
+
+
+def chmod_db(path: str) -> None:
+    """Restrict permissions on a SQLite DB and its WAL/SHM files to owner-only (0o600)."""
+    import os
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.chmod(path + suffix, 0o600)
+        except FileNotFoundError:
+            pass

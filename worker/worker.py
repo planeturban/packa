@@ -698,6 +698,7 @@ def recover() -> None:
         )
         for record in pending:
             worker_state.enqueue(Job(record_id=record.id, file_path=record.file_path,
+                                     duration=record.duration,
                                      force_encode=bool(record.force_encode)))
 
         print(f"[worker] recovery complete — {len(pending)} record(s) queued")
@@ -713,6 +714,11 @@ async def worker_loop() -> None:
         try:
             job = await asyncio.wait_for(worker_state.queue.get(), timeout=1.0)
         except asyncio.TimeoutError:
+            continue
+        if worker_state.should_skip(job.record_id):
+            worker_state.clear_skip(job.record_id)
+            worker_state.queue.task_done()
+            print(f"[worker] skipped cancelled job {job.record_id}")
             continue
         worker_state.start(job.record_id)
         try:

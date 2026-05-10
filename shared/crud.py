@@ -1,17 +1,19 @@
+import os
 import re
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from .models import FileRecord, FileStatus
 from .schemas import FileRecordCreate
 
 
-def _search_pattern(search: str) -> str:
-    """Convert a search string to a LIKE pattern treating dots, dashes, and underscores as wildcards."""
+def _search_pattern(search: str) -> tuple[str, str]:
+    """Return (pattern, escape_char) for a SQL LIKE search on the given string."""
     parts = [p for p in re.split(r'[\s.\-_]+', search) if p]
-    return '%' + '%'.join(parts) + '%'
+    escaped = [p.replace("\\", "\\\\").replace("%", "\\%") for p in parts]
+    return '%' + '%'.join(escaped) + '%', "\\"
 
 
 def create_file_record(db: Session, record: FileRecordCreate) -> FileRecord:
@@ -115,8 +117,8 @@ def get_records_page(
     if status is not None:
         q = q.filter(FileRecord.status == status)
     if search:
-        pat = _search_pattern(search)
-        q = q.filter(or_(FileRecord.file_name.ilike(pat), FileRecord.file_path.ilike(pat)))
+        pat, esc = _search_pattern(search)
+        q = q.filter(or_(FileRecord.file_name.ilike(pat, escape=esc), FileRecord.file_path.ilike(pat, escape=esc)))
     col = _SORT_COLUMNS.get(sort_by, FileRecord.created_at)
     q = q.order_by(col.desc() if sort_dir == "desc" else col.asc())
     total = q.count()
@@ -134,8 +136,8 @@ def get_record_ids(
     if status is not None:
         q = q.filter(FileRecord.status == status)
     if search:
-        pat = _search_pattern(search)
-        q = q.filter(or_(FileRecord.file_name.ilike(pat), FileRecord.file_path.ilike(pat)))
+        pat, esc = _search_pattern(search)
+        q = q.filter(or_(FileRecord.file_name.ilike(pat, escape=esc), FileRecord.file_path.ilike(pat, escape=esc)))
     return [row[0] for row in q.all()]
 
 
@@ -146,6 +148,29 @@ def delete_file_record(db: Session, record_id: int) -> bool:
     db.delete(record)
     db.commit()
     return True
+
+
+def mark_missing_as_deleted(db: Session, scan_dir: str) -> list[FileRecord]:
+    """Check active records whose path is under scan_dir against the filesystem.
+    Records whose source file no longer exists are set to DELETED.
+    Returns the affected records (with their original worker_id intact) so the
+    caller can notify assigned workers."""
+    active = [
+        FileStatus.SCANNING, FileStatus.PENDING, FileStatus.ASSIGNED,
+        FileStatus.DUPLICATE, FileStatus.DISCARDED,
+    ]
+    prefix = scan_dir.rstrip("/") + "/"
+    records = (
+        db.query(FileRecord)
+        .filter(FileRecord.status.in_(active), FileRecord.file_path.like(prefix + "%"))
+        .all()
+    )
+    missing = [r for r in records if not os.path.exists(r.file_path)]
+    for r in missing:
+        r.status = FileStatus.DELETED
+    if missing:
+        db.commit()
+    return missing
 
 
 def delete_file_records_bulk(db: Session, ids: list[int]) -> list[FileRecord]:
@@ -190,7 +215,12 @@ def get_stats(db: Session) -> dict:
     _avg_dur = avg_dur or 0
     _mb_per_s = ((total_in / jobs) / 1_048_576 / _avg_dur) if (jobs and _avg_dur) else None
 
-    current_library_bytes = db.query(func.sum(FileRecord.file_size)).scalar() or 0
+    current_library_bytes = db.query(
+        func.sum(case(
+            (FileRecord.status == FileStatus.COMPLETE, FileRecord.output_size),
+            else_=FileRecord.file_size,
+        ))
+    ).scalar() or 0
 
     # Library-wide totals — include COMPLETE + DISCARDED (both have been ffprobed)
     _lf = [FileRecord.status.in_([FileStatus.COMPLETE, FileStatus.DISCARDED])]

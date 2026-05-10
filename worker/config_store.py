@@ -37,12 +37,6 @@ WORKER_FIELDS: list[Field] = [
     Field("output_dir", "PACKA_WORKER_FFMPEG_OUTPUT_DIR", ("worker", "ffmpeg", "output_dir"),
           "str", "",
           label="Output directory", help="Directory where converted files are written."),
-    Field("ffmpeg_bin", "PACKA_WORKER_FFMPEG_BIN", ("worker", "ffmpeg", "bin"),
-          "str", "ffmpeg",
-          label="FFmpeg binary", help="Path to the ffmpeg executable."),
-    Field("extra_args", "PACKA_WORKER_FFMPEG_EXTRA_ARGS", ("worker", "ffmpeg", "extra_args"),
-          "str", "",
-          label="Extra ffmpeg args", help="Additional arguments appended to every ffmpeg command."),
     Field("poll_interval", "PACKA_WORKER_POLL_INTERVAL", ("worker", "worker", "poll_interval"),
           "int", 5,
           label="Poll interval (s)", help="Seconds to wait between polls when the job queue is empty."),
@@ -204,8 +198,6 @@ def apply_to_config(values: dict[str, Any], config: Config) -> None:
     if config.path_prefix and not config.path_prefix.endswith("/"):
         config.path_prefix += "/"
     config.ffmpeg.output_dir = values["output_dir"]
-    config.ffmpeg.bin = values["ffmpeg_bin"]
-    config.ffmpeg.extra_args = values["extra_args"]
     config.worker.poll_interval = max(1, int(values["poll_interval"]))
     config.worker.batch_size = max(1, int(values["batch_size"]))
     config.worker.stall_timeout = max(0, int(values["stall_timeout"]))
