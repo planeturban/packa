@@ -39,13 +39,6 @@ api_port       = 9000
 #              # Useful in k8s where clients connect via a service DNS name that
 #              # differs from advertise_host. Env: PACKA_MASTER_TLS_EXTRA_SANS (comma-separated)
 
-# Bring-your-own certificates (overrides auto-generated certs).
-# Env: PACKA_MASTER_TLS_CERT, PACKA_MASTER_TLS_KEY, PACKA_TLS_CA
-# [master.tls]
-# cert = "/etc/packa/master.crt"
-# key  = "/etc/packa/master.key"
-# ca   = "/etc/packa/ca.crt"
-
 [master.paths]
 # Root path for the master node.
 # - Stripped from file paths before sending to workers (e.g. /mnt/data/shows/ep1.mkv → shows/ep1.mkv)

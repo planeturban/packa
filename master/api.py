@@ -228,6 +228,22 @@ async def _hevc_check_loop() -> None:
                     record.bitrate = bitrate
                     record.duration = duration
                     record.checksum = checksum
+                    ts = record.c_time if _config.scan.age_field == "ctime" else record.m_time
+                    now = _time.time()
+                    if _config.scan.min_age and ts and now - ts < _config.scan.min_age * 60:
+                        record.status = FileStatus.DISCARDED
+                        record.discard_reason = "too_new"
+                        record.finished_at = datetime.now(timezone.utc)
+                        print(f"[master] record {record.id} discarded — too new ({record.file_name!r})")
+                        db.commit()
+                        continue
+                    if _config.scan.max_age and ts and now - ts > _config.scan.max_age * 60:
+                        record.status = FileStatus.DISCARDED
+                        record.discard_reason = "too_old"
+                        record.finished_at = datetime.now(timezone.utc)
+                        print(f"[master] record {record.id} discarded — too old ({record.file_name!r})")
+                        db.commit()
+                        continue
                     existing = crud.get_record_by_checksum(db, checksum)
                     if not existing and checksum in batch_checksums:
                         existing = db.get(FileRecord, batch_checksums[checksum])
@@ -960,7 +976,7 @@ def get_file(record_id: int, request: Request, db: Session = Depends(get_db)):
 
 @app.patch("/files/{record_id}/status", response_model=FileRecordOut)
 def update_file_status(record_id: int, body: StatusUpdate, request: Request, db: Session = Depends(get_db)):
-    _require_web_cert(request)
+    _require_trusted_cert(request)
     record = crud.update_status(db, record_id, body.status)
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
@@ -1146,6 +1162,16 @@ def _require_worker_cert(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Client certificate required")
     if cn == "web":
         raise HTTPException(status_code=403, detail="Worker certificate required")
+
+
+def _require_trusted_cert(request: Request) -> None:
+    """Accept either a worker or web client cert. Loopback connections are exempt."""
+    host = request.client.host if request.client else ""
+    if host in ("127.0.0.1", "::1"):
+        return
+    cn = _peer_cn(request)
+    if cn is None:
+        raise HTTPException(status_code=403, detail="Client certificate required")
 
 
 @app.get("/tls/token")

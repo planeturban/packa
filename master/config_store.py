@@ -62,6 +62,15 @@ MASTER_FIELDS: list[Field] = [
           ("master", "scan", "periodic", "interval"),
           "int", 60,
           label="Periodic scan interval (s)", help="Seconds between periodic scans. Minimum 10."),
+    Field("age_field", "PACKA_MASTER_AGE_FIELD", ("master", "scan", "age_field"),
+          "str", "mtime",
+          label="Age filter field", help="Which timestamp to use for age-based discarding: mtime or ctime."),
+    Field("min_age", "PACKA_MASTER_MIN_AGE", ("master", "scan", "min_age"),
+          "duration", 0,
+          label="Minimum age", help="Discard files newer than this age (stored in minutes). 0 = disabled."),
+    Field("max_age", "PACKA_MASTER_MAX_AGE", ("master", "scan", "max_age"),
+          "duration", 0,
+          label="Maximum age", help="Discard files older than this age (stored in minutes). 0 = disabled."),
 ]
 
 _FIELDS_BY_KEY = {f.key: f for f in MASTER_FIELDS}
@@ -219,6 +228,9 @@ def apply_to_config(values: dict[str, Any], config: Config) -> None:
     config.scan.probe_interval = int(values["probe_interval"])
     config.scan.periodic_enabled = bool(values["scan_periodic_enabled"])
     config.scan.periodic_interval = max(10, int(values["scan_interval_seconds"]))
+    config.scan.age_field = str(values["age_field"]) if str(values["age_field"]) in ("mtime", "ctime") else "mtime"
+    config.scan.min_age = int(values["min_age"])
+    config.scan.max_age = int(values["max_age"])
 
 
 # ---------------------------------------------------------------------------
