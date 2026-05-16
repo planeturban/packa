@@ -163,6 +163,8 @@ def _reapply_config() -> None:
     config_store.apply_to_config(effective, _config)
     worker_state.ffmpeg_bin = _config.ffmpeg.bin
     worker_state.output_dir = _config.ffmpeg.output_dir
+    worker_state.destination_dir = _config.ffmpeg.destination_dir
+    worker_state.delete_source = _config.ffmpeg.delete_source
     worker_state.extra_args = _config.ffmpeg.extra_args
     worker_state.poll_interval = _config.worker.poll_interval
     worker_state.batch_size = _config.worker.batch_size
@@ -183,6 +185,8 @@ async def lifespan(app: FastAPI):
     worker_state.stall_timeout = _config.worker.stall_timeout
     worker_state.ffmpeg_bin = _config.ffmpeg.bin
     worker_state.output_dir = _config.ffmpeg.output_dir
+    worker_state.destination_dir = _config.ffmpeg.destination_dir
+    worker_state.delete_source = _config.ffmpeg.delete_source
     worker_state.extra_args = _config.ffmpeg.extra_args
     worker_state.poll_interval = _config.worker.poll_interval
     worker_state.batch_size = _config.worker.batch_size
@@ -205,6 +209,10 @@ async def lifespan(app: FastAPI):
             print("[worker] no stored configuration — starting in unconfigured state")
     else:
         worker_state.encoder = _default_encoder
+
+    if not worker_state.unconfigured and get_setting("sleeping") == "true":
+        worker_state.sleeping = True
+        worker_state.sleep_reason = get_setting("sleep_reason") or None
 
     if worker_state.output_dir:
         recover()
@@ -257,6 +265,8 @@ class WorkerStatus(BaseModel):
     current_cmd: str | None
     batch_size: int
     replace_original: bool
+    destination_dir: str = ""
+    delete_source: bool = False
     tls_enabled: bool = False
     petname: str = ""
     version: str = "dev"
@@ -298,6 +308,8 @@ def get_status(request: Request, db: Session = Depends(get_db)):
         current_cmd=worker_state.current_cmd or None,
         batch_size=worker_state.batch_size,
         replace_original=worker_state.replace_original,
+        destination_dir=worker_state.destination_dir,
+        delete_source=worker_state.delete_source,
         tls_enabled=_config.tls.enabled,
         petname=worker_state.petname,
         version=_VERSION,
@@ -464,6 +476,8 @@ def sleep_conversion(request: Request):
     _require_web_cert(request)
     worker_state.sleeping = True
     worker_state.drain = False
+    set_setting("sleeping", "true")
+    set_setting("sleep_reason", "")
 
 
 @app.post("/conversion/wake")
@@ -474,6 +488,8 @@ def wake_conversion(request: Request):
     worker_state.disk_full = False
     worker_state.consecutive_errors = 0
     worker_state.sleep_reason = None
+    set_setting("sleeping", "false")
+    set_setting("sleep_reason", "")
 
 
 # ---------------------------------------------------------------------------

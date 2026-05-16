@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from shared.config import EncoderPreset
 from shared.tls import TlsConfig
+from .store import set_setting
 
 
 @dataclass
@@ -66,6 +67,8 @@ class WorkerState:
         # live-editable runtime config (updated by config_store._reapply_config)
         self.ffmpeg_bin: str = "ffmpeg"
         self.output_dir: str = ""
+        self.destination_dir: str = ""
+        self.delete_source: bool = False
         self.extra_args: str = ""
         self.poll_interval: int = 5
         self.path_prefix: str = ""
@@ -77,6 +80,8 @@ class WorkerState:
         if self.error_threshold > 0 and self.consecutive_errors >= self.error_threshold:
             self.sleeping = True
             self.sleep_reason = f"auto-paused: {self.consecutive_errors} consecutive errors"
+            set_setting("sleeping", "true")
+            set_setting("sleep_reason", self.sleep_reason)
             print(f"[worker] auto-paused after {self.consecutive_errors} consecutive errors")
 
     def record_success(self) -> None:
