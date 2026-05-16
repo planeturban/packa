@@ -377,7 +377,7 @@ def get_stats(db: Session) -> dict:
             ratio = tc["total_out"] / tc["total_in"]
         elif global_ratio is not None:
             ratio = global_ratio
-            if not tc or tc["n"] < _CONF_THRESHOLD:
+            if tc and tc["n"] < _CONF_THRESHOLD:
                 proj_low_conf = True
         else:
             continue
