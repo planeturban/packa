@@ -107,6 +107,7 @@ const ST = {
   // workers tab
   workerSettingsOpen: {},   // configId → bool
   globalThresholds: null,   // null = uninitialized; [] = no thresholds; [[pct,ratio],...] = rows
+  broadcastOpen: false,
   workerCmdOpen: {},        // configId → bool
   workerExpanded: new Set(), // configIds that are expanded in overview
   modalDiscardFilter: new Set(),
@@ -1283,6 +1284,78 @@ function renderStats() {
 }
 
 // ── Workers (workers) tab ──────────────────────────────────────────────────────
+
+const _BROADCAST_EXCLUDE = new Set(['path_prefix', 'output_dir']);
+
+function renderBroadcastCard(workers) {
+  const fields = (((workers[0] || {}).worker_config || {}).fields || [])
+    .filter(f => !_BROADCAST_EXCLUDE.has(f.key));
+  if (fields.length === 0) return '';
+  const hint = ((workers[0] || {}).worker_config || {}).values || {};
+  const open = !!ST.broadcastOpen;
+  const rows = fields.map(f => {
+    if (f.type === 'thresholds') {
+      return `
+        <div style="padding:8px 0;border-top:1px solid var(--border-subtle)">
+          <strong style="font-size:12px">${esc(f.label || f.key)}</strong>
+          ${f.help ? `<div style="font-size:11px;color:var(--text-dim);margin:2px 0 6px">${esc(f.help)}</div>` : ''}
+          ${_renderGlobalThresholds()}
+        </div>`;
+    }
+    const hintVal = Object.prototype.hasOwnProperty.call(hint, f.key) ? hint[f.key] : f.default;
+    const display = esc(_cfgDisplayValue(f, hintVal));
+    const inputType = f.type === 'int' ? 'number' : 'text';
+    const monoStyle = `flex:1;min-width:160px;font-family:'IBM Plex Mono',monospace;font-size:12px`;
+    const control = f.type === 'bool'
+      ? `<div class="toggle ${hintVal ? 'on' : ''}" id="bc-${esc(f.key)}"
+              onclick="this.classList.toggle('on')"></div>`
+      : `<input class="input" type="${inputType}" id="bc-${esc(f.key)}" value="${display}"
+                style="${monoStyle}" onkeydown="if(event.key==='Enter')this.blur()">`;
+    const applyFn = f.type === 'bool'
+      ? `broadcastWorkerConfig('${esc(f.key)}','bool',document.getElementById('bc-${esc(f.key)}').classList.contains('on'))`
+      : `broadcastWorkerConfig('${esc(f.key)}','${esc(f.type)}',document.getElementById('bc-${esc(f.key)}').value)`;
+    return `
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--border-subtle);flex-wrap:wrap">
+        <span style="min-width:180px;font-size:12px">${esc(f.label || f.key)}</span>
+        ${control}
+        <button class="btn btn-sm btn-primary" onclick="${applyFn}">Apply to all</button>
+      </div>`;
+  }).join('');
+  return `
+    <div class="card" style="margin-top:16px">
+      <div class="card-title" style="cursor:pointer;user-select:none"
+           onclick="ST.broadcastOpen=!ST.broadcastOpen;renderWorkers()">
+        Broadcast config to all workers
+        <span style="font-size:11px;color:var(--text-faint);margin-left:8px">${open ? '▲' : '▼'}</span>
+      </div>
+      ${open ? `
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px">
+          Applies a setting to every registered worker at once. Worker-specific settings (path prefix, output directory, encoder) are excluded.
+        </div>
+        ${rows}
+      ` : ''}
+    </div>`;
+}
+
+async function broadcastWorkerConfig(key, type, rawValue) {
+  if (ST.demo) { toast('[Demo] Config unchanged', 'info'); return; }
+  let value;
+  try { value = _cfgCoerce(type, rawValue); }
+  catch (e) { toast(`${key}: ${e.message}`, 'error'); return; }
+  try {
+    const r = await fetch(`/data/workers/config/${encodeURIComponent(key)}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({value}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const res = await r.json();
+    toast(`${key} applied to ${res.applied} worker(s)${res.errors.length ? ` (${res.errors.length} failed)` : ''}`,
+          res.errors.length ? 'error' : 'success');
+    fetchAll();
+  } catch (e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
 function renderWorkers() {
   const el = document.getElementById('tab-workers');
   if (!el) return;
@@ -1298,6 +1371,7 @@ function renderWorkers() {
         : workers.map(s => renderWorkerCard(s)).join('')
       }
     </div>
+    ${workers.length > 0 ? renderBroadcastCard(workers) : ''}
   `;
   wireWorkerActions(el);
 }
@@ -1410,6 +1484,8 @@ function renderWorkerCard(s) {
         <span style="color:var(--text-faint)">Encoder</span><span>${s.unconfigured ? 'Setup required' : esc(labels[s.encoder]||s.encoder||'—')}</span>
         <span style="color:var(--text-faint)">Batch</span><span>${s.batch_size||1}</span>
         <span style="color:var(--text-faint)">Replace orig.</span><span>${s.replace_original?'yes':'no'}</span>
+        ${s.destination_dir ? `<span style="color:var(--text-faint)">Dest dir</span><span title="${esc(s.destination_dir)}">${esc(s.destination_dir)}</span>` : ''}
+        ${s.destination_dir ? `<span style="color:var(--text-faint)">Delete src</span><span>${s.delete_source?'yes':'no'}</span>` : ''}
         <span style="color:var(--text-faint)">Queue</span><span>${s.queued||0}</span>
         <span style="color:var(--text-faint)">Master</span><span>${esc(s.url||'—')}</span>
       </div>
@@ -1722,6 +1798,7 @@ function _cfgDisplayValue(field, value) {
   if (field.type === 'list[str]') return (value || []).join(', ');
   if (field.type === 'thresholds') return _formatThresholds(value);
   if (field.type === 'duration') { const a = fmtAge(value || 0); return a.n; }
+  if (field.type === 'bool') return value ? 'true' : 'false';
   if (value == null) return '';
   return String(value);
 }
@@ -1858,6 +1935,7 @@ function _cfgCoerce(type, raw) {
     const [n, unit] = String(raw).split('|');
     return parseDuration(n, unit);
   }
+  if (type === 'bool') return raw === true || String(raw).toLowerCase() === 'true';
   return String(raw);
 }
 
@@ -2006,6 +2084,9 @@ function renderWorkerConfigRow(f, value, source, fileV, envV, cliV, host, port) 
               style="${monoStyle}"
               onkeydown="if(event.key==='Enter'){this.blur();}"
               onblur="workerCfgSave('${host}',${port},'${keyAttr}','thresholds',this.value)">`
+    : f.type === 'bool'
+    ? `<div class="toggle ${value ? 'on' : ''}" id="wcfg-${keyAttr}-${esc(host)}"
+            onclick="this.classList.toggle('on');workerCfgSave('${host}',${port},'${keyAttr}','bool',this.classList.contains('on'))"></div>`
     : `<input class="input" type="${inputType}" value="${display}"
               data-cfg-key="${keyAttr}" data-cfg-type="${esc(f.type)}"
               style="${monoStyle}"
@@ -2224,15 +2305,6 @@ function renderSettings() {
         </div>
       </div>
 
-      <div class="card" style="margin-top:16px">
-        <div class="card-title">Cancel Thresholds</div>
-        <div style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
-          Cancel encoding early if the projected output exceeds <em>source × ratio</em> at a given progress %.
-          "Apply to all workers" overwrites every worker's threshold setting.
-        </div>
-        ${_renderGlobalThresholds()}
-      </div>
-
     </div>
   `;
 }
@@ -2296,7 +2368,7 @@ async function applyGlobalThresholds() {
     .filter(r => r.pct !== '' && r.ratio !== '')
     .map(r => [Number(r.pct), Number(r.ratio)]);
   try {
-    const r = await fetch('/data/workers/cancel_thresholds', {
+    const r = await fetch('/data/workers/config/cancel_thresholds', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({value}),

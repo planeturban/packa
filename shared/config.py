@@ -64,6 +64,8 @@ class FfmpegConfig:
     available_encoders: list[str] = field(
         default_factory=lambda: ["libx265", "nvenc", "vaapi", "videotoolbox"]
     )
+    destination_dir: str = ""
+    delete_source: bool = False
 
 
 def _parse_cancel_thresholds(s: str) -> list[tuple[float, float]]:

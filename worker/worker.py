@@ -28,11 +28,22 @@ from shared.models import FileRecord, FileStatus
 
 from .database import SessionLocal
 from .state import FfmpegProgress, Job, worker_state
+from .store import set_setting
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
+
+def _compute_destination_path(
+    file_path: str, path_prefix: str, destination_dir: str, output_path: str
+) -> str:
+    rel = file_path
+    if path_prefix and rel.startswith(path_prefix):
+        rel = rel[len(path_prefix):]
+    rel = rel.lstrip("/")
+    suffix = Path(output_path).suffix
+    return str(Path(destination_dir) / Path(rel).with_suffix(suffix))
 
 
 def _build_cmd(
@@ -50,7 +61,13 @@ def _build_cmd(
         else ["-c:v", "libx265"]
     )
     input_args = shlex.split(preset.input_args) if preset and preset.input_args.strip() else []
-    cmd = [ffmpeg_bin] + input_args + ["-i", file_path, "-map", "0", "-c", "copy"] + video_args
+    cmd = [ffmpeg_bin] + input_args + [
+        "-i", file_path,
+        "-map", "0",
+        "-map", "-0:v:m:mimetype:image/png",
+        "-map", "-0:v:m:mimetype:image/jpeg",
+        "-c", "copy",
+    ] + video_args
     if extra_args:
         cmd.extend(shlex.split(extra_args))
     cmd += ["-y", "-progress", "pipe:1", "-nostats", output_path]
@@ -420,6 +437,8 @@ async def _process(job: Job) -> None:
             print(f"[worker] disk full in {output_dir!r} — sleeping")
             worker_state.disk_full = True
             worker_state.sleeping = True
+            set_setting("sleeping", "true")
+            set_setting("sleep_reason", "disk full")
             await _update_master_status(job.record_id, "pending")
             return
 
@@ -477,6 +496,8 @@ async def _process(job: Job) -> None:
                 update_status(db, job.record_id, FileStatus.PENDING)
                 await _update_master_status(job.record_id, "pending")
                 worker_state.sleeping = True
+                set_setting("sleeping", "true")
+                set_setting("sleep_reason", "disk full")
                 print(f"[worker] record {job.record_id} reset to pending — disk full")
                 return
             stall_detail = worker_state.stall_detail
@@ -575,7 +596,59 @@ async def _process(job: Job) -> None:
             )
             worker_state.record_success()
         else:
-            if worker_state.replace_original:
+            if worker_state.destination_dir:
+                dest_path = _compute_destination_path(
+                    job.file_path, worker_state.path_prefix,
+                    worker_state.destination_dir, output_path,
+                )
+                if not await _output_is_valid(output_path):
+                    print(f"[worker] record {job.record_id} output failed integrity check — discarding")
+                    os.unlink(output_path)
+                    update_conversion_result(
+                        db, job.record_id,
+                        status=FileStatus.ERROR,
+                        pid=proc.pid, output_size=output_size,
+                        started_at=started_at, finished_at=finished_at,
+                        encoder=encoder,
+                        avg_fps=avg_fps, avg_speed=avg_speed,
+                    )
+                    await _report_result_to_master(
+                        db, job.record_id, FileStatus.ERROR,
+                        pid=proc.pid, output_size=output_size,
+                        started_at=started_at, finished_at=finished_at,
+                        encoder=encoder,
+                        avg_fps=avg_fps, avg_speed=avg_speed,
+                    )
+                    worker_state.record_error()
+                    return
+                try:
+                    Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(output_path, dest_path)
+                    print(f"[worker] record {job.record_id} moved output → {dest_path}")
+                    if worker_state.delete_source:
+                        Path(job.file_path).unlink(missing_ok=True)
+                        print(f"[worker] record {job.record_id} deleted source {job.file_path}")
+                except Exception as exc:
+                    print(f"[worker] record {job.record_id} failed to move to destination: {exc}")
+                    Path(output_path).unlink(missing_ok=True)
+                    update_conversion_result(
+                        db, job.record_id,
+                        status=FileStatus.ERROR,
+                        pid=proc.pid, output_size=output_size,
+                        started_at=started_at, finished_at=finished_at,
+                        encoder=encoder,
+                        avg_fps=avg_fps, avg_speed=avg_speed,
+                    )
+                    await _report_result_to_master(
+                        db, job.record_id, FileStatus.ERROR,
+                        pid=proc.pid, output_size=output_size,
+                        started_at=started_at, finished_at=finished_at,
+                        encoder=encoder,
+                        avg_fps=avg_fps, avg_speed=avg_speed,
+                    )
+                    worker_state.record_error()
+                    return
+            elif worker_state.replace_original:
                 if not await _output_is_valid(output_path):
                     print(f"[worker] record {job.record_id} output failed integrity check — refusing to replace original")
                     os.unlink(output_path)
@@ -727,6 +800,8 @@ async def worker_loop() -> None:
             if worker_state.drain:
                 worker_state.drain = False
                 worker_state.sleeping = True
+                set_setting("sleeping", "true")
+                set_setting("sleep_reason", "drain complete")
                 print("[worker] drain complete — entering sleep mode")
             worker_state.stop()
             worker_state.queue.task_done()
