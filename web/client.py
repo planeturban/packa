@@ -137,6 +137,8 @@ async def fetch_dashboard(master_url: str, httpx_kwargs: dict | None = None) -> 
             "encoder_labels": (st or {}).get("encoder_labels", {}),
             "batch_size": (st or {}).get("batch_size", 1),
             "replace_original": (st or {}).get("replace_original", False),
+            "destination_dir": (st or {}).get("destination_dir", ""),
+            "delete_source": (st or {}).get("delete_source", False),
             "tls_enabled": (st or {}).get("tls_enabled", False),
             "version": (st or {}).get("version", "?"),
             "consecutive_errors": (st or {}).get("consecutive_errors", 0),

@@ -37,6 +37,14 @@ WORKER_FIELDS: list[Field] = [
     Field("output_dir", "PACKA_WORKER_FFMPEG_OUTPUT_DIR", ("worker", "ffmpeg", "output_dir"),
           "str", "",
           label="Output directory", help="Directory where converted files are written."),
+    Field("destination_dir", "PACKA_WORKER_DESTINATION_DIR", ("worker", "paths", "destination_dir"),
+          "str", "",
+          label="Destination directory",
+          help="Mirror source directory structure here and move output. Overrides replace_original."),
+    Field("delete_source", "PACKA_WORKER_DELETE_SOURCE", ("worker", "paths", "delete_source"),
+          "bool", False,
+          label="Delete source after move",
+          help="Delete the original source file after moving output to destination_dir."),
     Field("poll_interval", "PACKA_WORKER_POLL_INTERVAL", ("worker", "worker", "poll_interval"),
           "int", 5,
           label="Poll interval (s)", help="Seconds to wait between polls when the job queue is empty."),
@@ -63,6 +71,17 @@ _INIT_MARKER = "config_initialized"
 def _coerce(value: Any, typ: str) -> Any:
     if value is None:
         return None
+    if typ == "bool":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        s = str(value).strip().lower()
+        if s in ("true", "1", "yes", "on"):
+            return True
+        if s in ("false", "0", "no", "off", ""):
+            return False
+        raise ValueError(f"cannot coerce {value!r} to bool")
     if typ == "int":
         if isinstance(value, bool):
             return int(value)
@@ -198,6 +217,8 @@ def apply_to_config(values: dict[str, Any], config: Config) -> None:
     if config.path_prefix and not config.path_prefix.endswith("/"):
         config.path_prefix += "/"
     config.ffmpeg.output_dir = values["output_dir"]
+    config.ffmpeg.destination_dir = str(values["destination_dir"]) if values["destination_dir"] else ""
+    config.ffmpeg.delete_source = bool(values["delete_source"])
     config.worker.poll_interval = max(1, int(values["poll_interval"]))
     config.worker.batch_size = max(1, int(values["batch_size"]))
     config.worker.stall_timeout = max(0, int(values["stall_timeout"]))
