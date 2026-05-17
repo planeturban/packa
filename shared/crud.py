@@ -55,7 +55,10 @@ def get_record_by_checksum(db: Session, checksum: str) -> FileRecord | None:
         return None
     return (
         db.query(FileRecord)
-        .filter(FileRecord.checksum == checksum, FileRecord.status != FileStatus.DUPLICATE)
+        .filter(
+            FileRecord.checksum == checksum,
+            FileRecord.status.notin_([FileStatus.DUPLICATE, FileStatus.SCANNING]),
+        )
         .first()
     )
 
