@@ -67,6 +67,7 @@ def _build_cmd(
         "-map", "-0:v:m:mimetype:image/png",
         "-map", "-0:v:m:mimetype:image/jpeg",
         "-c", "copy",
+        "-c:s", "srt",
     ] + video_args
     if extra_args:
         cmd.extend(shlex.split(extra_args))
