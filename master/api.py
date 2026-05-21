@@ -866,6 +866,14 @@ def restore_master_config(key: str, body: ConfigRestore, request: Request, db: S
     return {"ok": True, "value": vals[key], "requires_restart": fld.requires_restart}
 
 
+@app.post("/maintenance/check-deleted")
+def maintenance_check_deleted(request: Request, db: Session = Depends(get_db)):
+    _require_web_cert(request)
+    missing = crud.mark_missing_as_deleted(db)
+    print(f"[master] check-deleted: {len(missing)} record(s) marked as deleted")
+    return {"deleted": len(missing), "ids": [r.id for r in missing]}
+
+
 @app.post("/restart")
 def restart_master(request: Request):
     _require_web_cert(request)
@@ -929,21 +937,32 @@ def file_counts(request: Request, db: Session = Depends(get_db)):
     return crud.get_status_counts(db)
 
 
+def _parse_status(raw: str | None) -> list[FileStatus] | FileStatus | None:
+    if not raw:
+        return None
+    parts = [s.strip() for s in raw.split(",") if s.strip()]
+    try:
+        statuses = [FileStatus(p) for p in parts]
+    except ValueError:
+        return None
+    return statuses[0] if len(statuses) == 1 else statuses
+
+
 @app.get("/files/ids")
 def list_file_ids(
     request: Request,
-    status: FileStatus | None = None,
+    status: str | None = Query(default=None),
     search: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
     _require_web_cert(request)
-    return {"ids": crud.get_record_ids(db, status=status, search=search)}
+    return {"ids": crud.get_record_ids(db, status=_parse_status(status), search=search)}
 
 
 @app.get("/files")
 def list_files(
     request: Request,
-    status: FileStatus | None = None,
+    status: str | None = Query(default=None),
     search: str | None = Query(default=None),
     sort_by: str = Query(default="created_at"),
     sort_dir: str = Query(default="desc"),
@@ -953,7 +972,7 @@ def list_files(
 ):
     _require_web_cert(request)
     items, total = crud.get_records_page(
-        db, status=status, search=search,
+        db, status=_parse_status(status), search=search,
         sort_by=sort_by, sort_dir=sort_dir,
         page=page, page_size=page_size,
     )

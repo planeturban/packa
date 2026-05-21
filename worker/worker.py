@@ -46,12 +46,12 @@ def _compute_destination_path(
     return str(Path(destination_dir) / Path(rel).with_suffix(suffix))
 
 
-async def _probe_subtitle_codecs(file_path: str) -> list[str]:
-    """Return subtitle codec names in stream order (index 0 = first subtitle stream)."""
+async def _probe_stream_codecs(file_path: str, stream_type: str) -> list[str]:
+    """Return codec names for the given stream type in stream order."""
     try:
         proc = await asyncio.create_subprocess_exec(
             "ffprobe", "-v", "error",
-            "-select_streams", "s",
+            "-select_streams", stream_type,
             "-show_entries", "stream=codec_name",
             "-of", "csv=p=0",
             file_path,
@@ -71,6 +71,7 @@ def _build_cmd(
     extra_args: str,
     encoder: str,
     presets: dict,
+    video_codecs: list[str] | None = None,
     subtitle_codecs: list[str] | None = None,
 ) -> list[str]:
     preset = presets.get(encoder)
@@ -80,6 +81,13 @@ def _build_cmd(
         else ["-c:v", "libx265"]
     )
     input_args = shlex.split(preset.input_args) if preset and preset.input_args.strip() else []
+    # Exclude mjpeg video streams by index (no mimetype tag; encoder can't handle them).
+    mjpeg_exclusions = [
+        arg
+        for i, codec in enumerate(video_codecs or [])
+        if codec == "mjpeg"
+        for arg in ("-map", f"-0:v:{i}")
+    ]
     # Per-stream -c:s:N srt for mov_text (not MKV-compatible); all others are copied via -c copy.
     sub_codec_args = [
         arg
@@ -92,6 +100,7 @@ def _build_cmd(
         "-map", "0",
         "-map", "-0:v:m:mimetype:image/png",
         "-map", "-0:v:m:mimetype:image/jpeg",
+    ] + mjpeg_exclusions + [
         "-c", "copy",
     ] + sub_codec_args + video_args
     if extra_args:
@@ -471,9 +480,10 @@ async def _process(job: Job) -> None:
         duration_s = job.duration
         worker_state.progress = FfmpegProgress(source_size_bytes=source_size)
         worker_state.current_file = job.file_path
-        subtitle_codecs = await _probe_subtitle_codecs(job.file_path)
+        video_codecs = await _probe_stream_codecs(job.file_path, "v")
+        subtitle_codecs = await _probe_stream_codecs(job.file_path, "s")
         cmd = _build_cmd(ffmpeg_bin, job.file_path, output_path, extra_args,
-                         encoder, worker_state.presets, subtitle_codecs)
+                         encoder, worker_state.presets, video_codecs, subtitle_codecs)
         worker_state.current_cmd = ' '.join(cmd)
         print(f"[worker] record {job.record_id} encoder={encoder!r} → {worker_state.current_cmd}")
 

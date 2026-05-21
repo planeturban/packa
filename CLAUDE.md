@@ -45,6 +45,7 @@ SCANNING → PENDING → ASSIGNED → DISCARDED  (already HEVC, detected by mast
                              → PROCESSING → COMPLETE
                                           → CANCELLED  (user stopped, or output >= source size)
                                           → ERROR
+SCANNING/PENDING/ASSIGNED/DUPLICATE/DISCARDED → DELETED  (source file removed from disk)
 ```
 
 - `SCANNING` — record created by scan or `/transfer`; awaiting ffprobe analysis by the master probe loop
@@ -54,6 +55,7 @@ SCANNING → PENDING → ASSIGNED → DISCARDED  (already HEVC, detected by mast
 - `DISCARDED` — file was already HEVC, corrupt, or truncated; detected by master probe loop, never sent to a worker. `discard_reason` is `"hevc"`, `"corrupt"`, or `"truncated"`
 - `CANCELLED` — conversion stopped mid-run. `cancel_reason` is `"user"` (manual stop) or `"auto"` (output exceeded source size, either detected mid-run or post-completion). `cancel_detail` stores threshold context e.g. `"25% — output 8% over source"`
 - `COMPLETE` / `ERROR` — terminal states
+- `DELETED` — source file no longer exists on disk; set by `POST /maintenance/check-deleted` (never applied to COMPLETE/ERROR records)
 
 ## Configuration priority
 
@@ -98,7 +100,8 @@ The database layer (`master_settings` table, `config.*` keys) is editable at run
 - `POST /scan/stop` / `GET /scan/status` — cancel or query running scan
 - `POST /jobs/claim {"worker_id": "...", "count": N}` — worker claims N PENDING records; master marks them ASSIGNED and returns relative paths
 - `POST /files/{id}/sync {"worker_id": N}` — called by worker after ffmpeg completes; master fetches the record from worker and updates its own DB
-- `GET /files?status=...` — query master DB, filterable by status
+- `GET /files?status=...` — query master DB, filterable by status (comma-separated for multiple: `?status=error,cancelled`)
+- `POST /maintenance/check-deleted` — check all non-terminal records against the filesystem; mark missing ones as DELETED; returns `{deleted: N, ids: [...]}`
 - `GET /master/config` — full layered view `{fields, values, sources, file, env, db, cli, config_file}`
 - `PATCH /master/config/{key}` — body `{value}`, writes DB override, reapplies live config
 - `DELETE /master/config/{key}` — clears DB override; effective value falls back through env → file → default
@@ -228,10 +231,10 @@ Browser talks HTTP(S) to the web process. Web process talks mTLS to master and w
 **Dashboard** is a single-page app rendered entirely in `dashboard.js`. It auto-refreshes every 3 seconds and has six tabs:
 
 - **Overview** — 8 clickable status chips (counts per status). Clicking any chip opens a modal listing matching files with checkboxes and bulk actions (Set → Pending / Cancelled, Delete, Queue to worker).
-- **Files** — filterable by status chip, searchable by filename or worker name. Bulk actions (same as modal) live in the table header row so the list never jumps. Prefix stripped from displayed paths; full path in `title`.
+- **Files** — filterable by status chip (Alt/Ctrl+click to add multiple filters), searchable by filename or worker name. Multiple filters are sent as comma-separated `status` param; master parses with `_parse_status()` and uses `.in_()`. Bulk actions (same as modal) live in the table header row so the list never jumps. Prefix stripped from displayed paths; full path in `title`.
 - **Statistics** — aggregated and per-worker stats: jobs, input/output bytes, space saved, compression ratio, avg duration.
 - **Workers** — per-worker cards with live ffmpeg progress (%, FPS, speed, bitrate, current→projected size), encoder selector, batch size, pause/drain/stop/sleep controls and settings panel. When `out_time` is frozen the progress bar turns amber and shows "timestamps frozen". When master has TLS active, worker cards that are not yet onboarded show an **Onboard TLS** button and have all other controls disabled.
-- **Master** — four stat cards (avg conversion, probe rate, scan speed, probe queue), probe-progress bar, scanner controls, and editable master configuration form. Each row has per-value Save / Restore from file / Restore from env / Default / Revert buttons; edits are PATCHed to the database layer and applied live (`requires_restart` fields pop a restart-required toast). The underlying source (`default`/`file`/`env`/`db`/`cli`) is tracked server-side and decides whether the Revert button appears, but it's not rendered as a badge.
+- **Master** — four stat cards (avg conversion, probe rate, scan speed, probe queue), probe-progress bar, scanner controls, editable master configuration form, a **Clean database** section (currently: "Check for removed files" button → `POST /maintenance/check-deleted`, marks missing SCANNING/PENDING/ASSIGNED/DUPLICATE/DISCARDED records as DELETED), and a Restart master button.
 - **Settings** — poll interval selector.
 
 **Polling guard:** `isEditing()` returns true when any input/select/textarea has focus, any worker settings panel is open, or any modal files are selected. When true, `renderActiveTab()` and `updateFromData()` are skipped so in-progress edits are never wiped by a poll.
