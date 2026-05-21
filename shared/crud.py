@@ -160,14 +160,10 @@ def delete_file_record(db: Session, record_id: int) -> bool:
 
 
 def mark_missing_as_deleted(db: Session, scan_dir: str | None = None) -> list[FileRecord]:
-    """Check active records against the filesystem; mark missing ones as DELETED.
+    """Check all records against the filesystem; mark missing ones as DELETED.
     If scan_dir is given, only records under that path are checked.
     Returns affected records (worker_id intact) so the caller can notify workers."""
-    active = [
-        FileStatus.SCANNING, FileStatus.PENDING, FileStatus.ASSIGNED,
-        FileStatus.DUPLICATE, FileStatus.DISCARDED,
-    ]
-    q = db.query(FileRecord).filter(FileRecord.status.in_(active))
+    q = db.query(FileRecord).filter(FileRecord.status != FileStatus.DELETED)
     if scan_dir:
         prefix = scan_dir.rstrip("/") + "/"
         q = q.filter(FileRecord.file_path.like(prefix + "%"))
