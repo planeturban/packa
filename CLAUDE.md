@@ -55,7 +55,7 @@ SCANNING/PENDING/ASSIGNED/DUPLICATE/DISCARDED → DELETED  (source file removed 
 - `DISCARDED` — file was already HEVC, corrupt, or truncated; detected by master probe loop, never sent to a worker. `discard_reason` is `"hevc"`, `"corrupt"`, or `"truncated"`
 - `CANCELLED` — conversion stopped mid-run. `cancel_reason` is `"user"` (manual stop) or `"auto"` (output exceeded source size, either detected mid-run or post-completion). `cancel_detail` stores threshold context e.g. `"25% — output 8% over source"`
 - `COMPLETE` / `ERROR` — terminal states
-- `DELETED` — source file no longer exists on disk; set by `POST /maintenance/check-deleted` (never applied to COMPLETE/ERROR records)
+- `DELETED` — source file no longer exists on disk; set by `POST /maintenance/check-deleted` (applied to all statuses except DELETED itself)
 
 ## Configuration priority
 
