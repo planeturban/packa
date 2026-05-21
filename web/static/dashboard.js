@@ -254,7 +254,7 @@ async function fetchFilesPage() {
     page: ST.filePage,
     page_size: FILES_PAGE_SIZE,
   });
-  if (ST.fileFilters.size === 1) params.set('status', [...ST.fileFilters][0]);
+  if (ST.fileFilters.size > 0) params.set('status', [...ST.fileFilters].join(','));
   if (ST.fileSearch) params.set('search', ST.fileSearch);
   try {
     const r = await fetch(`/data/files?${params}`);
@@ -849,7 +849,7 @@ function selectAllFilteredFiles(e) {
 async function selectAllFilesAcrossPages(e) {
   e.preventDefault();
   const params = new URLSearchParams();
-  if (ST.fileFilters.size === 1) params.set('status', [...ST.fileFilters][0]);
+  if (ST.fileFilters.size > 0) params.set('status', [...ST.fileFilters].join(','));
   if (ST.fileSearch) params.set('search', ST.fileSearch);
   const r = await fetch('/data/files/ids?' + params);
   if (!r.ok) return;
@@ -1760,6 +1760,14 @@ function renderScan() {
 
       ${renderTlsCard(tlsStatus, tlsToken)}
 
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-subtle)">
+        <div style="font-size:12px;font-weight:600;color:var(--text-dim);margin-bottom:10px">Clean database</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn btn-sm" id="check-deleted-btn" onclick="checkDeleted()">Check for removed files</button>
+          <span id="check-deleted-result" style="font-size:12px;color:var(--text-dim)"></span>
+        </div>
+      </div>
+
       <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-subtle);display:flex;align-items:center;gap:8px">
         <button class="btn btn-sm btn-danger" onclick="restartMaster()" title="Restart the master process">Restart master</button>
         <span style="font-size:11px;color:var(--text-faint)">Gracefully terminates and restarts the master process. Requires a process manager (e.g. Docker) to restart it.</span>
@@ -2161,6 +2169,25 @@ async function workerCfgRevert(host, port, key) {
     toast(`${key} reverted${res.requires_restart ? ' (restart required)' : ''}`, 'info');
     fetchAll();
   } catch (e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function checkDeleted() {
+  const btn = document.getElementById('check-deleted-btn');
+  const result = document.getElementById('check-deleted-result');
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  if (result) result.textContent = '';
+  try {
+    const r = await fetch('/data/maintenance/check-deleted', {method:'POST'});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    const n = data.deleted || 0;
+    if (result) result.textContent = n === 0 ? 'No missing files found.' : `${n} file${n === 1 ? '' : 's'} marked as deleted.`;
+    if (n > 0) fetchAll();
+  } catch (e) {
+    toast(`Check failed: ${e.message}`, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Check for removed files'; }
+  }
 }
 
 async function restartMaster() {

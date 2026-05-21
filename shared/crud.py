@@ -108,7 +108,7 @@ _SORT_COLUMNS = {
 
 def get_records_page(
     db: Session,
-    status: FileStatus | None = None,
+    status: list[FileStatus] | FileStatus | None = None,
     search: str | None = None,
     sort_by: str = "created_at",
     sort_dir: str = "desc",
@@ -118,7 +118,10 @@ def get_records_page(
     """Return one page of records and the total matching count."""
     q = db.query(FileRecord)
     if status is not None:
-        q = q.filter(FileRecord.status == status)
+        if isinstance(status, list):
+            q = q.filter(FileRecord.status.in_(status))
+        else:
+            q = q.filter(FileRecord.status == status)
     if search:
         pat, esc = _search_pattern(search)
         q = q.filter(or_(FileRecord.file_name.ilike(pat, escape=esc), FileRecord.file_path.ilike(pat, escape=esc)))
@@ -131,13 +134,16 @@ def get_records_page(
 
 def get_record_ids(
     db: Session,
-    status: FileStatus | None = None,
+    status: list[FileStatus] | FileStatus | None = None,
     search: str | None = None,
 ) -> list[int]:
     """Return all matching record IDs (no pagination)."""
     q = db.query(FileRecord.id)
     if status is not None:
-        q = q.filter(FileRecord.status == status)
+        if isinstance(status, list):
+            q = q.filter(FileRecord.status.in_(status))
+        else:
+            q = q.filter(FileRecord.status == status)
     if search:
         pat, esc = _search_pattern(search)
         q = q.filter(or_(FileRecord.file_name.ilike(pat, escape=esc), FileRecord.file_path.ilike(pat, escape=esc)))
@@ -153,21 +159,19 @@ def delete_file_record(db: Session, record_id: int) -> bool:
     return True
 
 
-def mark_missing_as_deleted(db: Session, scan_dir: str) -> list[FileRecord]:
-    """Check active records whose path is under scan_dir against the filesystem.
-    Records whose source file no longer exists are set to DELETED.
-    Returns the affected records (with their original worker_id intact) so the
-    caller can notify assigned workers."""
+def mark_missing_as_deleted(db: Session, scan_dir: str | None = None) -> list[FileRecord]:
+    """Check active records against the filesystem; mark missing ones as DELETED.
+    If scan_dir is given, only records under that path are checked.
+    Returns affected records (worker_id intact) so the caller can notify workers."""
     active = [
         FileStatus.SCANNING, FileStatus.PENDING, FileStatus.ASSIGNED,
         FileStatus.DUPLICATE, FileStatus.DISCARDED,
     ]
-    prefix = scan_dir.rstrip("/") + "/"
-    records = (
-        db.query(FileRecord)
-        .filter(FileRecord.status.in_(active), FileRecord.file_path.like(prefix + "%"))
-        .all()
-    )
+    q = db.query(FileRecord).filter(FileRecord.status.in_(active))
+    if scan_dir:
+        prefix = scan_dir.rstrip("/") + "/"
+        q = q.filter(FileRecord.file_path.like(prefix + "%"))
+    records = q.all()
     missing = [r for r in records if not os.path.exists(r.file_path)]
     for r in missing:
         r.status = FileStatus.DELETED

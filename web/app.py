@@ -728,6 +728,19 @@ def web_restart(request: Request):
     return JSONResponse({"ok": True})
 
 
+@app.post("/data/maintenance/check-deleted")
+async def data_maintenance_check_deleted(request: Request):
+    if not _logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    async with httpx.AsyncClient(timeout=30, **_httpx_kw()) as client:
+        try:
+            r = await client.post(f"{_master_url()}/maintenance/check-deleted")
+            r.raise_for_status()
+            return JSONResponse(r.json())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+
 @app.post("/data/master/restart")
 async def data_master_restart(request: Request):
     if not _logged_in(request):
